@@ -1,0 +1,25 @@
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+python-dotenv
+requests
+httpx
+celery
+redis
+langchain
+langchain-openai
+langchain-google-genai
+langfuse
+litellm
+qdrant-client
+pypdf
+PyMuPDF # PDF 구조 분석 및 표 추출을 위해 추가
+xmltodict
+watchdog
+beautifulsoup4
+minio
+python-multipart
+lxml
+feedparser
+lxml

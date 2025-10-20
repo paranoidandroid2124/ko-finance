@@ -1,0 +1,32 @@
+# SSoT(3, 4) 기반 LiteLLM 설정 파일
+# - 기본 모델: Gemini Flash-Lite (gemini_flash_lite)
+# - 품질 승격 모델: GPT-4.1 (gpt_4_1)
+# - 로컬 감성 분석 모델: 주석 처리 (vllm-sentiment)
+
+model_list:
+  - model_name: gemini_flash_lite  # API에서 호출할 별칭
+    litellm_params:
+      model: "gemini/gemini-1.5-flash-latest"
+      api_key: ${GEMINI_API_KEY} # .env 파일에서 환경변수 참조
+
+  - model_name: gpt_4_1
+    litellm_params:
+      model: "openai/gpt-4o" # OpenAI 호환 모델 (실제 모델명)
+      api_key: ${OPENAI_API_KEY}
+
+  # - model_name: qwen14b_lora_local
+  #   litellm_params:
+  #     model: "qwen/Qwen1.5-14B-Chat-AWQ"
+  #     api_base: "http://vllm-sentiment:8001/v1" # vLLM 서비스 엔드포인트
+  #     api_key: "EMPTY"
+
+litellm_settings:
+  # 디버깅 및 로깅 레벨 설정
+  set_verbose: True
+  # SSoT(8) Langfuse 연동을 위한 설정 (추후 활성화)
+  # success_callback: ["langfuse"]
+  # failure_callback: ["langfuse"]
+
+router_settings:
+    enable_health_check: True
+    enable_prometheus: True

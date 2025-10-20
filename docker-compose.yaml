@@ -1,0 +1,128 @@
+# SSoT(12) 기반 docker-compose.yaml 기본 구조
+# 주요 서비스: api(FastAPI), worker(Celery), litellm(LLM Gateway)
+# 데이터베이스, 캐시, vLLM 등은 추후 단계에서 추가됩니다.
+version: '3.8'
+
+services:
+  # FastAPI 웹 서버 (API 엔드포인트 제공)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: []
+    command: uvicorn web.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app  # 소스코드 변경 시 핫 리로딩
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - litellm
+      - redis
+      - postgres
+    networks:
+      - kfinance_network
+
+  # 백그라운드 작업을 처리하는 Celery 워커
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: []
+    command: watchmedo auto-restart --directory=./ --pattern=*.py --recursive -- celery -A parse.worker worker --loglevel=info
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - litellm
+      - redis
+      - postgres
+    networks:
+      - kfinance_network
+
+  # LLM API 호출을 관리하는 LiteLLM 게이트웨이
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    entrypoint: []
+    command: >
+      litellm --config /app/litellm_config.yaml
+      --port 4000
+    volumes:
+      - .:/app # litellm_config.yaml 마운트
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm_proxy"  # separate LiteLLM DB
+      LITELLM_DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm_proxy"
+      LITELLM_MIGRATION_DIR: /tmp/litellm_migrations
+    networks:
+      - kfinance_network
+
+  # PostgreSQL 데이터베이스
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - kfinance_network
+
+  # (선택) 로컬 LoRA 모델 서빙을 위한 vLLM (M2 Market Mood용)
+  # vllm-sentiment:
+  #   image: vllm/vllm-openai:latest
+  #   command: >
+  #     --model qwen/Qwen1.5-14B-Chat-AWQ
+  #     --quantization awq
+  #     --tensor-parallel-size 1
+  #     --max-model-len 4096
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   ports:
+  #     - "8001:8000"
+  #   networks:
+  #     - kfinance_network
+
+  # 주기적 작업을 스케줄링하는 Celery Beat
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: []
+    command: celery -A parse.worker beat -l info
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    networks:
+      - kfinance_network
+
+  # Celery 메시지 브로커
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - kfinance_network
+
+networks:
+  kfinance_network:
+    driver: bridge
+
+volumes:
+  postgres_data:

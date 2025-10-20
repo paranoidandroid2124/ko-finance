@@ -1,0 +1,17 @@
+prompts:
+  - label: "Classification Prompt"
+    file: ../../llm/prompts/classify_filing.py
+
+providers:
+  - id: "openai:gpt-4o-mini"
+    config:
+      temperature: 0.2
+
+tests:
+  - vars:
+      filing_md_snippet: |
+        ### 보고서 개요
+        - 회사: K-파이낸스
+        - 보고서 종류: 증자 결정
+        - 내용: 제3자 배정 유상증자
+        - 금액: 1,000억 원
