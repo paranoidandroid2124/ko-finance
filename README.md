@@ -86,3 +86,8 @@ Ensure Redis/Postgres/Qdrant services are reachable via `.env`.
 - Tests: `pytest tests/test_rag_api.py tests/test_rag_self_check.py tests/test_llm_service.py`.
 - Vector store prerequisites: Qdrant reachable, embeddings configured via `.env` (`EMBEDDING_MODEL`, `QDRANT_*`).
 - Guardrail violations return the `SAFE_MESSAGE`; see `original_answer` for the redacted text.
+
+### Dashboard UI (Frontend)
+- 위치: `web/dashboard`
+- Next.js 기반 데이터 대시보드 UI. 디자인 시스템 문서: `design/ui_design_system.md`, `design/dashboard_wireframes.md`.
+- 개발: 패키지 설치 후 `pnpm dev` 또는 `npm run dev`, Storybook은 `pnpm storybook`.

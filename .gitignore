@@ -130,3 +130,9 @@ cython_debug/
 raw_files/
 temp_downloads/
 *.pdf
+
+# Frontend artifacts
+web/dashboard/.next/
+web/dashboard/node_modules/
+web/dashboard/out/
+web/dashboard/storybook-static/
