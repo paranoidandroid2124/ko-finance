@@ -5,6 +5,9 @@ import ChatPage from "@/app/chat/page";
 import { useChatStore, type ChatSession } from "@/store/chatStore";
 
 const searchParamsState = { value: "" };
+const replaceMock = vi.fn();
+const pushMock = vi.fn();
+const PATHNAME = "/chat";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => {
@@ -12,7 +15,12 @@ vi.mock("next/navigation", () => ({
     return {
       get: (key: string) => params.get(key)
     };
-  }
+  },
+  useRouter: () => ({
+    replace: replaceMock,
+    push: pushMock
+  }),
+  usePathname: () => PATHNAME
 }));
 
 vi.mock("@/components/layout/AppShell", () => ({
@@ -69,13 +77,15 @@ describe("ChatPage", () => {
   beforeEach(() => {
     resetStore();
     setSearchParams("");
+    replaceMock.mockClear();
+    pushMock.mockClear();
   });
 
   afterEach(() => {
     cleanup();
   });
 
-  // 정상 흐름: URL 쿼리에 전달된 세션이 있으면 해당 세션이 활성화되어야 한다.
+  // 정상 흐름: URL 쿼리에 포함된 세션이 있으면 렌더링 시 해당 세션이 활성화된다.
   it("activates session from query parameter", () => {
     const existingSession: ChatSession = {
       id: "chat-100",
@@ -89,7 +99,7 @@ describe("ChatPage", () => {
           timestamp: "09:00"
         }
       ],
-      context: { type: "custom" as const }
+      context: { type: "custom" }
     };
 
     useChatStore.setState({ sessions: [existingSession], activeSessionId: null });
@@ -100,13 +110,14 @@ describe("ChatPage", () => {
     expect(screen.getByText("existing message")).toBeInTheDocument();
   });
 
-  // 사용자 입력: 새 세션 버튼을 누르면 createSession이 호출되어 세션이 추가된다.
+  // 사용자 입력: 새 세션 버튼을 누르면 createSession이 호출되고 URL 쿼리가 업데이트된다.
   it("creates a new session from history control", () => {
     render(<ChatPage />);
 
     fireEvent.click(screen.getByText("new-session"));
 
     expect(useChatStore.getState().sessions.length).toBeGreaterThan(0);
+    expect(replaceMock).toHaveBeenCalledWith(`${PATHNAME}?session=${useChatStore.getState().activeSessionId}`);
   });
 
   // 정상 흐름: 메시지를 전송하면 사용자/어시스턴트 메시지가 세션에 누적된다.
@@ -116,7 +127,7 @@ describe("ChatPage", () => {
       title: "세션B",
       updatedAt: "방금",
       messages: [],
-      context: { type: "custom" as const }
+      context: { type: "custom" }
     };
 
     useChatStore.setState({ sessions: [session], activeSessionId: "chat-200" });

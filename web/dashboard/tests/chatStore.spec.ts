@@ -68,4 +68,44 @@ describe("chatStore", () => {
     expect(session?.messages.some((message) => message.id === "msg-1")).toBe(true);
     expect(session?.updatedAt).toBe(timestamp);
   });
+
+  // 근거 선택 로직: focus_evidence_item이 activeId를 갱신하여 패널/하이라이트 동기화가 가능해야 한다.
+  it("updates active evidence id when focus_evidence_item is called", () => {
+    const sessionId = "session-focus";
+    useChatStore.setState({
+      sessions: [
+        {
+          id: sessionId,
+          title: "샘플 세션",
+          updatedAt: "지금",
+          messages: [],
+          context: { type: "custom" },
+          evidence: {
+            status: "ready",
+            items: [
+              {
+                id: "ev-a",
+                title: "테스트 근거 A",
+                snippet: "A 설명"
+              },
+              {
+                id: "ev-b",
+                title: "테스트 근거 B",
+                snippet: "B 설명"
+              }
+            ],
+            activeId: undefined,
+            confidence: 0.5,
+            documentTitle: "샘플 문서"
+          }
+        }
+      ],
+      activeSessionId: sessionId
+    });
+
+    useChatStore.getState().focus_evidence_item("ev-b");
+    const updated = useChatStore.getState().sessions[0]?.evidence?.activeId;
+
+    expect(updated).toBe("ev-b");
+  });
 });

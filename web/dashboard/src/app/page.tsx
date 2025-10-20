@@ -1,72 +1,26 @@
-﻿"use client";
+"use client";
 
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { AlertFeed } from "@/components/ui/AlertFeed";
 import { NewsList } from "@/components/ui/NewsList";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { FilingTrendChart } from "@/components/charts/FilingTrendChart";
 import { NewsSentimentHeatmap } from "@/components/charts/NewsSentimentHeatmap";
-
-const KPI_DATA = [
-  { title: "공시 처리", value: "86건", delta: "+12%", trend: "up", description: "24시간 내 분석 완료" },
-  { title: "뉴스 감성지수", value: "62.4", delta: "-4.7", trend: "down", description: "15분 윈도우 평균" },
-  { title: "RAG 세션", value: "128", delta: "+8.5%", trend: "up", description: "Guardrail 통과율 97%" },
-  { title: "알림 전송", value: "412", delta: "0%", trend: "flat", description: "텔레그램/이메일 합산" }
-] as const;
-
-const ALERTS = [
-  {
-    id: "1",
-    title: "부정 뉴스 증가",
-    body: "반도체 섹터 감성 -12%p (15분)",
-    timestamp: "5분 전",
-    tone: "negative" as const
-  },
-  {
-    id: "2",
-    title: "신규 공시",
-    body: "삼성전자 분기보고서 업로드",
-    timestamp: "12분 전",
-    tone: "neutral" as const
-  },
-  {
-    id: "3",
-    title: "RAG self-check",
-    body: "guardrail 경고 1건",
-    timestamp: "18분 전",
-    tone: "warning" as const
-  }
-];
-
-const NEWS_ITEMS = [
-  {
-    id: "news-1",
-    title: "AI 반도체 수요 둔화 우려",
-    sentiment: "negative" as const,
-    source: "연합뉴스",
-    publishedAt: "10분 전"
-  },
-  {
-    id: "news-2",
-    title: "친환경 에너지 투자 확대",
-    sentiment: "positive" as const,
-    source: "매일경제",
-    publishedAt: "25분 전"
-  },
-  {
-    id: "news-3",
-    title: "원자재 가격 변동성 확대",
-    sentiment: "neutral" as const,
-    source: "조선비즈",
-    publishedAt: "40분 전"
-  }
-];
+import { useDashboardOverview } from "@/hooks/useDashboardOverview";
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { data, isLoading, isError } = useDashboardOverview();
 
-  const handleAlertSelect = (alert: (typeof ALERTS)[number]) => {
+  const metrics = data?.metrics ?? [];
+  const alerts = data?.alerts ?? [];
+  const newsItems = data?.news ?? [];
+
+  const handleAlertSelect = (alert: typeof alerts[number]) => {
     if (alert.title.includes("뉴스")) {
       router.push("/news");
     } else if (alert.title.includes("공시")) {
@@ -76,12 +30,54 @@ export default function DashboardPage() {
     }
   };
 
+  if (isError) {
+    return (
+      <AppShell>
+        <ErrorState
+          title="대시보드 데이터를 불러오지 못했습니다"
+          description="API 연결 상태를 확인한 뒤 새로고침하거나 관리자에게 문의해주세요."
+        />
+      </AppShell>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <AppShell>
+        <div className="space-y-6">
+          <div className="grid gap-4 lg:grid-cols-4">
+            <SkeletonBlock className="h-32" />
+            <SkeletonBlock className="h-32" />
+            <SkeletonBlock className="h-32" />
+            <SkeletonBlock className="h-32" />
+          </div>
+          <div className="grid gap-6 lg:grid-cols-3">
+            <div className="space-y-6 lg:col-span-2">
+              <SkeletonBlock lines={10} />
+              <SkeletonBlock lines={10} />
+            </div>
+            <div className="space-y-6">
+              <SkeletonBlock lines={8} />
+              <SkeletonBlock lines={8} />
+            </div>
+          </div>
+        </div>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
       <section className="grid gap-4 lg:grid-cols-4">
-        {KPI_DATA.map((item) => (
-          <KpiCard key={item.title} {...item} />
-        ))}
+        {metrics.length > 0 ? (
+          metrics.map((item) => <KpiCard key={item.title} {...item} />)
+        ) : (
+          <EmptyState
+            title="표시할 KPI가 없습니다"
+            description="실제 지표 연동을 완료하면 이 영역에서 핵심 지표를 확인할 수 있습니다."
+            className="lg:col-span-4"
+          />
+        )}
       </section>
 
       <section className="grid gap-6 lg:grid-cols-3">
@@ -90,8 +86,19 @@ export default function DashboardPage() {
           <NewsSentimentHeatmap />
         </div>
         <div className="space-y-6">
-          <AlertFeed alerts={ALERTS} onSelect={handleAlertSelect} />
-          <NewsList items={NEWS_ITEMS} />
+          {alerts.length > 0 ? (
+            <AlertFeed alerts={alerts} onSelect={handleAlertSelect} />
+          ) : (
+            <EmptyState
+              title="실시간 알림이 없습니다"
+              description="파이프라인이 재개되면 guardrail 경고와 공시 알림이 여기에 표시됩니다."
+            />
+          )}
+          {newsItems.length > 0 ? (
+            <NewsList items={newsItems} />
+          ) : (
+            <EmptyState title="표시할 뉴스가 없습니다" description="데이터 동기화를 기다리는 중입니다." />
+          )}
         </div>
       </section>
     </AppShell>
