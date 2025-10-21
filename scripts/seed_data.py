@@ -1,6 +1,10 @@
 import argparse
 import logging
 
+from scripts._path import add_root
+
+add_root()
+
 from database import SessionLocal
 from ingest.dart_seed import seed_recent_filings
 
