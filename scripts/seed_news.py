@@ -2,6 +2,10 @@ import argparse
 import logging
 from typing import List
 
+from scripts._path import add_root
+
+add_root()
+
 from ingest.news_client import MockNewsClient
 from ingest.news_fetcher import fetch_news_articles
 from parse.tasks import process_news_article
