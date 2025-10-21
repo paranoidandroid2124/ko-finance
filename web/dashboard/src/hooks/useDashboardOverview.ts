@@ -32,66 +32,30 @@ type DashboardOverview = {
   news: DashboardNewsItem[];
 };
 
-const MOCK_METRICS: DashboardMetric[] = [
-  { title: "공시 처리", value: "86건", delta: "+12%", trend: "up", description: "24시간 내 분석 완료" },
-  { title: "뉴스 감성지수", value: "62.4", delta: "-4.7", trend: "down", description: "15분 윈도우 평균" },
-  { title: "RAG 세션", value: "128", delta: "+8.5%", trend: "up", description: "Guardrail 통과율 97%" },
-  { title: "알림 전송", value: "412", delta: "0%", trend: "flat", description: "텔레그램/이메일 합산" }
-];
-
-const MOCK_ALERTS: DashboardAlert[] = [
-  {
-    id: "1",
-    title: "부정 뉴스 증가",
-    body: "반도체 섹터 감성 -12%p (15분)",
-    timestamp: "5분 전",
-    tone: "negative"
-  },
-  {
-    id: "2",
-    title: "신규 공시",
-    body: "삼성전자 분기보고서 업로드",
-    timestamp: "12분 전",
-    tone: "neutral"
-  },
-  {
-    id: "3",
-    title: "RAG self-check",
-    body: "guardrail 경고 1건",
-    timestamp: "18분 전",
-    tone: "warning"
+const resolveApiBase = () => {
+  const base = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  if (!base) {
+    return "";
   }
-];
+  return base.endsWith("/") ? base.slice(0, -1) : base;
+};
 
-const MOCK_NEWS: DashboardNewsItem[] = [
-  {
-    id: "news-1",
-    title: "AI 반도체 수요 둔화 우려",
-    sentiment: "negative",
-    source: "연합뉴스",
-    publishedAt: "10분 전"
-  },
-  {
-    id: "news-2",
-    title: "친환경 에너지 투자 확대",
-    sentiment: "positive",
-    source: "매일경제",
-    publishedAt: "25분 전"
-  },
-  {
-    id: "news-3",
-    title: "원자재 가격 변동성 확대",
-    sentiment: "neutral",
-    source: "조선비즈",
-    publishedAt: "40분 전"
+const fetchDashboardOverview = async (): Promise<DashboardOverview> => {
+  const baseUrl = resolveApiBase();
+  const response = await fetch(`${baseUrl}/api/v1/dashboard/overview`);
+
+  if (!response.ok) {
+    throw new Error("대시보드 개요 데이터를 불러오지 못했습니다");
   }
-];
 
-const fetchDashboardOverview = async (): Promise<DashboardOverview> => ({
-  metrics: MOCK_METRICS,
-  alerts: MOCK_ALERTS,
-  news: MOCK_NEWS
-});
+  const payload = await response.json();
+
+  return {
+    metrics: (payload?.metrics ?? []) as DashboardMetric[],
+    alerts: (payload?.alerts ?? []) as DashboardAlert[],
+    news: (payload?.news ?? []) as DashboardNewsItem[]
+  };
+};
 
 export function useDashboardOverview() {
   return useQuery({
