@@ -4,20 +4,15 @@ import { useCallback, useMemo } from "react";
 import { RagEvidencePanel } from "@/components/chat/RenderRagEvidence";
 import { PdfHighlightMock } from "@/components/chat/PdfHighlightMock";
 import {
-  selectActiveEvidence,
   selectActiveSession,
+  selectContextPanelData,
   selectHighlightDisplay,
   useChatStore
 } from "@/store/chatStore";
 
-const MOCK_TRACE = {
-  trace: "trace_2025-10-20_09-31",
-  guardrail: "위반 없음"
-};
-
 export function ChatContextPanel() {
   const activeSession = useChatStore(selectActiveSession);
-  const evidence = useChatStore(selectActiveEvidence);
+  const { evidence, guardrail, metrics } = useChatStore(selectContextPanelData);
   const highlightDisplay = useChatStore(selectHighlightDisplay);
   const focusEvidence = useChatStore((state) => state.focus_evidence_item);
 
@@ -67,25 +62,14 @@ export function ChatContextPanel() {
         )}
       </section>
       <section>
-        <h3 className="text-sm font-semibold">Trace & Guardrail</h3>
-        <div className="mt-2 space-y-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-          <div className="rounded-lg border border-border-light px-3 py-2 dark:border-border-dark">
-            <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">Langfuse Trace</p>
-            <p>{MOCK_TRACE.trace}</p>
-          </div>
-          <div className="rounded-lg border border-border-light px-3 py-2 dark:border-border-dark">
-            <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">Guardrail</p>
-            <p>{MOCK_TRACE.guardrail}</p>
-          </div>
-        </div>
-      </section>
-      <section>
         <RagEvidencePanel
           status={evidence.status}
           items={evidence.items}
           activeId={evidence.activeId}
           confidence={evidence.confidence}
           errorMessage={evidenceErrorMessage}
+          guardrail={guardrail}
+          metrics={metrics}
           onSelectItem={handleEvidenceSelect}
         />
       </section>
