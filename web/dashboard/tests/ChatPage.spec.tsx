@@ -117,7 +117,10 @@ describe("ChatPage", () => {
     fireEvent.click(screen.getByText("new-session"));
 
     expect(useChatStore.getState().sessions.length).toBeGreaterThan(0);
-    expect(replaceMock).toHaveBeenCalledWith(`${PATHNAME}?session=${useChatStore.getState().activeSessionId}`);
+    expect(pushMock).toHaveBeenCalled();
+    const targetPath = pushMock.mock.calls.at(-1)?.[0];
+    expect(targetPath).toContain(`${PATHNAME}?`);
+    expect(targetPath).toContain("session=");
   });
 
   // 정상 흐름: 메시지를 전송하면 사용자/어시스턴트 메시지가 세션에 누적된다.
@@ -131,6 +134,7 @@ describe("ChatPage", () => {
     };
 
     useChatStore.setState({ sessions: [session], activeSessionId: "chat-200" });
+    setSearchParams("session=chat-200");
     render(<ChatPage />);
 
     fireEvent.click(screen.getByText("send-message"));

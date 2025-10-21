@@ -31,6 +31,37 @@ export type RagEvidenceItem = {
   highlightRange?: EvidenceHighlight;
 };
 
+export type GuardrailLevel = "pass" | "warn" | "fail";
+
+export type GuardrailTelemetry = {
+  status: "idle" | "loading" | "ready" | "error";
+  level?: GuardrailLevel;
+  message?: string;
+  errorMessage?: string;
+};
+
+export type MetricTrend = "up" | "down" | "flat";
+
+export type MetricSummary = {
+  id: string;
+  label: string;
+  value: string;
+  change?: string;
+  trend?: MetricTrend;
+  description?: string;
+};
+
+export type MetricsTelemetry = {
+  status: "idle" | "loading" | "ready" | "error";
+  items: MetricSummary[];
+  errorMessage?: string;
+};
+
+export type SessionTelemetry = {
+  guardrail: GuardrailTelemetry;
+  metrics: MetricsTelemetry;
+};
+
 type RagEvidenceStateBase = {
   items: RagEvidenceItem[];
   activeId?: string;
@@ -62,6 +93,7 @@ export type ChatSession = {
   };
   messages: ChatMessage[];
   evidence?: RagEvidenceState;
+  telemetry?: SessionTelemetry;
 };
 
 type ChatStoreState = {
@@ -142,6 +174,34 @@ const initialSessions: ChatSession[] = [
       confidence: 0.71,
       documentTitle: "삼성전자 반기보고서",
       documentUrl: "/mock/filings/F-001.pdf"
+    },
+    telemetry: {
+      guardrail: {
+        status: "ready",
+        level: "warn",
+        message: "민감 정보 포함 가능성. 공유 시 주의하세요."
+      },
+      metrics: {
+        status: "ready",
+        items: [
+          {
+            id: "metric-ltv",
+            label: "LTV",
+            value: "48%",
+            change: "-2%p",
+            trend: "down",
+            description: "최근 분기 대비 부채 비율 감소폭"
+          },
+          {
+            id: "metric-fcf",
+            label: "잉여현금흐름",
+            value: "₩1.3조",
+            change: "+12%",
+            trend: "up",
+            description: "전년 동기 대비 증가율"
+          }
+        ]
+      }
     }
   },
   {
@@ -168,6 +228,16 @@ const initialSessions: ChatSession[] = [
       confidence: undefined,
       documentTitle: "LG화학 반기보고서",
       documentUrl: "/mock/filings/F-002.pdf"
+    },
+    telemetry: {
+      guardrail: {
+        status: "loading"
+      },
+      metrics: {
+        status: "error",
+        items: [],
+        errorMessage: "지표 요약을 가져오지 못했습니다."
+      }
     }
   }
 ];
@@ -210,6 +280,15 @@ export const useChatStore = create<ChatStoreState & ChatStoreActions>((set, get)
         items: [],
         activeId: undefined,
         confidence: undefined
+      },
+      telemetry: {
+        guardrail: {
+          status: "idle"
+        },
+        metrics: {
+          status: "idle",
+          items: []
+        }
       }
     };
     set((state) => ({
@@ -245,6 +324,15 @@ export const useChatStore = create<ChatStoreState & ChatStoreActions>((set, get)
         confidence: undefined,
         documentTitle: title,
         documentUrl: `/mock/filings/${filingId}.pdf`
+      },
+      telemetry: {
+        guardrail: {
+          status: "loading"
+        },
+        metrics: {
+          status: "loading",
+          items: []
+        }
       }
     };
     set((state) => ({
@@ -294,6 +382,32 @@ export const selectActiveEvidence = (state: ChatStoreState & ChatStoreActions): 
 
 export const selectEvidenceStatus = (state: ChatStoreState & ChatStoreActions) =>
   selectActiveSession(state)?.evidence?.status ?? "idle";
+
+const guardrailDefault: GuardrailTelemetry = { status: "idle" };
+
+const metricsDefault: MetricsTelemetry = { status: "idle", items: [] };
+
+export const selectGuardrailTelemetry = (state: ChatStoreState & ChatStoreActions): GuardrailTelemetry => {
+  const guardrail = selectActiveSession(state)?.telemetry?.guardrail;
+  if (!guardrail) {
+    return { ...guardrailDefault };
+  }
+  return { ...guardrail };
+};
+
+export const selectMetricTelemetry = (state: ChatStoreState & ChatStoreActions): MetricsTelemetry => {
+  const metrics = selectActiveSession(state)?.telemetry?.metrics;
+  if (!metrics) {
+    return { ...metricsDefault };
+  }
+  return { ...metrics, items: [...metrics.items] };
+};
+
+export const selectContextPanelData = (state: ChatStoreState & ChatStoreActions) => ({
+  evidence: selectActiveEvidence(state),
+  guardrail: selectGuardrailTelemetry(state),
+  metrics: selectMetricTelemetry(state)
+});
 
 export const selectHighlightDisplay = (state: ChatStoreState & ChatStoreActions) => {
   const session = selectActiveSession(state);

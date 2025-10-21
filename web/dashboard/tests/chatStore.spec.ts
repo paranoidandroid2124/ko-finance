@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useChatStore } from "@/store/chatStore";
+import {
+  selectContextPanelData,
+  selectGuardrailTelemetry,
+  selectMetricTelemetry,
+  useChatStore
+} from "@/store/chatStore";
 
 const resetStore = () => {
   useChatStore.setState({ sessions: [], activeSessionId: null });
@@ -107,5 +112,60 @@ describe("chatStore", () => {
     const updated = useChatStore.getState().sessions[0]?.evidence?.activeId;
 
     expect(updated).toBe("ev-b");
+  });
+
+  it("provides safe defaults for guardrail and metrics telemetry", () => {
+    const guardrail = selectGuardrailTelemetry(useChatStore.getState());
+    const metrics = selectMetricTelemetry(useChatStore.getState());
+
+    expect(guardrail.status).toBe("idle");
+    expect(metrics.status).toBe("idle");
+    expect(metrics.items).toHaveLength(0);
+  });
+
+  it("selects active telemetry snapshot when present", () => {
+    const sessionId = "telemetry-session";
+    useChatStore.setState({
+      sessions: [
+        {
+          id: sessionId,
+          title: "텔레메트리 세션",
+          updatedAt: "지금",
+          messages: [],
+          context: { type: "custom" },
+          telemetry: {
+            guardrail: {
+              status: "ready",
+              level: "fail",
+              message: "보안 정책으로 응답이 제한되었습니다."
+            },
+            metrics: {
+              status: "ready",
+              items: [
+                {
+                  id: "mrr",
+                  label: "월간 반복 매출",
+                  value: "₩520억",
+                  change: "+4%",
+                  trend: "up"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      activeSessionId: sessionId
+    });
+
+    const guardrail = selectGuardrailTelemetry(useChatStore.getState());
+    const metrics = selectMetricTelemetry(useChatStore.getState());
+    const bundle = selectContextPanelData(useChatStore.getState());
+
+    expect(guardrail.status).toBe("ready");
+    expect(guardrail.level).toBe("fail");
+    expect(metrics.items[0]?.label).toBe("월간 반복 매출");
+    expect(bundle.guardrail.level).toBe("fail");
+    expect(bundle.metrics.items).toHaveLength(1);
+    expect(bundle.evidence.status).toBe("idle");
   });
 });
