@@ -1,5 +1,9 @@
 import logging
 
+from scripts._path import add_root
+
+add_root()
+
 from database import Base, engine
 from models.fact import ExtractedFact  # noqa: F401
 from models.filing import Filing  # noqa: F401
