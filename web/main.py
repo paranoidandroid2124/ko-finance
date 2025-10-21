@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from web.routers import filing, news, rag
+from web.routers import dashboard, filing, news, rag
 
 app = FastAPI(
     title="K-Finance AI Research Copilot",
@@ -30,6 +30,7 @@ def health_check():
 
 
 # API v1 라우터 등록
+app.include_router(dashboard.router, prefix="/api/v1")
 app.include_router(filing.router, prefix="/api/v1")
 app.include_router(news.router, prefix="/api/v1")
 app.include_router(rag.router, prefix="/api/v1")
