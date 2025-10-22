@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { FilingsTable } from "@/components/filings/FilingsTable";
@@ -8,7 +8,7 @@ import { FilingDetailPanel } from "@/components/filings/FilingDetailPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
-import { useFilings } from "@/hooks/useFilings";
+import { useFilings, useFilingDetail } from "@/hooks/useFilings";
 
 export default function FilingsPage() {
   const searchParams = useSearchParams();
@@ -16,6 +16,11 @@ export default function FilingsPage() {
 
   const { data: filings = [], isLoading, isError } = useFilings();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const {
+    data: filingDetail,
+    isLoading: isDetailLoading,
+    isError: isDetailError
+  } = useFilingDetail(selectedId ?? undefined);
 
   useEffect(() => {
     if (!filings.length) return;
@@ -31,11 +36,6 @@ export default function FilingsPage() {
     });
   }, [filings, initialFilingId]);
 
-  const selected = useMemo(
-    () => filings.find((filing) => filing.id === selectedId) ?? filings[0],
-    [filings, selectedId]
-  );
-
   const hasFilings = filings.length > 0;
 
   return (
@@ -50,10 +50,23 @@ export default function FilingsPage() {
           <SkeletonBlock lines={6} />
           <SkeletonBlock lines={8} />
         </div>
-      ) : hasFilings && selected ? (
+      ) : hasFilings ? (
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <FilingsTable filings={filings} selectedId={selected.id} onSelect={setSelectedId} />
-          <FilingDetailPanel filing={selected} />
+          <FilingsTable
+            filings={filings}
+            selectedId={selectedId ?? undefined}
+            onSelect={setSelectedId}
+          />
+          {isDetailError ? (
+            <ErrorState
+              title="공시 상세를 불러오지 못했어요"
+              description="선택한 공시의 상세정보를 가져오지 못했습니다. 잠시 후 다시 시도해주세요."
+            />
+          ) : isDetailLoading || !filingDetail ? (
+            <SkeletonBlock lines={8} />
+          ) : (
+            <FilingDetailPanel filing={filingDetail} />
+          )}
         </div>
       ) : (
         <EmptyState

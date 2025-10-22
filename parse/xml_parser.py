@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 
 from parse.chunk_utils import build_chunk, normalize_text
 
@@ -27,6 +28,49 @@ def _serialize_attrs(tag) -> Dict[str, str]:
         else:
             attrs[key] = str(value)
     return attrs
+
+
+def _compute_xpath(tag: Tag) -> Optional[str]:
+    if not tag or not getattr(tag, "name", None):
+        return None
+    parts: List[str] = []
+    current: Optional[Tag] = tag
+    while current and getattr(current, "name", None) and current.name != "[document]":
+        parent = current.parent
+        if not isinstance(parent, Tag):
+            index = 1
+        else:
+            siblings = [
+                sibling
+                for sibling in parent.find_all(current.name, recursive=False)
+                if isinstance(sibling, Tag)
+            ]
+            try:
+                index = siblings.index(current) + 1
+            except ValueError:
+                index = 1
+        parts.append(f"{current.name}[{index}]")
+        current = parent if isinstance(parent, Tag) else None
+    if not parts:
+        return None
+    return "/".join(reversed(parts))
+
+
+def _build_metadata(tag: Tag, source_file: str, extra: Optional[Dict[str, object]] = None, *, include_text: Optional[str] = None) -> Dict[str, object]:
+    metadata: Dict[str, object] = {
+        "file_path": source_file,
+        "tag": tag.name,
+        "attributes": _serialize_attrs(tag),
+    }
+    xpath = _compute_xpath(tag)
+    if xpath:
+        metadata["xpath"] = xpath
+    if include_text is not None:
+        metadata["offset_start"] = 0
+        metadata["offset_end"] = len(include_text)
+    if extra:
+        metadata.update(extra)
+    return metadata
 
 
 def extract_chunks_from_xml(xml_paths: List[str]) -> List[Dict[str, object]]:
@@ -63,12 +107,11 @@ def extract_chunks_from_xml(xml_paths: List[str]) -> List[Dict[str, object]]:
                         content=table_text,
                         section=table_tag.name.lower(),
                         source="xml",
-                        metadata={
-                            "file_path": source_file,
-                            "tag": table_tag.name,
-                            "attributes": _serialize_attrs(table_tag),
-                            "table_rows": rows,
-                        },
+                        metadata=_build_metadata(
+                            table_tag,
+                            source_file,
+                            extra={"table_rows": rows},
+                        ),
                     )
                 )
                 table_tag.extract()
@@ -82,19 +125,15 @@ def extract_chunks_from_xml(xml_paths: List[str]) -> List[Dict[str, object]]:
                 text = normalize_text(footnote_tag.get_text(" ", strip=True))
                 if text:
                     chunks.append(
-                        build_chunk(
-                            f"{base_id}-footnote-{footnote_index}",
-                            chunk_type="footnote",
-                            content=text,
-                            section=footnote_tag.name.lower(),
-                            source="xml",
-                            metadata={
-                                "file_path": source_file,
-                                "tag": footnote_tag.name,
-                                "attributes": _serialize_attrs(footnote_tag),
-                            },
-                        )
+                    build_chunk(
+                        f"{base_id}-footnote-{footnote_index}",
+                        chunk_type="footnote",
+                        content=text,
+                        section=footnote_tag.name.lower(),
+                        source="xml",
+                        metadata=_build_metadata(footnote_tag, source_file),
                     )
+                )
                 footnote_tag.extract()
 
             figure_tags = soup.find_all(FIGURE_TAGS)
@@ -111,11 +150,7 @@ def extract_chunks_from_xml(xml_paths: List[str]) -> List[Dict[str, object]]:
                         content=caption,
                         section=figure_tag.name.lower(),
                         source="xml",
-                        metadata={
-                            "file_path": source_file,
-                            "tag": figure_tag.name,
-                            "attributes": _serialize_attrs(figure_tag),
-                        },
+                        metadata=_build_metadata(figure_tag, source_file),
                     )
                 )
                 figure_tag.extract()
@@ -132,11 +167,7 @@ def extract_chunks_from_xml(xml_paths: List[str]) -> List[Dict[str, object]]:
                         content=text,
                         section=tag.name.lower(),
                         source="xml",
-                        metadata={
-                            "file_path": source_file,
-                            "tag": tag.name,
-                            "attributes": _serialize_attrs(tag),
-                        },
+                        metadata=_build_metadata(tag, source_file, include_text=text),
                     )
                 )
                 sequence += 1
@@ -150,3 +181,10 @@ def extract_chunks_from_xml(xml_paths: List[str]) -> List[Dict[str, object]]:
 
 __all__ = ["extract_chunks_from_xml"]
 
+
+def parse_xml_chunks(xml_paths: List[str]) -> List[Dict[str, object]]:
+    """Backward-compatible alias used in legacy tests."""
+    return extract_chunks_from_xml(xml_paths)
+
+
+__all__.append("parse_xml_chunks")

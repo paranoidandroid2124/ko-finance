@@ -30,10 +30,11 @@ class RAGQueryResponse(BaseModel):
     original_answer: Optional[str] = None
     model_used: Optional[str] = None
     trace_id: Optional[str] = None
+    judge_decision: Optional[str] = Field(default=None, description="Result from regulatory judge model.")
+    judge_reason: Optional[str] = Field(default=None, description="Explanation from judge model.")
 
     class Config:
         from_attributes = True
 
 
 __all__ = ["RAGQueryRequest", "RAGQueryResponse"]
-

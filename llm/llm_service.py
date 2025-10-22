@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import litellm
@@ -17,6 +18,7 @@ from llm.prompts import (
     analyze_news,
     classify_filing,
     extract_info,
+    judge_guard,
     rag_qa,
     self_check,
     summarize_report,
@@ -24,6 +26,49 @@ from llm.prompts import (
 )
 
 logger = get_logger(__name__)
+
+DEFAULT_LITELLM_CONFIG = Path(__file__).resolve().parent.parent / "litellm_config.yaml"
+
+if not os.getenv("LITELLM_CONFIG_PATH") and DEFAULT_LITELLM_CONFIG.exists():
+    os.environ["LITELLM_CONFIG_PATH"] = str(DEFAULT_LITELLM_CONFIG)
+
+
+def _apply_litellm_aliases() -> None:
+    config_path = os.getenv("LITELLM_CONFIG_PATH")
+    if not config_path:
+        return
+    path = Path(config_path)
+    if not path.is_file():
+        return
+    try:
+        import yaml
+    except ImportError:
+        logger.debug("PyYAML not available; skipping LiteLLM alias load.")
+        return
+    try:
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Failed to parse LiteLLM config for aliases: %s", exc)
+        return
+    model_list = config.get("model_list") if isinstance(config, dict) else None
+    if not isinstance(model_list, list):
+        return
+    alias_map: Dict[str, str] = {}
+    for entry in model_list:
+        if not isinstance(entry, dict):
+            continue
+        alias = entry.get("model_name")
+        params = entry.get("litellm_params")
+        if not alias or not isinstance(params, dict):
+            continue
+        target = params.get("model")
+        if isinstance(target, str) and target:
+            alias_map.setdefault(alias, target)
+    if alias_map:
+        litellm.model_alias_map.update(alias_map)
+
+
+_apply_litellm_aliases()
 
 LANGFUSE_CLIENT: Optional[Langfuse] = None
 if os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"):
@@ -44,12 +89,17 @@ EXTRACTION_MODEL = os.getenv("LLM_EXTRACTION_MODEL", "gemini_flash_lite")
 SELF_CHECK_MODEL = os.getenv("LLM_SELF_CHECK_MODEL", "gemini_flash_lite")
 NEWS_ANALYSIS_MODEL = os.getenv("LLM_NEWS_MODEL", "gemini_flash_lite")
 RAG_MODEL = os.getenv("LLM_RAG_MODEL", "gemini_flash_lite")
-QUALITY_FALLBACK_MODEL = os.getenv("LLM_QUALITY_FALLBACK_MODEL", "gpt-4.1")
+QUALITY_FALLBACK_MODEL = os.getenv("LLM_QUALITY_FALLBACK_MODEL", "gpt-5-chat")
+JUDGE_MODEL = os.getenv("LLM_GUARD_JUDGE_MODEL", "gpt-4o-mini")
 
 CITATION_PAGE_RE = re.compile(r"\(p\.\s*\d+\)", re.IGNORECASE)
 CITATION_TABLE_RE = re.compile(r"\(table\s*[^\)]+\)", re.IGNORECASE)
 CITATION_FOOTNOTE_RE = re.compile(r"\(footnote\s*[^\)]+\)", re.IGNORECASE)
 
+JUDGE_BLOCK_MESSAGE = (
+    '해당 답변은 투자 권유 또는 확정적 수익 보장으로 해석될 여지가 있어 표시되지 않습니다. ' 
+    '질문을 더 일반적인 정보 요청이나 시나리오 분석 형태로 다시 작성해 주세요.'
+)
 
 def _record_langfuse_event(
     model: str,
@@ -347,7 +397,7 @@ def _collect_highlights(context_chunks: List[Dict[str, Any]]) -> List[Dict[str, 
                 "page_number": chunk.get("page_number"),
                 "section": chunk.get("section"),
                 "source": chunk.get("source"),
-                "metadata": chunk.get("metadata"),
+                "metadata": chunk.get("metadata") or {},
             }
         )
     return highlights
@@ -359,14 +409,27 @@ def _select_prompt_builder(context_chunks: List[Dict[str, Any]]):
     return rag_qa
 
 
-def answer_with_rag(question: str, context_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
-    builder = _select_prompt_builder(context_chunks)
-    messages = builder.get_prompt(question, context_chunks)
-    response, model_used = _safe_completion(RAG_MODEL, messages)
-    if response is None:
-        return {"error": model_used or "rag_failed"}
+def judge_question_for_regulatory_risk(question: str) -> Dict[str, Any]:
+    messages = judge_guard.get_prompt(question)
+    result = _json_completion(JUDGE_MODEL, messages)
+    if "error" in result:
+        logger.warning("Judge evaluation failed: %s", result["error"])
+        return {"error": result["error"]}
+    decision = str(result.get("decision", "")).strip().lower()
+    reason = result.get("reason")
+    model_used = result.get("model_used")
+    return {
+        "decision": decision or "unknown",
+        "reason": reason,
+        "model_used": model_used,
+    }
 
-    answer = getattr(response.choices[0].message, "content", "") or ""
+
+def _prepare_rag_payload(
+    context_chunks: List[Dict[str, Any]],
+    answer: str,
+    model_used: Optional[str],
+) -> Dict[str, Any]:
     safe_answer, guardrail_error = apply_answer_guard(answer)
 
     citations = _extract_citations(safe_answer)
@@ -375,11 +438,12 @@ def answer_with_rag(question: str, context_chunks: List[Dict[str, Any]]) -> Dict
     payload: Dict[str, Any] = {
         "answer": safe_answer,
         "original_answer": answer if guardrail_error else None,
-        "model_used": model_used,
-        "context": context_chunks,
+        "model_used": model_used or RAG_MODEL,
+        "context": list(context_chunks),
         "citations": citations,
         "warnings": [],
         "highlights": _collect_highlights(context_chunks),
+        "error": None,
     }
 
     if guardrail_error:
@@ -393,6 +457,154 @@ def answer_with_rag(question: str, context_chunks: List[Dict[str, Any]]) -> Dict
     return payload
 
 
+def answer_with_rag(question: str, context_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    judge_result = judge_question_for_regulatory_risk(question)
+    judge_decision = judge_result.get("decision") if judge_result else None
+    judge_reason = judge_result.get("reason") if judge_result else None
+    judge_model_used = judge_result.get("model_used") if judge_result else None
+
+    if judge_result.get("error"):
+        logger.warning("Pre-judge evaluation failed for question.")
+        judge_decision = "unknown"
+
+    if judge_decision and judge_decision != "pass":
+        violation_code = "guardrail_violation_judge"
+        warnings: List[str] = []
+        if judge_reason:
+            warnings.append(f"{violation_code}:{judge_reason}")
+        else:
+            warnings.append(violation_code)
+        payload: Dict[str, Any] = {
+            "answer": JUDGE_BLOCK_MESSAGE,
+            "original_answer": None,
+            "model_used": None,
+            "context": [],
+            "citations": {"page": [], "table": [], "footnote": []},
+            "warnings": warnings,
+            "highlights": [],
+            "error": violation_code,
+            "judge_decision": judge_decision,
+        }
+        if judge_reason:
+            payload["judge_reason"] = judge_reason
+        if judge_model_used:
+            payload["judge_model_used"] = judge_model_used
+        return payload
+
+    builder = _select_prompt_builder(context_chunks)
+    messages = builder.get_prompt(question, context_chunks)
+    response, model_used = _safe_completion(RAG_MODEL, messages)
+    if response is None:
+        return {"error": model_used or "rag_failed"}
+
+    answer = getattr(response.choices[0].message, "content", "") or ""
+    payload = _prepare_rag_payload(context_chunks, answer, model_used)
+
+    if judge_result.get("error"):
+        payload["warnings"].append("judge_evaluation_failed")
+        payload["judge_decision"] = judge_decision
+    else:
+        if judge_decision:
+            payload["judge_decision"] = judge_decision
+        if judge_reason:
+            payload["judge_reason"] = judge_reason
+        if judge_model_used:
+            payload["judge_model_used"] = judge_model_used
+
+    return payload
+
+
+def stream_answer_with_rag(question: str, context_chunks: List[Dict[str, Any]]):
+    judge_result = judge_question_for_regulatory_risk(question)
+    judge_decision = judge_result.get("decision") if judge_result else None
+    judge_reason = judge_result.get("reason") if judge_result else None
+    judge_model_used = judge_result.get("model_used") if judge_result else None
+
+    if judge_result.get("error"):
+        logger.warning("Pre-judge evaluation failed for question.")
+        judge_decision = "unknown"
+
+    if judge_decision and judge_decision != "pass":
+        violation_code = "guardrail_violation_judge"
+        warnings: List[str] = []
+        if judge_reason:
+            warnings.append(f"{violation_code}:{judge_reason}")
+        else:
+            warnings.append(violation_code)
+        payload: Dict[str, Any] = {
+            "answer": JUDGE_BLOCK_MESSAGE,
+            "original_answer": None,
+            "model_used": None,
+            "context": [],
+            "citations": {"page": [], "table": [], "footnote": []},
+            "warnings": warnings,
+            "highlights": [],
+            "error": violation_code,
+            "judge_decision": judge_decision,
+        }
+        if judge_reason:
+            payload["judge_reason"] = judge_reason
+        if judge_model_used:
+            payload["judge_model_used"] = judge_model_used
+        yield {"type": "final", "payload": payload}
+        return
+
+    builder = _select_prompt_builder(context_chunks)
+    messages = builder.get_prompt(question, context_chunks)
+    try:
+        stream = litellm.completion(model=RAG_MODEL, messages=messages, stream=True)
+    except Exception as exc:
+        logger.error("Streaming LLM call failed: %s", exc, exc_info=True)
+        raise
+
+    accumulated_tokens: List[str] = []
+    model_used: Optional[str] = None
+
+    for chunk in stream:
+        chunk_dict = chunk if isinstance(chunk, dict) else getattr(chunk, "dict", lambda: None)()
+        if chunk_dict is None:
+            chunk_dict = getattr(chunk, "__dict__", {})
+        if model_used is None:
+            model_used = chunk_dict.get("model") or RAG_MODEL
+        choices = chunk_dict.get("choices") or []
+        if not choices:
+            continue
+        choice_obj = choices[0]
+        token = ""
+        if isinstance(choice_obj, dict):
+            delta = choice_obj.get("delta") or {}
+            if isinstance(delta, dict):
+                token = delta.get("content") or ""
+            if not token:
+                token = choice_obj.get("text") or ""
+        else:
+            delta = getattr(choice_obj, "delta", None)
+            if isinstance(delta, dict):
+                token = delta.get("content") or ""
+            if not token:
+                token = getattr(choice_obj, "text", "") or getattr(choice_obj, "content", "") or ""
+        if not token:
+            continue
+        accumulated_tokens.append(token)
+        yield {"type": "token", "text": token}
+
+    answer = "".join(accumulated_tokens)
+    payload = _prepare_rag_payload(context_chunks, answer, model_used)
+
+    if judge_result.get("error"):
+        payload["warnings"].append("judge_evaluation_failed")
+        payload["judge_decision"] = judge_decision
+    else:
+        if judge_decision:
+            payload["judge_decision"] = judge_decision
+        if judge_reason:
+            payload["judge_reason"] = judge_reason
+        if judge_model_used:
+            payload["judge_model_used"] = judge_model_used
+
+    yield {"type": "final", "payload": payload}
+
+
 __all__ = [
     "classify_filing_content",
     "extract_structured_info",
@@ -401,5 +613,7 @@ __all__ = [
     "analyze_news_article",
     "validate_news_analysis_result",
     "answer_with_rag",
+    "stream_answer_with_rag",
+    "judge_question_for_regulatory_risk",
+    "JUDGE_BLOCK_MESSAGE",
 ]
-

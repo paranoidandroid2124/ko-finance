@@ -1,7 +1,10 @@
+"use client";
+
 import { LayoutDashboard, FileText, Newspaper, MessageSquare, Settings } from "lucide-react";
 import Link from "next/link";
+import type { Route } from "next";
 
-const NAV_ITEMS = [
+const NAV_ITEMS: Array<{ href: Route; label: string; icon: typeof LayoutDashboard }> = [
   { href: "/", label: "대시보드", icon: LayoutDashboard },
   { href: "/filings", label: "공시", icon: FileText },
   { href: "/news", label: "뉴스 인사이트", icon: Newspaper },
@@ -32,9 +35,8 @@ export function SideNav() {
       </nav>
       <div className="rounded-lg border border-dashed border-border-light p-3 text-xs text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
         <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">실시간 상태</p>
-        <p className="mt-1">큐 지연, Langfuse, Qdrant 상태를 곧 여기에 표시합니다.</p>
+        <p className="mt-1">큐 저장소, Langfuse, Qdrant 상태를 곧 여기에 표시합니다.</p>
       </div>
     </aside>
   );
 }
-

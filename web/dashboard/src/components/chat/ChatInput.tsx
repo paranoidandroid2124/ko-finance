@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 
@@ -18,11 +18,14 @@ export function ChatInput({ onSubmit, disabled }: ChatInputProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex items-end gap-3 rounded-xl border border-border-light bg-background-cardLight p-3 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
+    <form
+      onSubmit={handleSubmit}
+      className="flex items-end gap-3 rounded-xl border border-border-light bg-background-cardLight p-3 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark"
+    >
       <textarea
         value={value}
         onChange={(event) => setValue(event.target.value)}
-        placeholder="공시나 뉴스에 대해 질문해보세요."
+        placeholder="질문을 입력하면 공시 내용을 기반으로 답변해 드립니다."
         className="min-h-[60px] flex-1 resize-none bg-transparent text-sm outline-none placeholder:text-text-secondaryLight dark:placeholder:text-text-secondaryDark"
       />
       <button
@@ -35,4 +38,3 @@ export function ChatInput({ onSubmit, disabled }: ChatInputProps) {
     </form>
   );
 }
-

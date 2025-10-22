@@ -113,15 +113,37 @@ class DartClient:
             raise
 
         content_type = response.headers.get("Content-Type", "").lower()
-        if "zip" in content_type or response.content.startswith(b"PK"):
-            return response.content
+        content_bytes = response.content
 
-        try:
-            payload = xmltodict.parse(response.text)
-            message = payload.get("result", {}).get("message", "Unknown error")
-        except Exception:
-            message = response.text
-        logger.warning("DART document download returned non-ZIP content (%s): %s", receipt_no, message)
+        if (
+            "zip" in content_type
+            or content_bytes.startswith(b"PK")
+            or zipfile.is_zipfile(io.BytesIO(content_bytes))
+        ):
+            return content_bytes
+
+        if content_bytes.startswith(b"%PDF"):
+            return content_bytes
+
+        stripped = content_bytes.lstrip()
+        if stripped.startswith(b"<?xml") or stripped.startswith(b"<"):
+            try:
+                payload = xmltodict.parse(content_bytes)
+            except Exception:
+                return content_bytes
+
+            status = payload.get("result", {}).get("status")
+            if status and status != "000":
+                message = payload.get("result", {}).get("message", "Unknown error")
+                logger.warning(
+                    "DART document download returned error XML (%s): %s", receipt_no, message
+                )
+                return None
+            return content_bytes
+
+        logger.warning(
+            "DART document download returned unsupported payload (%s): content-type=%s", receipt_no, content_type
+        )
         return None
 
     @staticmethod
@@ -134,4 +156,3 @@ class DartClient:
 
 
 __all__ = ["DartClient"]
-

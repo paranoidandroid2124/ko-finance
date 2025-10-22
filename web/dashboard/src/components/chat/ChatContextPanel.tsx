@@ -2,18 +2,14 @@
 
 import { useCallback, useMemo } from "react";
 import { RagEvidencePanel } from "@/components/chat/RenderRagEvidence";
+import { FilingXmlViewer } from "@/components/chat/FilingXmlViewer";
 import { PdfHighlightMock } from "@/components/chat/PdfHighlightMock";
-import {
-  selectActiveSession,
-  selectContextPanelData,
-  selectHighlightDisplay,
-  useChatStore
-} from "@/store/chatStore";
+import { selectActiveSession, selectContextPanelData, selectHighlightDisplay, useChatStore } from "@/store/chatStore";
 
 export function ChatContextPanel() {
   const activeSession = useChatStore(selectActiveSession);
   const { evidence, guardrail, metrics } = useChatStore(selectContextPanelData);
-  const highlightDisplay = useChatStore(selectHighlightDisplay);
+  const highlight = useChatStore(selectHighlightDisplay);
   const focusEvidence = useChatStore((state) => state.focus_evidence_item);
 
   const contextLabel = useMemo(() => {
@@ -36,11 +32,15 @@ export function ChatContextPanel() {
     [focusEvidence]
   );
 
-  const handleHighlightSelect = useCallback(
+  const handleOpenSource = useCallback(
     (evidenceId: string) => {
       focusEvidence(evidenceId);
+      const target = evidence.items.find((item) => item.id === evidenceId);
+      if (target?.sourceUrl) {
+        window.open(target.sourceUrl, "_blank", "noopener,noreferrer");
+      }
     },
-    [focusEvidence]
+    [evidence.items, focusEvidence]
   );
 
   return (
@@ -57,7 +57,7 @@ export function ChatContextPanel() {
           </div>
         ) : (
           <p className="mt-3 rounded-lg border border-dashed border-border-light px-3 py-4 text-xs text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
-            이 세션에는 아직 연결된 컨텍스트가 없습니다. 공시 상세 화면의 “질문하기” 버튼을 사용해보세요.
+            이 세션에는 아직 연결된 컨텍스트가 없습니다. 공시 상세 화면에서 “질문하기” 버튼을 사용해 새 대화를 열어보세요.
           </p>
         )}
       </section>
@@ -71,18 +71,28 @@ export function ChatContextPanel() {
           guardrail={guardrail}
           metrics={metrics}
           onSelectItem={handleEvidenceSelect}
+          onOpenSource={handleOpenSource}
         />
       </section>
       <section>
         <PdfHighlightMock
-          status={highlightDisplay.status}
-          documentTitle={highlightDisplay.documentTitle}
-          pdfUrl={highlightDisplay.documentUrl}
-          highlightRanges={highlightDisplay.ranges}
-          activeRangeId={highlightDisplay.activeRangeId}
-          onFocusHighlight={handleHighlightSelect}
+          documentTitle={highlight.documentTitle}
+          pdfUrl={highlight.documentUrl}
+          highlightRanges={highlight.ranges}
+          activeRangeId={highlight.activeRangeId}
+          status={highlight.status}
+          onFocusHighlight={focusEvidence}
         />
       </section>
+      {activeSession?.context?.type === "filing" ? (
+        <section>
+          <FilingXmlViewer
+            filingId={referenceId ?? undefined}
+            evidenceItems={evidence.items}
+            activeEvidenceId={evidence.activeId ?? undefined}
+          />
+        </section>
+      ) : null}
     </aside>
   );
 }

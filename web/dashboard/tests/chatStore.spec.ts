@@ -7,7 +7,12 @@ import {
 } from "@/store/chatStore";
 
 const resetStore = () => {
-  useChatStore.setState({ sessions: [], activeSessionId: null });
+  useChatStore.setState({
+    sessions: [],
+    activeSessionId: null,
+    persistenceError: null,
+    hydrated: true
+  });
 };
 
 describe("chatStore", () => {
@@ -167,5 +172,44 @@ describe("chatStore", () => {
     expect(bundle.guardrail.level).toBe("fail");
     expect(bundle.metrics.items).toHaveLength(1);
     expect(bundle.evidence.status).toBe("idle");
+  });
+
+  it("removes sessions and promotes the next session as active", () => {
+    const first = useChatStore.getState().createSession("첫 번째");
+    const second = useChatStore.getState().createSession("두 번째");
+
+    useChatStore.setState({ activeSessionId: first });
+    useChatStore.getState().removeSession(first);
+
+    const state = useChatStore.getState();
+    expect(state.sessions.some((session) => session.id === first)).toBe(false);
+    expect(state.activeSessionId).toBe(second);
+  });
+
+  it("clears all sessions and resets the active identifier", () => {
+    useChatStore.getState().createSession();
+    useChatStore.getState().clearSessions();
+
+    const state = useChatStore.getState();
+    expect(state.sessions).toHaveLength(0);
+    expect(state.activeSessionId).toBeNull();
+  });
+
+  it("renames sessions using the renameSession action", () => {
+    const sessionId = useChatStore.getState().createSession();
+    useChatStore.getState().renameSession(sessionId, "업데이트된 제목");
+
+    const updated = useChatStore.getState().sessions.find((session) => session.id === sessionId);
+    expect(updated?.title).toBe("업데이트된 제목");
+  });
+
+  it("caps the stored session history at ten entries", () => {
+    Array.from({ length: 12 }).forEach((_, index) => {
+      const id = useChatStore.getState().createSession(`세션 ${index + 1}`);
+      useChatStore.getState().renameSession(id, `세션 ${index + 1}`);
+    });
+
+    const state = useChatStore.getState();
+    expect(state.sessions.length).toBeLessThanOrEqual(10);
   });
 });

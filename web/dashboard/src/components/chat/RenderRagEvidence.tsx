@@ -72,7 +72,7 @@ function format_confidence_text(confidence?: number) {
   return `${Math.round(normalized)}% 신뢰도`;
 }
 
-export function render_evidence_panel({
+export function RagEvidencePanel({
   status,
   items,
   activeId,
@@ -129,7 +129,7 @@ export function render_evidence_panel({
     if (guardrail.status === "error") {
       return (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-[11px] text-destructive dark:border-destructive/60 dark:bg-destructive/15">
-          <p>Guardrail 정보를 불러오지 못했습니다.</p>
+          <p>가드레일 정보를 불러오지 못했습니다.</p>
           {guardrail.errorMessage ? <p className="mt-1">{guardrail.errorMessage}</p> : null}
         </div>
       );
@@ -140,7 +140,7 @@ export function render_evidence_panel({
       return (
         <div className={`space-y-2 rounded-lg border px-3 py-3 text-[11px] ${tone.container}`}>
           <div className="flex items-center justify-between gap-2">
-            <p className="font-semibold">Guardrail 상태</p>
+            <p className="font-semibold">가드레일 상태</p>
             {guardrailBadge}
           </div>
           <p className="leading-relaxed">{guardrail.message}</p>
@@ -150,7 +150,7 @@ export function render_evidence_panel({
 
     return (
       <div className="rounded-lg border border-dashed border-border-light px-3 py-3 text-[11px] text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
-        Guardrail 결과가 준비되면 여기에 표시됩니다.
+        가드레일 결과가 준비되면 여기에 표시됩니다.
       </div>
     );
   };
@@ -230,7 +230,7 @@ export function render_evidence_panel({
 
       <div className="space-y-3">
         <div className="space-y-2">
-          <p className="text-[11px] font-semibold uppercase text-text-secondaryLight dark:text-text-secondaryDark">Guardrail</p>
+          <p className="text-[11px] font-semibold uppercase text-text-secondaryLight dark:text-text-secondaryDark">가드레일</p>
           {render_guardrail()}
         </div>
         <div className="space-y-2">
@@ -318,4 +318,3 @@ export function render_evidence_panel({
   );
 }
 
-export const RagEvidencePanel = render_evidence_panel;

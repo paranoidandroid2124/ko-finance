@@ -7,7 +7,7 @@ from scripts._path import add_root
 add_root()
 
 from ingest.news_client import MockNewsClient
-from ingest.news_fetcher import fetch_news_articles
+from ingest.news_fetcher import fetch_news_batch
 from parse.tasks import process_news_article
 
 logging.basicConfig(level=logging.INFO)
@@ -31,11 +31,11 @@ def seed_news(use_mock: bool = False, limit: int = 5):
             logger.info("Using MockNewsClient as requested.")
             articles = MockNewsClient().fetch_news(limit=limit)
         else:
-            articles = fetch_news_articles(limit_per_feed=limit, use_mock_fallback=True)
+            articles = fetch_news_batch(limit_per_feed=limit, use_mock_fallback=False)
             if articles:
                 logger.info("Fetched %d article(s) from live feeds.", len(articles))
             else:
-                logger.warning("No live feed articles available; fallback logic already attempted.")
+                logger.warning("No live feed articles available from configured sources.")
 
         if not articles:
             logger.warning("No news articles fetched. Nothing to enqueue.")

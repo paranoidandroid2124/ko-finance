@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+﻿import { useQuery } from "@tanstack/react-query";
 
 export type FilingSentiment = "positive" | "neutral" | "negative";
 
@@ -8,69 +8,201 @@ export type FilingFact = {
   anchor?: string;
 };
 
-export type Filing = {
+export type FilingListItem = {
   id: string;
   company: string;
   title: string;
   type: string;
   filedAt: string;
   sentiment: FilingSentiment;
-  summary: string;
-  facts: FilingFact[];
-  pdfUrl?: string;
+  sentimentReason?: string;
 };
 
-const MOCK_FILINGS: Filing[] = [
-  {
-    id: "F-001",
-    company: "삼성전자",
-    title: "사업보고서 (2025.3분기)",
-    type: "사업보고서",
-    filedAt: "2025-10-19 09:31",
-    sentiment: "neutral",
-    summary:
-      "삼성전자가 2025년 3분기 실적을 발표했습니다. 반도체 부문의 재고 조정으로 영업이익은 감소했지만 시스템 LSI와 파운드리는 개선 흐름.",
-    facts: [
-      { label: "매출", value: "67조 원", anchor: "p.12" },
-      { label: "영업이익", value: "2.8조 원", anchor: "p.15" }
-    ],
-    pdfUrl: "#"
-  },
-  {
-    id: "F-002",
-    company: "LG화학",
-    title: "반기보고서 (2025.상반기)",
-    type: "반기보고서",
-    filedAt: "2025-10-18 16:45",
-    sentiment: "positive",
-    summary: "전지 사업부문이 북미 전기차 수요 회복으로 호실적을 기록. 양극재 CAPEX 확대 계획 신규 공시.",
-    facts: [
-      { label: "배터리 매출", value: "18조 원", anchor: "p.23" },
-      { label: "CAPEX", value: "4.2조 원", anchor: "p.27" }
-    ],
-    pdfUrl: "#"
-  },
-  {
-    id: "F-003",
-    company: "카카오",
-    title: "분기보고서 (2025.3분기)",
-    type: "분기보고서",
-    filedAt: "2025-10-18 10:12",
-    sentiment: "negative",
-    summary: "광고 매출 둔화 및 콘텐츠 투자 확대 영향으로 영업이익이 전년 대비 감소. 플랫폼 리스크 관련 self-check 경고 1건.",
-    facts: [
-      { label: "영업이익", value: "1,450억 원", anchor: "p.8" },
-      { label: "MAU", value: "4,700만 명", anchor: "p.10" }
-    ],
-    pdfUrl: "#"
-  }
-];
+export type FilingDetail = FilingListItem & {
+  summary: string;
+  facts: FilingFact[];
+  pdfViewerUrl?: string;
+  pdfDownloadUrl?: string;
+};
 
-const fetchFilings = async (): Promise<Filing[]> => MOCK_FILINGS;
+type ApiFilingBrief = {
+  id: string;
+  corp_name?: string | null;
+  ticker?: string | null;
+  report_name?: string | null;
+  title?: string | null;
+  category?: string | null;
+  filed_at?: string | null;
+  status: string;
+  analysis_status: string;
+  sentiment?: FilingSentiment;
+  sentiment_reason?: string | null;
+};
+
+type ApiSummary = {
+  insight?: string | null;
+  what?: string | null;
+  why?: string | null;
+  how?: string | null;
+  who?: string | null;
+  when?: string | null;
+  where?: string | null;
+};
+
+type ApiFact = {
+  fact_type: string;
+  value: string;
+  anchor_page?: number | null;
+  anchor_quote?: string | null;
+};
+
+type ApiFilingDetail = ApiFilingBrief & {
+  summary?: ApiSummary | null;
+  facts?: ApiFact[];
+  urls?: Record<string, string | null> | null;
+  source_files?: Record<string, string | null> | null;
+};
+
+const resolveApiBase = () => {
+  const base = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  if (!base) {
+    return "";
+  }
+  return base.endsWith("/") ? base.slice(0, -1) : base;
+};
+
+const formatDateTime = (value?: string | null) => {
+  if (!value) {
+    return "Unknown";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(parsed);
+};
+
+const deriveSentiment = (analysisStatus?: string, category?: string | null): FilingSentiment => {
+  const normalizedStatus = (analysisStatus ?? "").toUpperCase();
+  if (normalizedStatus === "FAILED" || normalizedStatus === "ERROR") {
+    return "negative";
+  }
+  const normalizedCategory = (category ?? "").toLowerCase();
+  if (
+    normalizedCategory.includes("warning") ||
+    normalizedCategory.includes("litigation") ||
+    normalizedCategory.includes("lawsuit") ||
+    normalizedCategory.includes("correction")
+  ) {
+    return "negative";
+  }
+  if (normalizedCategory.includes("positive") || normalizedCategory.includes("benefit") || normalizedCategory.includes("buyback")) {
+    return "positive";
+  }
+  return "neutral";
+};
+
+const toListItem = (item: ApiFilingBrief): FilingListItem => ({
+  id: item.id,
+  company: item.corp_name || item.ticker || "Unknown company",
+  title: item.report_name || item.title || "Untitled filing",
+  type: item.category || item.report_name || "Unclassified",
+  filedAt: formatDateTime(item.filed_at),
+  sentiment: item.sentiment ?? deriveSentiment(item.analysis_status, item.category),
+  sentimentReason: item.sentiment_reason ?? undefined
+});
+
+const buildSummaryText = (summary?: ApiSummary | null) => {
+  if (!summary) {
+    return "Summary is being generated.";
+  }
+
+  const candidates = [
+    summary.insight,
+    summary.what,
+    summary.why,
+    summary.how,
+    [summary.who, summary.when, summary.where].filter(Boolean).join(" · ")
+  ].filter((entry) => Boolean(entry && entry.trim())) as string[];
+
+  if (candidates.length === 0) {
+    return "Summary is being generated.";
+  }
+  return candidates[0];
+};
+
+const formatAnchor = (fact: ApiFact) => {
+  if (fact.anchor_quote) {
+    return fact.anchor_quote;
+  }
+  if (fact.anchor_page) {
+    return `p.${fact.anchor_page}`;
+  }
+  return undefined;
+};
+
+const toDetail = (detail: ApiFilingDetail): FilingDetail => {
+  const listItem = toListItem(detail);
+  const facts = (detail.facts ?? []).map((fact) => ({
+    label: fact.fact_type,
+    value: fact.value,
+    anchor: formatAnchor(fact)
+  }));
+
+  const urls = detail.urls ?? {};
+  const sourceFiles = detail.source_files ?? {};
+  const pdfViewerUrl =
+    urls.viewer || urls.minio_url || (typeof sourceFiles.pdf === "string" && sourceFiles.pdf.startsWith("http") ? sourceFiles.pdf : undefined);
+  const pdfDownloadUrl =
+    urls.minio_url || urls.download || (typeof sourceFiles.pdf === "string" && sourceFiles.pdf.startsWith("http") ? sourceFiles.pdf : undefined);
+
+  return {
+    ...listItem,
+    summary: buildSummaryText(detail.summary),
+    facts,
+    pdfViewerUrl: pdfViewerUrl ?? undefined,
+    pdfDownloadUrl: pdfDownloadUrl ?? pdfViewerUrl ?? undefined
+  };
+};
+
+const fetchFilings = async (): Promise<FilingListItem[]> => {
+  const baseUrl = resolveApiBase();
+  const response = await fetch(`${baseUrl}/api/v1/filings/?limit=50`);
+  if (!response.ok) {
+    throw new Error("Failed to load filing list.");
+  }
+  const payload: ApiFilingBrief[] = await response.json();
+  return payload.map(toListItem);
+};
+
+const fetchFilingDetail = async (filingId: string): Promise<FilingDetail> => {
+  const baseUrl = resolveApiBase();
+  const response = await fetch(`${baseUrl}/api/v1/filings/${filingId}`);
+  if (!response.ok) {
+    throw new Error("Failed to load filing detail.");
+  }
+  const payload: ApiFilingDetail = await response.json();
+  return toDetail(payload);
+};
 
 export function useFilings() {
   return useQuery({
     queryKey: ["filings"],
     queryFn: fetchFilings
+  });
+}
+
+export function useFilingDetail(filingId?: string) {
+  return useQuery({
+    queryKey: ["filings", filingId],
+    queryFn: () => fetchFilingDetail(filingId as string),
+    enabled: Boolean(filingId)
   });
 }
