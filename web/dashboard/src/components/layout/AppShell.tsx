@@ -1,6 +1,7 @@
 import { SideNav } from "./SideNav";
 import { TopBar } from "./TopBar";
 import { RightRail } from "./RightRail";
+import { ToastContainer } from "../ui/ToastContainer";
 
 type AppShellProps = {
   children: React.ReactNode;
@@ -9,6 +10,7 @@ type AppShellProps = {
 export function AppShell({ children }: AppShellProps) {
   return (
     <div className="flex min-h-screen bg-background-light text-text-primaryLight transition-colors dark:bg-background-dark dark:text-text-primaryDark">
+      <ToastContainer />
       <SideNav />
       <div className="flex min-h-screen flex-1 flex-col">
         <TopBar />
@@ -20,4 +22,3 @@ export function AppShell({ children }: AppShellProps) {
     </div>
   );
 }
-

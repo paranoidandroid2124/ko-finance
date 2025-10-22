@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
@@ -43,6 +43,8 @@ class FilingBriefResponse(BaseModel):
     analysis_status: str
     category: Optional[str] = None
     category_confidence: Optional[float] = None
+    sentiment: str = Field("neutral", description="Derived sentiment label based on classification/summary")
+    sentiment_reason: Optional[str] = Field(None, description="Short explanation of the sentiment label")
 
     class Config:
         from_attributes = True
@@ -55,4 +57,15 @@ class FilingDetailResponse(FilingBriefResponse):
     raw_md: Optional[str] = None
     notes: Optional[str] = None
     summary: Optional[SummaryResponse] = None
-    facts: List[FactResponse] = []
+    facts: List[FactResponse] = Field(default_factory=list)
+
+
+class FilingXmlDocument(BaseModel):
+    name: str = Field(..., description="원본 XML 파일 이름")
+    path: str = Field(..., description="서버 상의 XML 파일 경로")
+    content: str = Field(..., description="XML 파일의 전체 본문 (UTF-8)")
+
+
+class FilingXmlResponse(BaseModel):
+    filing_id: uuid.UUID
+    documents: List[FilingXmlDocument] = Field(default_factory=list)

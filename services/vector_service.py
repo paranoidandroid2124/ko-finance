@@ -145,7 +145,11 @@ def query_vector_store(query_text: str, filing_id: str, top_k: int = 5) -> List[
         logger.error("Qdrant search failed: %s", exc, exc_info=True)
         raise RuntimeError("Vector search failed.") from exc
 
-    chunks = [point.payload for point in search_result]
+    chunks: List[Dict[str, Any]] = []
+    for point in search_result:
+        payload = dict(point.payload or {})
+        payload["score"] = point.score
+        chunks.append(payload)
     logger.info("Retrieved %d chunks for filing %s (top_k=%d).", len(chunks), filing_id, top_k)
     return chunks
 

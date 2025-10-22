@@ -63,4 +63,4 @@ def test_rag_query_no_context(monkeypatch):
     payload = response.json()
     assert payload["warnings"] == ["no_context"]
     assert payload["context"] == []
-    assert payload["answer"] == "관련 문서를 찾지 못했습니다. 질문을 구체화해주세요."
+    assert payload["answer"] == "관련 근거 문서를 찾지 못했습니다. 다른 질문을 시도해 주세요."

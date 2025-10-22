@@ -1,21 +1,13 @@
 import classNames from "classnames";
-
-type FilingRow = {
-  id: string;
-  company: string;
-  title: string;
-  type: string;
-  filedAt: string;
-  sentiment: "positive" | "neutral" | "negative";
-};
+import type { FilingListItem } from "@/hooks/useFilings";
 
 type Props = {
-  filings: FilingRow[];
+  filings: FilingListItem[];
   selectedId?: string;
   onSelect?: (id: string) => void;
 };
 
-const sentimentBadge: Record<FilingRow["sentiment"], string> = {
+const sentimentBadge: Record<FilingListItem["sentiment"], string> = {
   positive: "bg-accent-positive/15 text-accent-positive",
   neutral: "bg-border-light/60 text-text-secondaryLight dark:bg-border-dark/60 dark:text-text-secondaryDark",
   negative: "bg-accent-negative/15 text-accent-negative"
@@ -53,7 +45,10 @@ export function FilingsTable({ filings, selectedId, onSelect }: Props) {
                 <td className="px-4 py-3 font-medium">{filing.company}</td>
                 <td className="px-4 py-3">
                   <p className="line-clamp-1">{filing.title}</p>
-                  <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${sentimentBadge[filing.sentiment]}`}>
+                  <span
+                    className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${sentimentBadge[filing.sentiment]}`}
+                    title={filing.sentimentReason}
+                  >
                     {filing.sentiment === "positive" ? "긍정" : filing.sentiment === "negative" ? "부정" : "중립"}
                   </span>
                 </td>

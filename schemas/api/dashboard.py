@@ -35,3 +35,13 @@ class DashboardOverviewResponse(BaseModel):
     metrics: list[DashboardMetric]
     alerts: list[DashboardAlert]
     news: list[DashboardNewsItem]
+
+
+class FilingTrendPoint(BaseModel):
+    date: str
+    count: int
+    rolling_average: float
+
+
+class FilingTrendResponse(BaseModel):
+    points: list[FilingTrendPoint]

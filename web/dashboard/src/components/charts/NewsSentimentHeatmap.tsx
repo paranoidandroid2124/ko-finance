@@ -1,55 +1,53 @@
+"use client";
+
 import dynamic from "next/dynamic";
 import { useMemo } from "react";
+import { useNewsHeatmap } from "@/hooks/useNewsHeatmap";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
-const SECTORS = ["반도체", "에너지", "금융", "바이오", "소비재", "모빌리티"];
-const TIMES = ["-60분", "-45분", "-30분", "-15분", "현재"];
-
-const MOCK_MATRIX = [
-  [0, 0, -0.3],
-  [0, 1, -0.1],
-  [0, 2, 0.05],
-  [0, 3, 0.2],
-  [0, 4, 0.35],
-  [1, 0, -0.6],
-  [1, 1, -0.2],
-  [1, 2, 0.1],
-  [1, 3, 0.18],
-  [1, 4, 0.25],
-  [2, 0, -0.2],
-  [2, 1, -0.05],
-  [2, 2, 0.15],
-  [2, 3, 0.25],
-  [2, 4, 0.4],
-  [3, 0, -0.15],
-  [3, 1, -0.05],
-  [3, 2, 0.08],
-  [3, 3, 0.12],
-  [3, 4, 0.2],
-  [4, 0, -0.4],
-  [4, 1, -0.3],
-  [4, 2, -0.15],
-  [4, 3, 0.05],
-  [4, 4, 0.12],
-  [5, 0, -0.1],
-  [5, 1, -0.02],
-  [5, 2, 0.16],
-  [5, 3, 0.28],
-  [5, 4, 0.32]
-];
-
 export function NewsSentimentHeatmap() {
-  const option = useMemo(
-    () => ({
+  const { data, isLoading, isError } = useNewsHeatmap();
+
+  const sectors = useMemo(() => data?.sectors ?? [], [data]);
+  const buckets = useMemo(() => data?.buckets ?? [], [data]);
+  const points = useMemo(() => data?.points ?? [], [data]);
+
+  const heatmapData = useMemo(() => {
+    if (!points.length) {
+      return [];
+    }
+    return points.map((point) => [
+      point.bucket_index,
+      point.sector_index,
+      point.sentiment ?? 0,
+      point.article_count ?? 0
+    ]);
+  }, [points]);
+
+  const option = useMemo(() => {
+    if (!sectors.length || !buckets.length) {
+      return null;
+    }
+
+    return {
       backgroundColor: "transparent",
       tooltip: {
         position: "top",
-        formatter: (params: { value: [number, number, number] }) => {
-          const value = params.value[2];
-          return `${SECTORS[params.value[1]]}<br/>${TIMES[params.value[0]]}: <strong>${value.toFixed(
-            2
-          )}</strong>`;
+        formatter: (params: { value: [number, number, number, number] }) => {
+          const timeIndex = params.value[0];
+          const sectorIndex = params.value[1];
+          const sentiment = params.value[2];
+          const articleCount = params.value[3];
+          const bucket = buckets[timeIndex];
+          const label = bucket?.label ?? "";
+          const hasData = articleCount > 0;
+          const sectorLabel = sectors[sectorIndex] ?? "";
+          return [
+            `<strong>${sectorLabel}</strong>`,
+            `${label} (기사 ${articleCount}건)`,
+            hasData ? `평균 감성: <strong>${sentiment.toFixed(2)}</strong>` : "데이터 없음"
+          ].join("<br/>");
         }
       },
       grid: {
@@ -60,14 +58,14 @@ export function NewsSentimentHeatmap() {
       },
       xAxis: {
         type: "category",
-        data: TIMES,
+        data: buckets.map((bucket) => bucket.label),
         splitArea: { show: false },
         axisLine: { lineStyle: { color: "#334155" } },
         axisLabel: { color: "#94a3b8" }
       },
       yAxis: {
         type: "category",
-        data: SECTORS,
+        data: sectors,
         splitArea: { show: false },
         axisLine: { lineStyle: { color: "#334155" } },
         axisLabel: { color: "#94a3b8" }
@@ -87,11 +85,17 @@ export function NewsSentimentHeatmap() {
         {
           name: "감성",
           type: "heatmap",
-          data: MOCK_MATRIX,
+          data: heatmapData,
           label: {
             show: true,
             color: "#0f172a",
-            formatter: (params: { value: [number, number, number] }) => params.value[2].toFixed(2)
+            formatter: (params: { value: [number, number, number, number] }) => {
+              const articleCount = params.value[3];
+              if (!articleCount) {
+                return "-";
+              }
+              return params.value[2].toFixed(2);
+            }
           },
           emphasis: {
             itemStyle: {
@@ -101,20 +105,33 @@ export function NewsSentimentHeatmap() {
           }
         }
       ]
-    }),
-    []
-  );
+    };
+  }, [buckets, sectors, heatmapData]);
 
   return (
     <div className="rounded-xl border border-border-light bg-background-cardLight p-4 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold">섹터별 뉴스 감성 Heatmap</h3>
-          <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">최근 1시간 흐름</p>
+          <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">최근 감성 흐름을 시간대별로 파악하세요.</p>
         </div>
       </div>
       <div className="mt-4 overflow-hidden rounded-lg">
-        <ReactECharts option={option} style={{ height: 260 }} />
+        {isLoading ? (
+          <div className="flex h-[260px] items-center justify-center">
+            <span className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">데이터를 불러오는 중입니다...</span>
+          </div>
+        ) : isError ? (
+          <div className="flex h-[260px] items-center justify-center">
+            <span className="text-xs text-destructive">뉴스 감성 데이터를 가져오지 못했습니다.</span>
+          </div>
+        ) : option ? (
+          <ReactECharts option={option} style={{ height: 260 }} />
+        ) : (
+          <div className="flex h-[260px] items-center justify-center">
+            <span className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">표시할 뉴스 감성 데이터가 없습니다.</span>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -62,9 +62,9 @@ def _ensure_bucket() -> None:
     try:
         if not client.bucket_exists(MINIO_BUCKET):
             client.make_bucket(MINIO_BUCKET)
-    except S3Error as exc:
+    except Exception as exc:
         logger.error("Failed to ensure MinIO bucket '%s': %s", MINIO_BUCKET, exc, exc_info=True)
-        raise
+        return
 
 
 def upload_file(local_path: str, object_name: Optional[str] = None) -> Optional[str]:
@@ -89,7 +89,7 @@ def upload_file(local_path: str, object_name: Optional[str] = None) -> Optional[
         )
         logger.info("Uploaded %s to bucket '%s'.", object_key, MINIO_BUCKET)
         return object_key
-    except S3Error as exc:
+    except Exception as exc:
         logger.error("MinIO upload failed: %s", exc, exc_info=True)
         return None
 
@@ -110,7 +110,7 @@ def download_file(object_name: str, destination_path: str) -> Optional[str]:
         )
         logger.info("Downloaded %s to %s.", object_name, destination)
         return str(destination)
-    except S3Error as exc:
+    except Exception as exc:
         logger.error("MinIO download failed: %s", exc, exc_info=True)
         return None
 
@@ -125,10 +125,9 @@ def get_presigned_url(object_name: str, expiry_seconds: int = 3600) -> Optional[
             object_name=object_name,
             expires=expiry_seconds,
         )
-    except S3Error as exc:
+    except Exception as exc:
         logger.error("Failed to create MinIO presigned URL: %s", exc, exc_info=True)
         return None
 
 
 __all__ = ["is_enabled", "upload_file", "download_file", "get_presigned_url"]
-

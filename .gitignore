@@ -130,6 +130,7 @@ cython_debug/
 raw_files/
 temp_downloads/
 *.pdf
+uploads/
 
 # Frontend artifacts
 web/dashboard/.next/

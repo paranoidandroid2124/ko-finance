@@ -1,5 +1,6 @@
 import uuid
 from pathlib import Path
+from typing import Iterable, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
@@ -13,10 +14,107 @@ from schemas.api.filing import (
     FactResponse,
     FilingBriefResponse,
     FilingDetailResponse,
+    FilingXmlDocument,
+    FilingXmlResponse,
     SummaryResponse,
 )
 
 router = APIRouter(prefix="/filings", tags=["Filings"])
+
+POSITIVE_CATEGORIES = {
+    "buyback",
+    "large_contract",
+    "capital_increase",
+}
+NEGATIVE_CATEGORIES = {
+    "litigation",
+    "correction",
+    "insider_ownership",
+    "audit_opinion",
+}
+
+POSITIVE_KEYWORDS = {
+    "increase",
+    "surge",
+    "order",
+    "contract",
+    "improvement",
+    "expansion",
+    "favorable",
+    "dividend",
+    "buyback",
+}
+NEGATIVE_KEYWORDS = {
+    "decrease",
+    "drop",
+    "loss",
+    "lawsuit",
+    "suspend",
+    "cancel",
+    "violate",
+    "discipline",
+    "warning",
+    "risk",
+}
+
+
+def _collect_summary_text(summary: Optional[Summary]) -> str:
+    if summary is None:
+        return ""
+    parts: Iterable[Optional[str]] = (
+        summary.insight,
+        summary.what,
+        summary.why,
+        summary.how,
+        summary.who,
+        summary.when,
+        summary.where,
+    )
+    return " ".join(part.strip() for part in parts if isinstance(part, str) and part.strip())
+
+
+def _derive_sentiment(filing: Filing, summary: Optional[Summary]) -> Tuple[str, str]:
+    if filing.analysis_status.upper() != "ANALYZED":
+        return ("neutral", "Analysis is still running.")
+
+    category = (filing.category or "").lower().strip()
+    if category in POSITIVE_CATEGORIES:
+        return ("positive", f"LLM classification detected the '{category}' category.")
+    if category in NEGATIVE_CATEGORIES:
+        return ("negative", f"LLM classification detected the '{category}' category.")
+
+    text = _collect_summary_text(summary)
+    if text:
+        score = 0
+        matched_positive = [kw for kw in POSITIVE_KEYWORDS if kw in text]
+        matched_negative = [kw for kw in NEGATIVE_KEYWORDS if kw in text]
+        score += len(matched_positive)
+        score -= len(matched_negative)
+        if score > 0:
+            reason = ", ".join(matched_positive) if matched_positive else "positive keywords detected"
+            return ("positive", f"Positive keywords detected in the summary ({reason}).")
+        if score < 0:
+            reason = ", ".join(matched_negative) if matched_negative else "negative keywords detected"
+            return ("negative", f"Negative keywords detected in the summary ({reason}).")
+
+    return ("neutral", "No notable warning or opportunity detected.")
+
+
+def _resolve_xml_paths(filing: Filing) -> List[Path]:
+    source_files = filing.source_files or {}
+    xml_entries = source_files.get("xml") if isinstance(source_files, dict) else None
+    if not xml_entries:
+        return []
+    if isinstance(xml_entries, (str, Path)):
+        xml_candidates = [xml_entries]
+    else:
+        xml_candidates = list(xml_entries)
+    resolved: List[Path] = []
+    for candidate in xml_candidates:
+        path = Path(candidate)
+        if path.is_file():
+            resolved.append(path)
+    return resolved
 
 
 @router.post("/upload", response_model=FilingBriefResponse)
@@ -60,7 +158,32 @@ def list_filings(
     if ticker:
         query = query.filter(Filing.ticker == ticker)
     filings = query.order_by(Filing.filed_at.desc()).offset(skip).limit(limit).all()
-    return filings
+
+    if not filings:
+        return []
+
+    filing_ids = [filing.id for filing in filings]
+    summaries = (
+        db.query(Summary)
+        .filter(Summary.filing_id.in_(filing_ids))
+        .all()
+    )
+    summary_map = {item.filing_id: item for item in summaries}
+
+    responses: list[FilingBriefResponse] = []
+    for filing in filings:
+        summary = summary_map.get(filing.id)
+        sentiment, reason = _derive_sentiment(filing, summary)
+        base_model = FilingBriefResponse.model_validate(filing, from_attributes=True)
+        responses.append(
+            base_model.model_copy(
+                update={
+                    "sentiment": sentiment,
+                    "sentiment_reason": reason,
+                }
+            )
+        )
+    return responses
 
 
 @router.get("/{filing_id}", response_model=FilingDetailResponse)
@@ -73,8 +196,49 @@ def get_filing_details(filing_id: uuid.UUID, db: Session = Depends(get_db)):
     summary = db.query(Summary).filter(Summary.filing_id == filing_id).first()
     facts = db.query(ExtractedFact).filter(ExtractedFact.filing_id == filing_id).all()
 
-    return FilingDetailResponse(
-        **filing.__dict__,
-        summary=summary,
-        facts=facts,
+    summary_payload = (
+        SummaryResponse.model_validate(summary, from_attributes=True) if summary else None
     )
+    facts_payload = [
+        FactResponse.model_validate(fact, from_attributes=True) for fact in facts
+    ]
+
+    sentiment, reason = _derive_sentiment(filing, summary)
+
+    filing_payload = FilingDetailResponse.model_validate(filing, from_attributes=True)
+    return filing_payload.model_copy(
+        update={
+            "summary": summary_payload,
+            "facts": facts_payload,
+            "sentiment": sentiment,
+            "sentiment_reason": reason,
+        }
+    )
+
+
+@router.get("/{filing_id}/xml", response_model=FilingXmlResponse)
+def get_filing_xml_documents(filing_id: uuid.UUID, db: Session = Depends(get_db)) -> FilingXmlResponse:
+    """Return raw XML sources associated with a filing for highlight rendering."""
+    filing = db.query(Filing).filter(Filing.id == filing_id).first()
+    if not filing:
+        raise HTTPException(status_code=404, detail="Filing not found")
+
+    xml_paths = _resolve_xml_paths(filing)
+    if not xml_paths:
+        raise HTTPException(status_code=404, detail="No XML source files available for this filing.")
+
+    documents: list[FilingXmlDocument] = []
+    for path in xml_paths:
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to read XML file: {path}") from exc
+        documents.append(
+            FilingXmlDocument(
+                name=path.name,
+                path=str(path),
+                content=content,
+            )
+        )
+
+    return FilingXmlResponse(filing_id=filing.id, documents=documents)

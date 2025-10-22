@@ -19,6 +19,37 @@ FOOTNOTE_PATTERN = re.compile(r"^(\(?\d+[\)\.]|\[\d+\]|[*†‡])\s+", re.IGNORE
 FOOTNOTE_Y_RATIO = 0.8
 
 
+def _clamp_pct(value: float) -> float:
+    return max(0.0, min(100.0, value))
+
+
+def _enrich_metadata(
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    *,
+    page_width: float,
+    page_height: float,
+    base: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Return metadata dictionary with absolute and relative coordinates."""
+    width = page_width or 1.0
+    height = page_height or 1.0
+    metadata = {
+        "bbox": [float(x0), float(y0), float(x1), float(y1)],
+        "page_width": float(width),
+        "page_height": float(height),
+        "x_start_pct": _clamp_pct((x0 / width) * 100.0 if width else 0.0),
+        "x_end_pct": _clamp_pct((x1 / width) * 100.0 if width else 0.0),
+        "y_start_pct": _clamp_pct((y0 / height) * 100.0 if height else 0.0),
+        "y_end_pct": _clamp_pct((y1 / height) * 100.0 if height else 0.0),
+    }
+    if base:
+        metadata.update(base)
+    return metadata
+
+
 def _sanitize_rect(rect: Any) -> List[float]:
     if hasattr(rect, "x0") and hasattr(rect, "y0") and hasattr(rect, "x1") and hasattr(rect, "y1"):
         return [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
@@ -52,6 +83,7 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
         for page_index, page in enumerate(document):
             page_number = page_index + 1
             page_height = float(page.rect.height or 1.0)
+            page_width = float(page.rect.width or 1.0)
 
             for block in page.get_text("blocks"):
                 x0, y0, x1, y1, raw_text = block[:5]
@@ -63,10 +95,16 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
                 footnote_lines = [line for line in lines if FOOTNOTE_PATTERN.match(line)]
                 body_lines = [line for line in lines if line not in footnote_lines]
 
-                metadata = {
-                    "bbox": [float(x0), float(y0), float(x1), float(y1)],
-                    "block_index": block[5] if len(block) > 5 else None,
-                }
+                base_metadata = {"block_index": block[5] if len(block) > 5 else None}
+                metadata = _enrich_metadata(
+                    float(x0),
+                    float(y0),
+                    float(x1),
+                    float(y1),
+                    page_width=page_width,
+                    page_height=page_height,
+                    base=base_metadata,
+                )
 
                 if body_lines and sum(len(line) for line in body_lines) >= MIN_PARAGRAPH_LENGTH:
                     chunks.append(
@@ -106,16 +144,38 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
                 cells_metadata: List[Dict[str, Any]] = []
                 try:
                     for cell in table.cells or []:
+                        cell_bbox = _sanitize_rect(cell.bbox)
                         cells_metadata.append(
                             {
                                 "row": getattr(cell, "row", None),
                                 "column": getattr(cell, "col", None),
-                                "bbox": _sanitize_rect(cell.bbox),
+                                "bbox": cell_bbox,
+                                "y_start_pct": _clamp_pct(
+                                    (cell_bbox[1] / page_height) * 100.0 if page_height else 0.0
+                                ),
+                                "y_end_pct": _clamp_pct(
+                                    (cell_bbox[3] / page_height) * 100.0 if page_height else 0.0
+                                ),
                                 "span": getattr(cell, "span", None),
                             }
                         )
                 except Exception:
                     logger.debug("Failed to read cell metadata for table on page %s.", page_number, exc_info=True)
+
+                table_bbox = _sanitize_rect(table.bbox)
+                table_metadata = _enrich_metadata(
+                    table_bbox[0],
+                    table_bbox[1],
+                    table_bbox[2],
+                    table_bbox[3],
+                    page_width=page_width,
+                    page_height=page_height,
+                    base={
+                        "table_json": table_data,
+                        "cell_coordinates": cells_metadata,
+                        "table_index": table_index,
+                    },
+                )
 
                 chunks.append(
                     build_chunk(
@@ -125,12 +185,7 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
                         section="table",
                         source="pdf",
                         page_number=page_number,
-                        metadata={
-                            "bbox": _sanitize_rect(table.bbox),
-                            "table_json": table_data,
-                            "cell_coordinates": cells_metadata,
-                            "table_index": table_index,
-                        },
+                        metadata=table_metadata,
                     )
                 )
                 chunk_counter += 1
@@ -140,6 +195,15 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
                 if block.get("type") != 1:
                     continue
                 bbox = block.get("bbox", [0, 0, 0, 0])
+                figure_metadata = _enrich_metadata(
+                    float(bbox[0]),
+                    float(bbox[1]),
+                    float(bbox[2]),
+                    float(bbox[3]),
+                    page_width=page_width,
+                    page_height=page_height,
+                    base={"image": block.get("image")},
+                )
                 chunks.append(
                     build_chunk(
                         f"pdf-figure-{page_number}-{chunk_counter}",
@@ -148,10 +212,7 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
                         section="figure",
                         source="pdf",
                         page_number=page_number,
-                        metadata={
-                            "bbox": [float(coord) for coord in bbox],
-                            "image": block.get("image"),
-                        },
+                        metadata=figure_metadata,
                     )
                 )
                 chunk_counter += 1
@@ -162,4 +223,3 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
     except Exception as exc:
         logger.error("Error while parsing PDF '%s': %s", pdf_path, exc, exc_info=True)
         raise
-

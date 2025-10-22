@@ -149,14 +149,19 @@ def _load_mock_articles(limit: int) -> List[NewsArticleCreate]:
 def fetch_news_batch(limit_per_feed: int = 5, *, use_mock_fallback: bool = False) -> List[NewsArticleCreate]:
     """Fetch latest news articles from configured RSS/Atom feeds."""
     if feedparser is None:
-        return _load_mock_articles(limit_per_feed) if use_mock_fallback else []
+        if use_mock_fallback:
+            return _load_mock_articles(limit_per_feed)
+        logger.warning("feedparser is not installed and mock fallback is disabled.")
+        return []
 
     env_value = env_str("NEWS_FEEDS", "") or ""
     feed_urls = list(_iter_feed_sources(env_value.split(",")))
 
     if not feed_urls:
         logger.warning("NEWS_FEEDS is empty.")
-        return _load_mock_articles(limit_per_feed) if use_mock_fallback else []
+        if use_mock_fallback:
+            return _load_mock_articles(limit_per_feed)
+        return []
 
     articles: List[NewsArticleCreate] = []
     seen_keys: Set[str] = set()

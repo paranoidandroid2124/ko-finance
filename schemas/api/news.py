@@ -52,3 +52,34 @@ class NewsObservationResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+class NewsSentimentHeatmapPoint(BaseModel):
+    sector_index: int
+    bucket_index: int
+    sentiment: float | None = None
+    article_count: int = 0
+
+
+class NewsSentimentHeatmapResponse(BaseModel):
+    sectors: List[str]
+    buckets: List[dict]
+    points: List[NewsSentimentHeatmapPoint]
+
+
+class NewsTopicInsight(BaseModel):
+    name: str
+    change: str
+    sentiment: str
+
+
+class NewsListItem(BaseModel):
+    id: uuid.UUID
+    title: str
+    sentiment: str
+    source: str
+    publishedAt: str
+
+
+class NewsInsightsResponse(BaseModel):
+    news: List[NewsListItem]
+    topics: List[NewsTopicInsight]

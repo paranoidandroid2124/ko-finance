@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func
@@ -14,6 +14,8 @@ from schemas.api.dashboard import (
     DashboardMetric,
     DashboardNewsItem,
     DashboardOverviewResponse,
+    FilingTrendPoint,
+    FilingTrendResponse,
 )
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
@@ -251,9 +253,66 @@ def build_news_items(db: Session) -> list[DashboardNewsItem]:
     return items
 
 
+def generate_filing_trend(
+    db: Session,
+    *,
+    days: int = 7,
+) -> FilingTrendResponse:
+    if days < 1:
+        days = 1
+    if days > 30:
+        days = 30
+
+    today = datetime.now(timezone.utc).date()
+    start_date = today - timedelta(days=days - 1)
+    start_datetime = datetime.combine(start_date, datetime.min.time())
+
+    # Fetch filing counts grouped by day
+    grouped = (
+        db.query(func.date_trunc("day", Filing.filed_at).label("filed_day"), func.count(Filing.id))
+        .filter(Filing.filed_at.isnot(None))
+        .filter(Filing.filed_at >= start_datetime)
+        .group_by("filed_day")
+        .order_by("filed_day")
+        .all()
+    )
+
+    counts_by_day: dict[date, int] = {}
+    for filed_day, count in grouped:
+        if filed_day is None:
+            continue
+        key = filed_day.date() if hasattr(filed_day, "date") else filed_day
+        counts_by_day[key] = int(count or 0)
+
+    points: list[FilingTrendPoint] = []
+    rolling_window: list[int] = []
+
+    for index in range(days):
+        day = start_date + timedelta(days=index)
+        count = counts_by_day.get(day, 0)
+        rolling_window.append(count)
+        if len(rolling_window) > 7:
+            rolling_window.pop(0)
+        rolling_avg = sum(rolling_window) / len(rolling_window) if rolling_window else 0.0
+        points.append(
+            FilingTrendPoint(
+                date=day.isoformat(),
+                count=count,
+                rolling_average=round(rolling_avg, 2),
+            )
+        )
+
+    return FilingTrendResponse(points=points)
+
+
 @router.get("/overview", response_model=DashboardOverviewResponse)
 def read_dashboard_overview(db: Session = Depends(get_db)) -> DashboardOverviewResponse:
     metrics = build_metrics(db)
     alerts = build_alerts(db)
     news_items = build_news_items(db)
     return DashboardOverviewResponse(metrics=metrics, alerts=alerts, news=news_items)
+
+
+@router.get("/filing-trend", response_model=FilingTrendResponse)
+def read_filing_trend(days: int = 7, db: Session = Depends(get_db)) -> FilingTrendResponse:
+    return generate_filing_trend(db, days=days)
