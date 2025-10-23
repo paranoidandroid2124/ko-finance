@@ -27,16 +27,61 @@ from services import minio_service
 router = APIRouter(prefix="/filings", tags=["Filings"])
 logger = get_logger(__name__)
 
+CATEGORY_TRANSLATIONS = {
+    "capital_increase": "증자",
+    "증자": "증자",
+    "buyback": "자사주 매입/소각",
+    "share_buyback": "자사주 매입/소각",
+    "자사주 매입/소각": "자사주 매입/소각",
+    "cb_bw": "전환사채·신주인수권부사채",
+    "convertible": "전환사채·신주인수권부사채",
+    "전환사채·신주인수권부사채": "전환사채·신주인수권부사채",
+    "large_contract": "대규모 공급·수주 계약",
+    "major_contract": "대규모 공급·수주 계약",
+    "대규모 공급·수주 계약": "대규모 공급·수주 계약",
+    "litigation": "소송/분쟁",
+    "lawsuit": "소송/분쟁",
+    "소송/분쟁": "소송/분쟁",
+    "mna": "M&A/합병·분할",
+    "m&a": "M&A/합병·분할",
+    "합병": "M&A/합병·분할",
+    "governance": "지배구조·임원 변경",
+    "governance_change": "지배구조·임원 변경",
+    "지배구조·임원 변경": "지배구조·임원 변경",
+    "audit_opinion": "감사 의견",
+    "감사 의견": "감사 의견",
+    "periodic_report": "정기·수시 보고서",
+    "regular_report": "정기·수시 보고서",
+    "정기·수시 보고서": "정기·수시 보고서",
+    "securities_registration": "증권신고서/투자설명서",
+    "registration": "증권신고서/투자설명서",
+    "증권신고서/투자설명서": "증권신고서/투자설명서",
+    "insider_ownership": "임원·주요주주 지분 변동",
+    "insider_trading": "임원·주요주주 지분 변동",
+    "임원·주요주주 지분 변동": "임원·주요주주 지분 변동",
+    "correction": "정정 공시",
+    "revision": "정정 공시",
+    "정정 공시": "정정 공시",
+    "ir_presentation": "IR/설명회",
+    "ir": "IR/설명회",
+    "ir/설명회": "IR/설명회",
+    "dividend": "배당/주주환원",
+    "shareholder_return": "배당/주주환원",
+    "배당/주주환원": "배당/주주환원",
+    "other": "기타",
+    "기타": "기타",
+}
+
 POSITIVE_CATEGORIES = {
-    "buyback",
-    "large_contract",
-    "capital_increase",
+    "자사주 매입/소각",
+    "대규모 공급·수주 계약",
+    "배당/주주환원",
+    "M&A/합병·분할",
 }
 NEGATIVE_CATEGORIES = {
-    "litigation",
-    "correction",
-    "insider_ownership",
-    "audit_opinion",
+    "소송/분쟁",
+    "감사 의견",
+    "정정 공시",
 }
 
 POSITIVE_KEYWORDS = {
@@ -49,6 +94,14 @@ POSITIVE_KEYWORDS = {
     "favorable",
     "dividend",
     "buyback",
+    "증가",
+    "수주",
+    "계약",
+    "개선",
+    "확대",
+    "호재",
+    "배당",
+    "자사주",
 }
 NEGATIVE_KEYWORDS = {
     "decrease",
@@ -61,7 +114,23 @@ NEGATIVE_KEYWORDS = {
     "discipline",
     "warning",
     "risk",
+    "감소",
+    "하락",
+    "손실",
+    "소송",
+    "취소",
+    "위험",
+    "경고",
+    "분쟁",
 }
+
+
+def _normalize_category_label(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    trimmed = value.strip()
+    lower = trimmed.lower()
+    return CATEGORY_TRANSLATIONS.get(lower) or CATEGORY_TRANSLATIONS.get(trimmed) or trimmed
 
 
 def _collect_summary_text(summary: Optional[Summary]) -> str:
@@ -81,13 +150,13 @@ def _collect_summary_text(summary: Optional[Summary]) -> str:
 
 def _derive_sentiment(filing: Filing, summary: Optional[Summary]) -> Tuple[str, str]:
     if filing.analysis_status.upper() != "ANALYZED":
-        return ("neutral", "Analysis is still running.")
+        return ("neutral", "분석이 아직 진행 중입니다.")
 
-    category = (filing.category or "").lower().strip()
-    if category in POSITIVE_CATEGORIES:
-        return ("positive", f"LLM classification detected the '{category}' category.")
-    if category in NEGATIVE_CATEGORIES:
-        return ("negative", f"LLM classification detected the '{category}' category.")
+    category_label = _normalize_category_label(filing.category)
+    if category_label in POSITIVE_CATEGORIES:
+        return ("positive", f"{category_label} 관련 공시로 분류되었습니다.")
+    if category_label in NEGATIVE_CATEGORIES:
+        return ("negative", f"{category_label} 관련 공시로 분류되었습니다. 주의가 필요합니다.")
 
     text = _collect_summary_text(summary)
     if text:
@@ -97,13 +166,13 @@ def _derive_sentiment(filing: Filing, summary: Optional[Summary]) -> Tuple[str, 
         score += len(matched_positive)
         score -= len(matched_negative)
         if score > 0:
-            reason = ", ".join(matched_positive) if matched_positive else "positive keywords detected"
-            return ("positive", f"Positive keywords detected in the summary ({reason}).")
+            reason = ", ".join(matched_positive) if matched_positive else "긍정 키워드 발견"
+            return ("positive", f"요약 본문에서 긍정 키워드가 확인되었습니다 ({reason}).")
         if score < 0:
-            reason = ", ".join(matched_negative) if matched_negative else "negative keywords detected"
-            return ("negative", f"Negative keywords detected in the summary ({reason}).")
+            reason = ", ".join(matched_negative) if matched_negative else "부정 키워드 발견"
+            return ("negative", f"요약 본문에서 부정 키워드가 확인되었습니다 ({reason}).")
 
-    return ("neutral", "No notable warning or opportunity detected.")
+    return ("neutral", "특별한 경고나 기회 요인이 감지되지 않았습니다.")
 
 
 def _normalize_xml_entries(filing: Filing) -> List[Dict[str, Any]]:

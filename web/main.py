@@ -24,7 +24,7 @@ app.add_middleware(
 
 @app.get("/", summary="Health Check", tags=["Default"])
 def health_check():
-    """API ?? ??? ???? ?? ?? ?? ?????."""
+    """API 상태를 확인하는 헬스 체크 엔드포인트입니다."""
     return {"status": "ok", "message": "K-Finance AI Research Copilot API is running."}
 
 

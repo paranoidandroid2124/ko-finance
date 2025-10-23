@@ -6,10 +6,15 @@ from typing import Dict, List
 
 SYSTEM_PROMPT = (
     "You write concise 5W1H summaries of Korean disclosures. "
-    "Use professional Korean where possible. Return JSON only."
+    "Use professional Korean where possible. Return JSON only. "
+    "If the excerpt lacks sufficient information, return the fixed fallback text exactly as instructed below."
 )
 
 USER_PROMPT_TEMPLATE = """Create a 5W1H summary and insight.
+
+If any 5W1H element is missing, use the literal string "정보 없음".
+If the excerpt is empty or contains no meaningful disclosure content, set every 5W1H field to "정보 없음",
+set "insight" to "유효한 공시 본문이 제공되지 않아 요약이 불가능합니다.", and set "confidence_score" to 0.0.
 
 Return JSON:
 {{
@@ -36,4 +41,3 @@ def get_prompt(snippet: str) -> List[Dict[str, str]]:
 
 
 __all__ = ["get_prompt"]
-

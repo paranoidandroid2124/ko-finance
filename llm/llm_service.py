@@ -20,6 +20,7 @@ from llm.prompts import (
     classify_filing,
     extract_info,
     judge_guard,
+    query_intent,
     rag_qa,
     self_check,
     summarize_report,
@@ -92,6 +93,7 @@ NEWS_ANALYSIS_MODEL = os.getenv("LLM_NEWS_MODEL", "gemini_flash_lite")
 RAG_MODEL = os.getenv("LLM_RAG_MODEL", "gemini_flash_lite")
 QUALITY_FALLBACK_MODEL = os.getenv("LLM_QUALITY_FALLBACK_MODEL", "gpt-5-chat")
 JUDGE_MODEL = os.getenv("LLM_GUARD_JUDGE_MODEL", "gpt-4o-mini")
+INTENT_MODEL = os.getenv("LLM_INTENT_MODEL", QUALITY_FALLBACK_MODEL)
 
 CITATION_PAGE_RE = re.compile(r"\(p\.\s*\d+\)", re.IGNORECASE)
 CITATION_TABLE_RE = re.compile(r"\(table\s*[^\)]+\)", re.IGNORECASE)
@@ -198,6 +200,24 @@ def classify_filing_content(raw_md: str) -> Dict[str, Any]:
     result = _json_completion(CLASSIFICATION_MODEL, messages)
     if "error" in result:
         logger.error("Classification failed: %s", result["error"])
+    return result
+
+
+def classify_query_intent(question: str) -> Dict[str, Any]:
+    messages = query_intent.get_prompt(question)
+    result = _json_completion(INTENT_MODEL, messages)
+    if "error" in result:
+        logger.error("Intent classification failed: %s", result["error"])
+        return {"decision": "pass", "reason": "fallback", "model_used": result.get("model_used")}
+
+    decision_raw = result.get("decision")
+    if isinstance(decision_raw, str):
+        decision = decision_raw.strip().lower()
+        if decision not in {"pass", "semi_pass", "block"}:
+            decision = "pass"
+    else:
+        decision = "pass"
+    result["decision"] = decision
     return result
 
 
@@ -653,6 +673,7 @@ def summarize_chat_transcript(transcript: List[Dict[str, str]]) -> str:
 
 __all__ = [
     "classify_filing_content",
+    "classify_query_intent",
     "extract_structured_info",
     "summarize_filing_content",
     "self_check_extracted_info",

@@ -20,6 +20,7 @@ import llm.llm_service as llm_service
 from core.env import env_float, env_int, env_str
 from database import SessionLocal
 from ingest.dart_seed import seed_recent_filings as seed_recent_filings_job
+from ingest.news_fetcher import fetch_news_batch
 from models.chat import ChatMessage, ChatSession
 from models.fact import ExtractedFact
 from models.filing import Filing, STATUS_PENDING
@@ -43,6 +44,82 @@ DIGEST_BASE_URL = env_str("FILINGS_DASHBOARD_URL", "https://kofilot.com/filings"
 DIGEST_CHANNEL = "telegram"
 SUMMARY_RECENT_TURNS = env_int("CHAT_MEMORY_RECENT_TURNS", 3, minimum=1)
 SUMMARY_TRIGGER_MESSAGES = env_int("CHAT_SUMMARY_TRIGGER_MESSAGES", 20, minimum=6)
+NEWS_FETCH_LIMIT = env_int("NEWS_FETCH_LIMIT", 5, minimum=1)
+
+CATEGORY_TRANSLATIONS: Dict[str, str] = {
+    "capital_increase": "증자",
+    "증자": "증자",
+    "share_issuance": "증자",
+    "buyback": "자사주 매입/소각",
+    "share_buyback": "자사주 매입/소각",
+    "자사주 매입/소각": "자사주 매입/소각",
+    "cb_bw": "전환사채·신주인수권부사채",
+    "convertible": "전환사채·신주인수권부사채",
+    "전환사채·신주인수권부사채": "전환사채·신주인수권부사채",
+    "large_contract": "대규모 공급·수주 계약",
+    "major_contract": "대규모 공급·수주 계약",
+    "대규모 공급·수주 계약": "대규모 공급·수주 계약",
+    "litigation": "소송/분쟁",
+    "lawsuit": "소송/분쟁",
+    "소송/분쟁": "소송/분쟁",
+    "mna": "M&A/합병·분할",
+    "m&a": "M&A/합병·분할",
+    "merger": "M&A/합병·분할",
+    "M&A/합병·분할": "M&A/합병·분할",
+    "합병": "M&A/합병·분할",
+    "governance": "지배구조·임원 변경",
+    "governance_change": "지배구조·임원 변경",
+    "지배구조·임원 변경": "지배구조·임원 변경",
+    "audit_opinion": "감사 의견",
+    "감사 의견": "감사 의견",
+    "periodic_report": "정기·수시 보고서",
+    "regular_report": "정기·수시 보고서",
+    "정기·수시 보고서": "정기·수시 보고서",
+    "securities_registration": "증권신고서/투자설명서",
+    "registration": "증권신고서/투자설명서",
+    "증권신고서/투자설명서": "증권신고서/투자설명서",
+    "insider_ownership": "임원·주요주주 지분 변동",
+    "insider_trading": "임원·주요주주 지분 변동",
+    "임원·주요주주 지분 변동": "임원·주요주주 지분 변동",
+    "correction": "정정 공시",
+    "revision": "정정 공시",
+    "정정 공시": "정정 공시",
+    "ir_presentation": "IR/설명회",
+    "ir": "IR/설명회",
+    "ir/설명회": "IR/설명회",
+    "dividend": "배당/주주환원",
+    "shareholder_return": "배당/주주환원",
+    "배당/주주환원": "배당/주주환원",
+    "other": "기타",
+    "기타": "기타",
+}
+
+
+def _normalize_category_label(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    trimmed = value.strip()
+    lower = trimmed.lower()
+    return CATEGORY_TRANSLATIONS.get(lower) or CATEGORY_TRANSLATIONS.get(trimmed) or trimmed
+
+
+def _build_vector_metadata(filing: Filing) -> Dict[str, Any]:
+    """Assemble metadata fields to persist alongside vector chunks."""
+    meta: Dict[str, Any] = {
+        "ticker": filing.ticker,
+        "corp_code": filing.corp_code,
+        "corp_name": filing.corp_name,
+        "market": filing.market,
+        "report_name": filing.report_name,
+        "category": filing.category,
+    }
+    filed_at = filing.filed_at
+    if filed_at:
+        if filed_at.tzinfo is None:
+            filed_at = filed_at.replace(tzinfo=timezone.utc)
+        meta["filed_at_iso"] = filed_at.isoformat()
+        meta["filed_at_ts"] = filed_at.timestamp()
+    return {key: value for key, value in meta.items() if value not in (None, "")}
 
 
 def _open_session() -> Session:
@@ -238,7 +315,8 @@ def process_filing(filing_id: str) -> str:
 
         if chunks:
             _save_chunks(filing, chunks, db)
-            vector_service.store_chunk_vectors(str(filing.id), chunks)
+            vector_metadata = _build_vector_metadata(filing)
+            vector_service.store_chunk_vectors(str(filing.id), chunks, metadata=vector_metadata)
         else:
             logger.warning("No chunks extracted for filing %s", filing.id)
 
@@ -246,7 +324,8 @@ def process_filing(filing_id: str) -> str:
 
         try:
             classification = llm_service.classify_filing_content(raw_md)
-            filing.category = classification.get("category")
+            normalized_category = _normalize_category_label(classification.get("category"))
+            filing.category = normalized_category
             filing.category_confidence = classification.get("confidence_score")
             db.commit()
         except Exception as exc:
@@ -418,6 +497,39 @@ def process_news_article(article_payload: Any) -> str:
         return "error"
     finally:
         db.close()
+
+
+@shared_task(name="m2.seed_news_feeds")
+def seed_news_feeds(limit_per_feed: Optional[int] = None, use_mock_fallback: bool = False) -> int:
+    """Fetch latest news articles and enqueue them for processing."""
+    fetch_limit = max(1, int(limit_per_feed or NEWS_FETCH_LIMIT))
+    queued = 0
+
+    try:
+        articles = fetch_news_batch(limit_per_feed=fetch_limit, use_mock_fallback=use_mock_fallback)
+    except Exception as exc:
+        logger.error("Failed to fetch news batch: %s", exc, exc_info=True)
+        return queued
+
+    if not articles:
+        logger.info("No news articles fetched from feeds.")
+        return queued
+
+    for article in articles:
+        try:
+            payload = article.model_dump() if hasattr(article, "model_dump") else dict(article)
+            process_news_article.delay(payload)
+            queued += 1
+        except Exception as exc:
+            logger.warning(
+                "Failed to enqueue news article '%s': %s",
+                getattr(article, "headline", ""),
+                exc,
+                exc_info=True,
+            )
+
+    logger.info("Queued %d news article(s) for processing (limit_per_feed=%d).", queued, fetch_limit)
+    return queued
 
 
 @shared_task(name="m2.aggregate_news")

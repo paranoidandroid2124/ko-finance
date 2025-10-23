@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -50,7 +50,10 @@ class ChatMessageCreateRequest(BaseModel):
     session_id: uuid.UUID
     role: str
     content: Optional[str] = None
-    turn_id: Optional[uuid.UUID] = None
+    turn_id: Optional[Union[str, uuid.UUID]] = Field(
+        default=None,
+        description="Client-provided turn identifier (accepts UUID or arbitrary string).",
+    )
     reply_to_message_id: Optional[uuid.UUID] = None
     retry_of_message_id: Optional[uuid.UUID] = None
     state: str = Field(default="pending")

@@ -1,5 +1,6 @@
 "use client";
 
+import { shallow } from "zustand/shallow";
 import { AppShell } from "@/components/layout/AppShell";
 import { NewsSentimentHeatmap } from "@/components/charts/NewsSentimentHeatmap";
 import { NewsList } from "@/components/ui/NewsList";
@@ -9,9 +10,11 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { useNewsInsights } from "@/hooks/useNewsInsights";
+import { selectNewsFilterOptions, useNewsFilterStore } from "@/store/newsFilterStore";
 
 export default function NewsInsightsPage() {
-  const { data, isLoading, isError } = useNewsInsights();
+  const filters = useNewsFilterStore(selectNewsFilterOptions, shallow);
+  const { data, isLoading, isError } = useNewsInsights(filters);
   const news = data?.news ?? [];
   const topics = data?.topics ?? [];
 
@@ -46,10 +49,13 @@ export default function NewsInsightsPage() {
   if (!news.length) {
     return (
       <AppShell>
-        <EmptyState
-          title="표시할 뉴스가 없습니다"
-          description="필터 조건을 완화하거나 데이터 동기화를 다시 시도해주세요."
-        />
+        <div className="grid gap-6 xl:grid-cols-[260px_minmax(0,1fr)]">
+          <NewsFilterPanel />
+          <EmptyState
+            title="표시할 뉴스가 없습니다"
+            description="필터 조건을 완화하거나 데이터 동기화를 다시 시도해주세요."
+          />
+        </div>
       </AppShell>
     );
   }

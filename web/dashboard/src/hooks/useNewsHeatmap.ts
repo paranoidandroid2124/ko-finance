@@ -27,9 +27,16 @@ const resolveApiBase = () => {
   return base.endsWith("/") ? base.slice(0, -1) : base;
 };
 
-const fetchHeatmap = async (): Promise<NewsHeatmapData> => {
+type HeatmapParams = {
+  windowMinutes: number;
+};
+
+const fetchHeatmap = async ({ windowMinutes }: HeatmapParams): Promise<NewsHeatmapData> => {
   const baseUrl = resolveApiBase();
-  const response = await fetch(`${baseUrl}/api/v1/news/sentiment/heatmap`);
+  const params = new URLSearchParams({
+    window_minutes: Math.max(15, windowMinutes).toString(),
+  });
+  const response = await fetch(`${baseUrl}/api/v1/news/sentiment/heatmap?${params.toString()}`);
   if (!response.ok) {
     throw new Error("뉴스 감성 히트맵 데이터를 불러오지 못했습니다.");
   }
@@ -41,9 +48,9 @@ const fetchHeatmap = async (): Promise<NewsHeatmapData> => {
   };
 };
 
-export function useNewsHeatmap() {
+export function useNewsHeatmap(params: HeatmapParams) {
   return useQuery({
-    queryKey: ["news", "heatmap"],
-    queryFn: fetchHeatmap,
+    queryKey: ["news", "heatmap", params.windowMinutes],
+    queryFn: () => fetchHeatmap(params),
   });
 }

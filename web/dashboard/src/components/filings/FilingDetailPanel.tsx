@@ -6,9 +6,9 @@ import type { FilingDetail } from "@/hooks/useFilings";
 import { useChatStore } from "@/store/chatStore";
 
 const sentimentText: Record<FilingDetail["sentiment"], { label: string; description: string }> = {
-  positive: { label: "ê¸ì •ì ", description: "ê¸ì •ì ì¸ ì‹ í˜¸ê°€ ê°ì§€ë˜ì—ˆìŠµë‹ˆë‹¤." },
-  neutral: { label: "ì¤‘ë¦½ì ", description: "ëšœë ·í•œ ê°ì • ë³€í™”ê°€ ê´€ì¸¡ë˜ì§€ ì•Šì•˜ìŠµë‹ˆë‹¤." },
-  negative: { label: "ë¶€ì •ì ", description: "ë¶€ì •ì ì¸ ì§•í›„ê°€ ë‚˜íƒ€ë‚¬ìŠµë‹ˆë‹¤." }
+  positive: { label: "긍정적", description: "긍정적인 신호가 감지되었습니다." },
+  neutral: { label: "중립적", description: "뚜렷한 감정 변화가 관측되지 않았습니다." },
+  negative: { label: "부정적", description: "부정적인 징후가 나타났습니다." }
 };
 
 export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
@@ -40,7 +40,7 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
   }, [filing, router, startFilingConversation]);
   const handleOpenPdf = useCallback(() => {
     if (!filing.pdfViewerUrl && !filing.pdfDownloadUrl) {
-      window.alert("ì—´ ìˆ˜ ìžˆëŠ” PDFê°€ ì—†ìŠµë‹ˆë‹¤.");
+      window.alert("열 수 있는 PDF가 없습니다.");
       return;
     }
     const targetUrl = filing.pdfViewerUrl ?? filing.pdfDownloadUrl;
@@ -49,19 +49,10 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
     }
   }, [filing.pdfViewerUrl, filing.pdfDownloadUrl]);
 
-  const handleDownloadPdf = useCallback(() => {
-    const targetUrl = filing.pdfDownloadUrl ?? filing.pdfViewerUrl;
-    if (!targetUrl) {
-      window.alert("ë‹¤ìš´ë¡œë“œ ê°€ëŠ¥í•œ PDFê°€ ì—†ìŠµë‹ˆë‹¤.");
-      return;
-    }
-    window.open(targetUrl, "_blank", "noopener,noreferrer");
-  }, [filing.pdfDownloadUrl, filing.pdfViewerUrl]);
-
   return (
     <aside className="flex h-full flex-col rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
       <header>
-        <p className="text-xs font-semibold uppercase text-text-secondaryLight dark:text-text-secondaryDark">ê¸°ë³¸ ì •ë³´</p>
+        <p className="text-xs font-semibold uppercase text-text-secondaryLight dark:text-text-secondaryDark">기본 정보</p>
         <h2 className="mt-2 text-lg font-semibold">{filing.company}</h2>
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">{filing.title}</p>
         <div className="mt-3 flex items-center gap-2 text-xs">
@@ -78,14 +69,14 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
 
       <section className="mt-5 space-y-4 text-sm">
         <div>
-          <h3 className="text-sm font-semibold">ìš”ì•½</h3>
+          <h3 className="text-sm font-semibold">요약</h3>
           <p className="mt-2 text-text-secondaryLight dark:text-text-secondaryDark">
-            {filing.summary || "ìš”ì•½ì´ ì œê³µë˜ì§€ ì•Šì•˜ìŠµë‹ˆë‹¤."}
+            {filing.summary || "요약이 제공되지 않았습니다."}
           </p>
         </div>
 
         <div>
-          <h3 className="text-sm font-semibold">í•µì‹¬ ì‚¬ì‹¤</h3>
+          <h3 className="text-sm font-semibold">핵심 사실</h3>
           {filing.facts.length > 0 ? (
             <ul className="mt-2 space-y-2 text-sm">
               {filing.facts.map((fact) => (
@@ -99,21 +90,14 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
               ))}
             </ul>
           ) : (
-            <p className="mt-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">í•µì‹¬ ì‚¬ì‹¤ì´ ì—†ìŠµë‹ˆë‹¤.</p>
+            <p className="mt-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">핵심 사실이 없습니다.</p>
           )}
         </div>
       </section>
 
       <footer className="mt-auto">
         <div className="rounded-lg border border-dashed border-border-light p-3 text-xs text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
-          <p>PDF ë§í¬ë¥¼ í†µí•´ ë¬¸ì„œë¥¼ í™•ì¸í•  ìˆ˜ ìžˆìŠµë‹ˆë‹¤.</p>
-          {filing.pdfDownloadUrl && (
-            <p className="mt-2">
-              <button onClick={handleDownloadPdf} className="text-primary underline-offset-2 hover:underline">
-                PDF ë‹¤ìš´ë¡œë“œ
-              </button>
-            </p>
-          )}
+          <p>PDF 링크를 통해 문서를 확인할 수 있습니다.</p>
         </div>
         <div className="mt-3 flex gap-2">
           <button
@@ -121,13 +105,13 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
             disabled={!filing.pdfViewerUrl && !filing.pdfDownloadUrl}
             className="flex-1 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white shadow transition-opacity hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
-            PDF ì—´ê¸°
+            PDF 열기
           </button>
           <button
             onClick={handleAskClick}
             className="flex-1 rounded-lg border border-border-light px-3 py-2 text-sm font-semibold text-text-secondaryLight transition-colors hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary.dark dark:hover:text-primary.dark"
           >
-            ì§ˆë¬¸í•˜ê¸°
+            질문하기
           </button>
         </div>
       </footer>

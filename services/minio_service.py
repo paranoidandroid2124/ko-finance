@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 import mimetypes
 
 try:
@@ -117,15 +118,28 @@ def download_file(object_name: str, destination_path: str) -> Optional[str]:
         return None
 
 
-def get_presigned_url(object_name: str, expiry_seconds: int = 3600) -> Optional[str]:
+def _normalize_expiry(value: Union[int, float, timedelta]) -> timedelta:
+    if isinstance(value, timedelta):
+        seconds = int(value.total_seconds())
+    else:
+        try:
+            seconds = int(float(value))
+        except (TypeError, ValueError):
+            raise ValueError("expiry must be seconds as number or datetime.timedelta")
+    bound_seconds = max(1, min(seconds, 604800))
+    return timedelta(seconds=bound_seconds)
+
+
+def get_presigned_url(object_name: str, expiry_seconds: Union[int, float, timedelta] = 3600) -> Optional[str]:
     client = _client_instance()
     if not client:
         return None
     try:
+        expires = _normalize_expiry(expiry_seconds)
         return client.presigned_get_object(
             bucket_name=MINIO_BUCKET,
             object_name=object_name,
-            expires=expiry_seconds,
+            expires=expires,
         )
     except Exception as exc:
         logger.error("Failed to create MinIO presigned URL: %s", exc, exc_info=True)

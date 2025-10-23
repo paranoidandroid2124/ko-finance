@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -42,6 +42,19 @@ def _parse_cursor(value: Optional[str]) -> Optional[datetime]:
         return datetime.fromisoformat(value)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor value.") from exc
+
+
+def _coerce_uuid(value: Optional[Union[str, uuid.UUID]]) -> uuid.UUID:
+    """Convert arbitrary identifiers into deterministic UUIDs."""
+    if isinstance(value, uuid.UUID):
+        return value
+    if value:
+        text = str(value)
+        try:
+            return uuid.UUID(text)
+        except ValueError:
+            return uuid.uuid5(uuid.NAMESPACE_URL, text)
+    return uuid.uuid4()
 
 
 def _guard_session_owner(session, user_id: Optional[uuid.UUID], org_id: Optional[uuid.UUID]) -> None:
@@ -199,7 +212,7 @@ def create_message(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
     _guard_session_owner(session, user_id, org_id)
     idempotency_key = payload.idempotency_key or idempotency_key_header
-    turn_id = payload.turn_id or uuid.uuid4()
+    turn_id = _coerce_uuid(payload.turn_id)
     try:
         message = chat_service.create_chat_message(
             db,

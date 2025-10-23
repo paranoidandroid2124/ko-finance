@@ -63,6 +63,64 @@ type ApiFilingDetail = ApiFilingBrief & {
   source_files?: Record<string, string | null> | null;
 };
 
+const CATEGORY_TRANSLATIONS: Record<string, string> = {
+  capital_increase: "증자",
+  "증자": "증자",
+  buyback: "자사주 매입/소각",
+  share_buyback: "자사주 매입/소각",
+  "자사주 매입/소각": "자사주 매입/소각",
+  cb_bw: "전환사채·신주인수권부사채",
+  convertible: "전환사채·신주인수권부사채",
+  "전환사채·신주인수권부사채": "전환사채·신주인수권부사채",
+  large_contract: "대규모 공급·수주 계약",
+  major_contract: "대규모 공급·수주 계약",
+  "대규모 공급·수주 계약": "대규모 공급·수주 계약",
+  litigation: "소송/분쟁",
+  lawsuit: "소송/분쟁",
+  "소송/분쟁": "소송/분쟁",
+  mna: "M&A/합병·분할",
+  "m&a": "M&A/합병·분할",
+  merger: "M&A/합병·분할",
+  "M&A/합병·분할": "M&A/합병·분할",
+  governance: "지배구조·임원 변경",
+  governance_change: "지배구조·임원 변경",
+  "지배구조·임원 변경": "지배구조·임원 변경",
+  audit_opinion: "감사 의견",
+  "감사 의견": "감사 의견",
+  periodic_report: "정기·수시 보고서",
+  regular_report: "정기·수시 보고서",
+  "정기·수시 보고서": "정기·수시 보고서",
+  securities_registration: "증권신고서/투자설명서",
+  registration: "증권신고서/투자설명서",
+  "증권신고서/투자설명서": "증권신고서/투자설명서",
+  insider_ownership: "임원·주요주주 지분 변동",
+  insider_trading: "임원·주요주주 지분 변동",
+  "임원·주요주주 지분 변동": "임원·주요주주 지분 변동",
+  correction: "정정 공시",
+  revision: "정정 공시",
+  "정정 공시": "정정 공시",
+  ir_presentation: "IR/설명회",
+  ir: "IR/설명회",
+  "IR/설명회": "IR/설명회",
+  dividend: "배당/주주환원",
+  shareholder_return: "배당/주주환원",
+  "배당/주주환원": "배당/주주환원",
+  other: "기타",
+  "기타": "기타",
+};
+
+const POSITIVE_CATEGORY_LABELS = new Set(["자사주 매입/소각", "대규모 공급·수주 계약", "배당/주주환원", "M&A/합병·분할"]);
+const NEGATIVE_CATEGORY_LABELS = new Set(["소송/분쟁", "감사 의견", "정정 공시"]);
+
+const normalizeCategoryLabel = (raw?: string | null): string | undefined => {
+  if (!raw) {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+  const lower = trimmed.toLowerCase();
+  return CATEGORY_TRANSLATIONS[lower] ?? CATEGORY_TRANSLATIONS[trimmed] ?? trimmed;
+};
+
 const resolveApiBase = () => {
   const base = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
   if (!base) {
@@ -73,7 +131,7 @@ const resolveApiBase = () => {
 
 const formatDateTime = (value?: string | null) => {
   if (!value) {
-    return "Unknown";
+    return "알 수 없음";
   }
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
@@ -94,34 +152,34 @@ const deriveSentiment = (analysisStatus?: string, category?: string | null): Fil
   if (normalizedStatus === "FAILED" || normalizedStatus === "ERROR") {
     return "negative";
   }
-  const normalizedCategory = (category ?? "").toLowerCase();
-  if (
-    normalizedCategory.includes("warning") ||
-    normalizedCategory.includes("litigation") ||
-    normalizedCategory.includes("lawsuit") ||
-    normalizedCategory.includes("correction")
-  ) {
-    return "negative";
-  }
-  if (normalizedCategory.includes("positive") || normalizedCategory.includes("benefit") || normalizedCategory.includes("buyback")) {
-    return "positive";
+  const label = normalizeCategoryLabel(category);
+  if (label) {
+    if (POSITIVE_CATEGORY_LABELS.has(label)) {
+      return "positive";
+    }
+    if (NEGATIVE_CATEGORY_LABELS.has(label)) {
+      return "negative";
+    }
   }
   return "neutral";
 };
 
-const toListItem = (item: ApiFilingBrief): FilingListItem => ({
-  id: item.id,
-  company: item.corp_name || item.ticker || "Unknown company",
-  title: item.report_name || item.title || "Untitled filing",
-  type: item.category || item.report_name || "Unclassified",
-  filedAt: formatDateTime(item.filed_at),
-  sentiment: item.sentiment ?? deriveSentiment(item.analysis_status, item.category),
-  sentimentReason: item.sentiment_reason ?? undefined
-});
+const toListItem = (item: ApiFilingBrief): FilingListItem => {
+  const categoryLabel = normalizeCategoryLabel(item.category);
+  return {
+    id: item.id,
+    company: item.corp_name || item.ticker || "미확인 기업",
+    title: item.report_name || item.title || "제목 미정",
+    type: categoryLabel || item.report_name || item.title || "분류 없음",
+    filedAt: formatDateTime(item.filed_at),
+    sentiment: item.sentiment ?? deriveSentiment(item.analysis_status, item.category),
+    sentimentReason: item.sentiment_reason ?? undefined,
+  };
+};
 
 const buildSummaryText = (summary?: ApiSummary | null) => {
   if (!summary) {
-    return "Summary is being generated.";
+    return "요약을 생성하는 중입니다.";
   }
 
   const candidates = [
@@ -129,11 +187,11 @@ const buildSummaryText = (summary?: ApiSummary | null) => {
     summary.what,
     summary.why,
     summary.how,
-    [summary.who, summary.when, summary.where].filter(Boolean).join(" · ")
+    [summary.who, summary.when, summary.where].filter(Boolean).join(" · "),
   ].filter((entry) => Boolean(entry && entry.trim())) as string[];
 
   if (candidates.length === 0) {
-    return "Summary is being generated.";
+    return "요약을 생성하는 중입니다.";
   }
   return candidates[0];
 };
@@ -176,7 +234,7 @@ const fetchFilings = async (): Promise<FilingListItem[]> => {
   const baseUrl = resolveApiBase();
   const response = await fetch(`${baseUrl}/api/v1/filings/?limit=50`);
   if (!response.ok) {
-    throw new Error("Failed to load filing list.");
+    throw new Error("공시 목록을 불러오지 못했습니다.");
   }
   const payload: ApiFilingBrief[] = await response.json();
   return payload.map(toListItem);
@@ -186,7 +244,7 @@ const fetchFilingDetail = async (filingId: string): Promise<FilingDetail> => {
   const baseUrl = resolveApiBase();
   const response = await fetch(`${baseUrl}/api/v1/filings/${filingId}`);
   if (!response.ok) {
-    throw new Error("Failed to load filing detail.");
+    throw new Error("공시 상세를 불러오지 못했습니다.");
   }
   const payload: ApiFilingDetail = await response.json();
   return toDetail(payload);

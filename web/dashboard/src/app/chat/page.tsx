@@ -10,7 +10,12 @@ import { ChatMessageBubble } from '@/components/chat/ChatMessage';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { ChatContextPanel } from '@/components/chat/ChatContextPanel';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { createMessage as createChatMessageApi, postRagQuery, streamRagQuery } from '@/lib/chatApi';
+import {
+  createMessage as createChatMessageApi,
+  postRagQuery,
+  streamRagQuery,
+  type RagQueryRequestPayload
+} from '@/lib/chatApi';
 import {
   useChatStore,
   selectActiveSession,
@@ -511,41 +516,8 @@ export default function ChatPage() {
       const sessionState = useChatStore.getState().sessions.find((session) => session.id === sessionId);
       const referenceId =
         sessionState?.context?.type === 'filing' ? sessionState.context.referenceId : undefined;
-      const documentTitle = sessionState?.evidence?.documentTitle ?? sessionState?.title;
+      const documentTitle = sessionState?.evidence?.documentTitle ?? sessionState?.title ?? '대화';
       const documentUrl = sessionState?.evidence?.documentUrl;
-
-      if (!referenceId) {
-        const warningMessage = '공시 세션이 필요합니다.';
-        updateMessage(sessionId, assistantMessageId, {
-          content: ASSISTANT_UNAVAILABLE_RESPONSE,
-          meta: {
-            status: 'error',
-            errorMessage: warningMessage,
-            retryable: false,
-            question,
-            userMessageId
-          }
-        });
-        setSessionEvidence(sessionId, {
-          status: 'error',
-          items: [],
-          errorMessage: 'Filing context is required for RAG queries.',
-          activeId: undefined,
-          confidence: undefined,
-          documentTitle,
-          documentUrl
-        });
-        setSessionTelemetry(sessionId, {
-          guardrail: { status: 'ready', level: 'warn', message: warningMessage },
-          metrics: idleMetricsTelemetry
-        });
-        showToast({
-          intent: 'warning',
-          title: '세션 정보를 찾을 수 없어요',
-          message: warningMessage
-        });
-        return;
-      }
 
       updateMessage(sessionId, assistantMessageId, {
         meta: {
@@ -571,9 +543,8 @@ export default function ChatPage() {
         metrics: idleMetricsTelemetry
       });
 
-      const ragPayload = {
+      const ragPayload: RagQueryRequestPayload = {
         question,
-        filing_id: referenceId,
         session_id: sessionId,
         turn_id: turnId,
         user_message_id: userMessageId,
@@ -583,6 +554,9 @@ export default function ChatPage() {
         run_self_check: true,
         meta: {}
       };
+      if (referenceId) {
+        ragPayload.filing_id = referenceId;
+      }
 
       let completed = false;
       let streamedAnswer = '';
@@ -1028,7 +1002,7 @@ export default function ChatPage() {
             {showEmptyState ? (
               <EmptyState
                 title='메시지가 없습니다'
-                description="새 세션을 시작하거나 공시 상세에서 '질문하기' 버튼을 눌러 대화를 생성해보세요."
+                description="새 세션을 시작하거나 궁금한 점을 바로 질문해보세요."
                 className='rounded-lg border border-border-light px-4 py-6 text-xs dark:border-border-dark'
               />
             ) : (

@@ -20,11 +20,14 @@ logger = logging.getLogger(__name__)
 
 
 def run_ragas_evaluation(filing_id: str, question: str, top_k: int = 5):
-    context_chunks: List[Dict] = vector_service.query_vector_store(
+    retrieval = vector_service.query_vector_store(
         query_text=question,
         filing_id=filing_id,
         top_k=top_k,
+        max_filings=1,
+        filters={},
     )
+    context_chunks: List[Dict] = retrieval.chunks
     if not context_chunks:
         logger.error("No context returned from vector store.")
         return None
