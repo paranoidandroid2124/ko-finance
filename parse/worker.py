@@ -15,4 +15,10 @@ app.conf.beat_schedule = {
         "args": (),
         "kwargs": {},
     },
+    "daily-filing-digest": {
+        "task": "m4.send_filing_digest",
+        "schedule": crontab(hour=18, minute=0, day_of_week="mon-fri", timezone="Asia/Seoul"),
+        "args": (),
+        "kwargs": {},
+    },
 }

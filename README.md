@@ -64,6 +64,7 @@ Ensure Redis/Postgres/Qdrant services are reachable via `.env`.
 - `pytest tests/test_parse_tasks.py tests/test_llm_service.py tests/test_rag_api.py` – critical regressions
 - `make lint` – optional lint pass if GNU Make is available
 - `alembic upgrade head` – run DB migrations (when migration scripts are present)
+- `make eval` – execute prompt-based regression checks (promptfoo) and optional RAG scoring. Provide `EVAL_ARGS="--filing-id=<uuid> --question='...'"` when you want to include Ragas metrics.
 
 ### 6. Deployment Notes
 - Use Docker Compose overrides or Kubernetes manifests to run `api`, `worker`, `beat`, `litellm`, `redis`, `postgres`, and `qdrant`.

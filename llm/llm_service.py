@@ -1,4 +1,4 @@
-"""LLM interaction helpers for filings, news analysis, and RAG answers."""
+﻿"""LLM interaction helpers for filings, news analysis, and RAG answers."""
 
 from __future__ import annotations
 
@@ -13,9 +13,10 @@ import litellm
 from langfuse import Langfuse
 
 from core.logging import get_logger
-from llm.guardrails import apply_answer_guard
+from llm.guardrails import SAFE_MESSAGE, apply_answer_guard
 from llm.prompts import (
     analyze_news,
+    chat_summary,
     classify_filing,
     extract_info,
     judge_guard,
@@ -96,10 +97,7 @@ CITATION_PAGE_RE = re.compile(r"\(p\.\s*\d+\)", re.IGNORECASE)
 CITATION_TABLE_RE = re.compile(r"\(table\s*[^\)]+\)", re.IGNORECASE)
 CITATION_FOOTNOTE_RE = re.compile(r"\(footnote\s*[^\)]+\)", re.IGNORECASE)
 
-JUDGE_BLOCK_MESSAGE = (
-    '해당 답변은 투자 권유 또는 확정적 수익 보장으로 해석될 여지가 있어 표시되지 않습니다. ' 
-    '질문을 더 일반적인 정보 요청이나 시나리오 분석 형태로 다시 작성해 주세요.'
-)
+JUDGE_BLOCK_MESSAGE = SAFE_MESSAGE
 
 def _record_langfuse_event(
     model: str,
@@ -409,6 +407,22 @@ def _select_prompt_builder(context_chunks: List[Dict[str, Any]]):
     return rag_qa
 
 
+def _format_transcript_for_summary(transcript: List[Dict[str, str]], *, max_chars: int = 4000) -> str:
+    lines: List[str] = []
+    for entry in transcript:
+        role = str(entry.get("role") or "").strip().lower()
+        content = str(entry.get("content") or "").strip()
+        if not content:
+            continue
+        role_label = "사용자" if role == "user" else "Copilot"
+        lines.append(f"{role_label}: {content}")
+    combined = "\n".join(lines)
+    if len(combined) <= max_chars:
+        return combined
+    # Prioritise the most recent part of the transcript for brevity.
+    return combined[-max_chars:]
+
+
 def judge_question_for_regulatory_risk(question: str) -> Dict[str, Any]:
     messages = judge_guard.get_prompt(question)
     result = _json_completion(JUDGE_MODEL, messages)
@@ -457,7 +471,12 @@ def _prepare_rag_payload(
     return payload
 
 
-def answer_with_rag(question: str, context_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
+def answer_with_rag(
+    question: str,
+    context_chunks: List[Dict[str, Any]],
+    *,
+    conversation_memory: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     judge_result = judge_question_for_regulatory_risk(question)
     judge_decision = judge_result.get("decision") if judge_result else None
     judge_reason = judge_result.get("reason") if judge_result else None
@@ -467,7 +486,7 @@ def answer_with_rag(question: str, context_chunks: List[Dict[str, Any]]) -> Dict
         logger.warning("Pre-judge evaluation failed for question.")
         judge_decision = "unknown"
 
-    if judge_decision and judge_decision != "pass":
+    if judge_decision and judge_decision not in {"pass", "unknown"}:
         violation_code = "guardrail_violation_judge"
         warnings: List[str] = []
         if judge_reason:
@@ -492,7 +511,11 @@ def answer_with_rag(question: str, context_chunks: List[Dict[str, Any]]) -> Dict
         return payload
 
     builder = _select_prompt_builder(context_chunks)
-    messages = builder.get_prompt(question, context_chunks)
+    messages = builder.get_prompt(
+        question,
+        context_chunks,
+        conversation_memory=conversation_memory,
+    )
     response, model_used = _safe_completion(RAG_MODEL, messages)
     if response is None:
         return {"error": model_used or "rag_failed"}
@@ -514,7 +537,12 @@ def answer_with_rag(question: str, context_chunks: List[Dict[str, Any]]) -> Dict
     return payload
 
 
-def stream_answer_with_rag(question: str, context_chunks: List[Dict[str, Any]]):
+def stream_answer_with_rag(
+    question: str,
+    context_chunks: List[Dict[str, Any]],
+    *,
+    conversation_memory: Optional[Dict[str, Any]] = None,
+):
     judge_result = judge_question_for_regulatory_risk(question)
     judge_decision = judge_result.get("decision") if judge_result else None
     judge_reason = judge_result.get("reason") if judge_result else None
@@ -524,7 +552,7 @@ def stream_answer_with_rag(question: str, context_chunks: List[Dict[str, Any]]):
         logger.warning("Pre-judge evaluation failed for question.")
         judge_decision = "unknown"
 
-    if judge_decision and judge_decision != "pass":
+    if judge_decision and judge_decision not in {"pass", "unknown"}:
         violation_code = "guardrail_violation_judge"
         warnings: List[str] = []
         if judge_reason:
@@ -550,7 +578,11 @@ def stream_answer_with_rag(question: str, context_chunks: List[Dict[str, Any]]):
         return
 
     builder = _select_prompt_builder(context_chunks)
-    messages = builder.get_prompt(question, context_chunks)
+    messages = builder.get_prompt(
+        question,
+        context_chunks,
+        conversation_memory=conversation_memory,
+    )
     try:
         stream = litellm.completion(model=RAG_MODEL, messages=messages, stream=True)
     except Exception as exc:
@@ -605,6 +637,20 @@ def stream_answer_with_rag(question: str, context_chunks: List[Dict[str, Any]]):
     yield {"type": "final", "payload": payload}
 
 
+def summarize_chat_transcript(transcript: List[Dict[str, str]]) -> str:
+    if not transcript:
+        return ""
+    formatted = _format_transcript_for_summary(transcript)
+    if not formatted:
+        return ""
+    messages = chat_summary.get_prompt(formatted)
+    response, _ = _safe_completion(SUMMARY_MODEL, messages)
+    if response is None:
+        raise RuntimeError("chat_summary_failed")
+    summary_text = getattr(response.choices[0].message, "content", "") or ""
+    return summary_text.strip()
+
+
 __all__ = [
     "classify_filing_content",
     "extract_structured_info",
@@ -614,6 +660,9 @@ __all__ = [
     "validate_news_analysis_result",
     "answer_with_rag",
     "stream_answer_with_rag",
+    "summarize_chat_transcript",
     "judge_question_for_regulatory_risk",
     "JUDGE_BLOCK_MESSAGE",
 ]
+
+

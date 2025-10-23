@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Optional
+import mimetypes
 
 try:
     from minio import Minio
@@ -67,7 +68,7 @@ def _ensure_bucket() -> None:
         return
 
 
-def upload_file(local_path: str, object_name: Optional[str] = None) -> Optional[str]:
+def upload_file(local_path: str, object_name: Optional[str] = None, *, content_type: Optional[str] = None) -> Optional[str]:
     client = _client_instance()
     if not client:
         return None
@@ -79,13 +80,14 @@ def upload_file(local_path: str, object_name: Optional[str] = None) -> Optional[
 
     _ensure_bucket()
     object_key = object_name or path.name
+    detected_type = content_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
 
     try:
         client.fput_object(
             bucket_name=MINIO_BUCKET,
             object_name=object_key,
             file_path=str(path),
-            content_type="application/pdf",
+            content_type=detected_type,
         )
         logger.info("Uploaded %s to bucket '%s'.", object_key, MINIO_BUCKET)
         return object_key

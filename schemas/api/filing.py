@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
@@ -14,8 +14,7 @@ class FactResponse(BaseModel):
     anchor: Optional[Dict[str, Any]] = None
     confidence_score: Optional[float] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SummaryResponse(BaseModel):
@@ -28,8 +27,7 @@ class SummaryResponse(BaseModel):
     insight: Optional[str] = None
     confidence_score: Optional[float] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FilingBriefResponse(BaseModel):
@@ -46,8 +44,7 @@ class FilingBriefResponse(BaseModel):
     sentiment: str = Field("neutral", description="Derived sentiment label based on classification/summary")
     sentiment_reason: Optional[str] = Field(None, description="Short explanation of the sentiment label")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FilingDetailResponse(FilingBriefResponse):
