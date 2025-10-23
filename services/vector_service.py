@@ -6,8 +6,8 @@ import logging
 import os
 import time
 import uuid
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-
 import litellm
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient, models
@@ -27,6 +27,13 @@ VECTOR_DIMENSION = 1536
 COLLECTION_NAME = "k-finance-rag-collection"
 
 _qdrant_client: Optional[QdrantClient] = None
+
+
+@dataclass
+class VectorSearchResult:
+    filing_id: Optional[str]
+    chunks: List[Dict[str, Any]] = field(default_factory=list)
+    related_filings: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def _create_client() -> QdrantClient:
@@ -64,7 +71,12 @@ def init_collection() -> None:
         )
 
 
-def store_chunk_vectors(filing_id: str, chunks: List[Dict[str, Any]]) -> None:
+def store_chunk_vectors(
+    filing_id: str,
+    chunks: List[Dict[str, Any]],
+    *,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
     if not chunks:
         logger.warning("No chunks provided for filing %s. Skipping vector store upsert.", filing_id)
         return
@@ -92,6 +104,7 @@ def store_chunk_vectors(filing_id: str, chunks: List[Dict[str, Any]]) -> None:
     for idx, chunk in enumerate(chunks):
         payload = {
             "filing_id": filing_id,
+            "id": chunk.get("id"),
             "chunk_id": chunk.get("id"),
             "page_number": chunk.get("page_number"),
             "type": chunk.get("type"),
@@ -100,15 +113,29 @@ def store_chunk_vectors(filing_id: str, chunks: List[Dict[str, Any]]) -> None:
             "content": contents[idx],
             "metadata": chunk.get("metadata"),
         }
+        if metadata:
+            for key, value in metadata.items():
+                if value is None:
+                    continue
+                payload[key] = value
         points.append(models.PointStruct(id=str(uuid.uuid4()), vector=vectors[idx], payload=payload))
 
     client.upsert(collection_name=COLLECTION_NAME, points=points, wait=True)
     logger.info("Stored %d vectors for filing %s.", len(points), filing_id)
 
 
-def query_vector_store(query_text: str, filing_id: str, top_k: int = 5) -> List[Dict[str, Any]]:
+def query_vector_store(
+    query_text: str,
+    *,
+    filing_id: Optional[str] = None,
+    top_k: int = 5,
+    max_filings: int = 1,
+    filters: Optional[Dict[str, Any]] = None,
+) -> VectorSearchResult:
     if top_k <= 0:
         raise ValueError("top_k must be greater than zero.")
+    if max_filings <= 0:
+        raise ValueError("max_filings must be greater than zero.")
 
     client = _client()
     try:
@@ -124,34 +151,99 @@ def query_vector_store(query_text: str, filing_id: str, top_k: int = 5) -> List[
         raise RuntimeError("Embedding generation failed.") from exc
 
     query_vector = embedding_response.data[0]["embedding"]
-    query_filter = models.Filter(
-        must=[
+
+    filter_conditions: List[models.FieldCondition] = []
+    if filing_id:
+        filter_conditions.append(
             models.FieldCondition(
                 key="filing_id",
                 match=models.MatchValue(value=filing_id),
             )
-        ]
-    )
+        )
 
+    filters = filters or {}
+    ticker = filters.get("ticker")
+    if ticker:
+        filter_conditions.append(models.FieldCondition(key="ticker", match=models.MatchValue(value=ticker)))
+
+    sector = filters.get("sector")
+    if sector:
+        filter_conditions.append(models.FieldCondition(key="sector", match=models.MatchValue(value=sector)))
+
+    sentiment = filters.get("sentiment")
+    if sentiment:
+        filter_conditions.append(models.FieldCondition(key="sentiment", match=models.MatchValue(value=sentiment)))
+
+    min_ts = filters.get("min_published_at_ts")
+    max_ts = filters.get("max_published_at_ts")
+    if min_ts is not None or max_ts is not None:
+        range_kwargs: Dict[str, float] = {}
+        if min_ts is not None:
+            range_kwargs["gte"] = float(min_ts)
+        if max_ts is not None:
+            range_kwargs["lte"] = float(max_ts)
+        filter_conditions.append(models.FieldCondition(key="filed_at_ts", range=models.Range(**range_kwargs)))
+
+    query_filter = models.Filter(must=filter_conditions) if filter_conditions else None
+
+    search_limit = max(top_k * max_filings * 4, top_k)
     try:
         search_result = client.search(
             collection_name=COLLECTION_NAME,
             query_vector=query_vector,
             query_filter=query_filter,
-            limit=top_k,
+            limit=search_limit,
             with_payload=True,
         )
     except Exception as exc:
         logger.error("Qdrant search failed: %s", exc, exc_info=True)
         raise RuntimeError("Vector search failed.") from exc
 
-    chunks: List[Dict[str, Any]] = []
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
     for point in search_result:
         payload = dict(point.payload or {})
-        payload["score"] = point.score
-        chunks.append(payload)
-    logger.info("Retrieved %d chunks for filing %s (top_k=%d).", len(chunks), filing_id, top_k)
-    return chunks
+        payload["score"] = float(point.score or 0.0)
+        filing_key = str(payload.get("filing_id") or "")
+        if not filing_key:
+            continue
+        payload.setdefault("id", payload.get("chunk_id"))
+        grouped.setdefault(filing_key, []).append(payload)
+
+    if filing_id and filing_id not in grouped:
+        grouped[filing_id] = []
+
+    ranked: List[Dict[str, Any]] = []
+    for group_id, items in grouped.items():
+        items.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+        top_item = items[0] if items else {}
+        ranked.append(
+            {
+                "filing_id": group_id,
+                "score": float(top_item.get("score") or 0.0),
+                "chunk_count": len(items),
+                "published_at": top_item.get("filed_at") or top_item.get("filed_at_iso"),
+                "sentiment": top_item.get("sentiment"),
+                "title": top_item.get("title") or top_item.get("report_name"),
+            }
+        )
+
+    ranked.sort(key=lambda entry: entry.get("score", 0.0), reverse=True)
+    selected_filing = filing_id or (ranked[0]["filing_id"] if ranked else None)
+    selected_chunks: List[Dict[str, Any]] = []
+    if selected_filing:
+        selected_chunks = grouped.get(selected_filing, [])[:top_k]
+
+    logger.info(
+        "Retrieved %d chunks across %d filings (selected=%s).",
+        sum(len(items) for items in grouped.values()),
+        len(grouped),
+        selected_filing,
+    )
+    return VectorSearchResult(
+        filing_id=selected_filing,
+        chunks=selected_chunks,
+        related_filings=ranked[:max_filings],
+    )
 
 
-__all__ = ["store_chunk_vectors", "query_vector_store", "init_collection"]
+__all__ = ["store_chunk_vectors", "query_vector_store", "init_collection", "VectorSearchResult"]

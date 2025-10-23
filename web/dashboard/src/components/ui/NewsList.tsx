@@ -4,12 +4,19 @@ type NewsItem = {
   sentiment: "positive" | "neutral" | "negative";
   source: string;
   publishedAt: string;
+  sector: string;
+};
+
+const sentimentLabel: Record<NewsItem["sentiment"], string> = {
+  positive: "긍정",
+  neutral: "중립",
+  negative: "부정",
 };
 
 const sentimentColor: Record<NewsItem["sentiment"], string> = {
   positive: "text-accent-positive",
   neutral: "text-text-secondaryLight dark:text-text-secondaryDark",
-  negative: "text-accent-negative"
+  negative: "text-accent-negative",
 };
 
 export function NewsList({ items }: { items: NewsItem[] }) {
@@ -22,11 +29,11 @@ export function NewsList({ items }: { items: NewsItem[] }) {
             <div className="flex items-center justify-between gap-3">
               <h4 className="font-medium">{item.title}</h4>
               <span className={`text-xs font-semibold ${sentimentColor[item.sentiment]}`}>
-                {item.sentiment === "positive" ? "긍정" : item.sentiment === "negative" ? "부정" : "중립"}
+                {sentimentLabel[item.sentiment]}
               </span>
             </div>
             <p className="mt-1 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-              {item.source} · {item.publishedAt}
+              {item.source} · {item.sector} · {item.publishedAt}
             </p>
           </li>
         ))}
@@ -34,4 +41,3 @@ export function NewsList({ items }: { items: NewsItem[] }) {
     </div>
   );
 }
-

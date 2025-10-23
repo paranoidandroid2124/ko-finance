@@ -6,24 +6,26 @@ from typing import Dict, List
 
 SYSTEM_PROMPT = (
     "You are a compliance-focused assistant that classifies Korean financial filings. "
-    "Return JSON only. If the category is unclear, respond with \"other\" and explain why."
+    "Return JSON only. Use the predefined Korean labels exactly as provided. "
+    "If nothing fits, respond with \"기타\" and explain why."
 )
 
 USER_PROMPT_TEMPLATE = """Classify the filing excerpt below.
 
-Categories:
+Categories (choose exactly one):
 [
-  "capital_increase", "buyback", "cb_bw", "large_contract", "litigation",
-  "governance", "audit_opinion", "periodic_report", "securities_registration",
-  "insider_ownership", "correction", "other"
+  "증자", "자사주 매입/소각", "전환사채·신주인수권부사채", "대규모 공급·수주 계약",
+  "소송/분쟁", "M&A/합병·분할", "지배구조·임원 변경", "감사 의견",
+  "정기·수시 보고서", "증권신고서/투자설명서", "임원·주요주주 지분 변동",
+  "정정 공시", "IR/설명회", "배당/주주환원", "기타"
 ]
 
-If the category is "capital_increase", add `"allocation": "rights"|"third_party"|"unknown"`.
+If the category is "증자", add `"allocation": "주주배정"|"제3자배정"|"미확인"`.
 
 Return JSON with:
 {{
-  "category": "...",
-  "allocation": "...",  # optional
+  "category": "...",  # one of the Korean labels above
+  "allocation": "...",  # optional, only when category는 "증자"
   "rationale": ["short supporting quotes"],
   "anchors": [{{"page": number, "quote": "..."}}]
 }}
@@ -41,4 +43,3 @@ def get_prompt(snippet: str) -> List[Dict[str, str]]:
 
 
 __all__ = ["get_prompt"]
-

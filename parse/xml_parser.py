@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -84,7 +85,15 @@ def extract_chunks_from_xml(xml_paths: List[str]) -> List[Dict[str, object]]:
             continue
 
         try:
-            raw_text = path_obj.read_text(encoding="utf-8", errors="ignore")
+            raw_bytes = path_obj.read_bytes()
+            declared_encoding = "utf-8"
+            match = re.search(br'encoding=["\']([^"\']+)["\']', raw_bytes[:200])
+            if match:
+                declared_encoding = match.group(1).decode("ascii", errors="ignore").lower() or declared_encoding
+            try:
+                raw_text = raw_bytes.decode(declared_encoding, errors="replace")
+            except LookupError:
+                raw_text = raw_bytes.decode("utf-8", errors="replace")
             soup = BeautifulSoup(raw_text, "xml")
             source_file = str(path_obj.resolve())
             base_id = path_obj.stem

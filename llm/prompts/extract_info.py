@@ -6,7 +6,8 @@ from typing import Dict, List
 
 SYSTEM_PROMPT = (
     "You extract structured information from Korean corporate filings. "
-    "Return JSON only. Preserve numeric precision and cite anchors."
+    "Return JSON only. Preserve numeric precision and cite anchors. "
+    "All field labels must be short, natural Korean phrases (no snake_case or English keywords)."
 )
 
 USER_PROMPT_TEMPLATE = """From the filing excerpt, extract factual statements.
@@ -15,7 +16,7 @@ Return JSON:
 {{
   "facts": [
     {{
-      "field": "counterparty|amount|due_date|... (snake_case)",
+      "field": "행사일시|행사장소|대상자|금액|결정일자 ... (짧은 한국어 라벨)",
       "value": "...",
       "unit": "...",
       "currency": "...",
@@ -39,4 +40,3 @@ def get_prompt(snippet: str) -> List[Dict[str, str]]:
 
 
 __all__ = ["get_prompt"]
-

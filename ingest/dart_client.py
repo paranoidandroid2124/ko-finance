@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import os
 import zipfile
@@ -91,7 +92,11 @@ class DartClient:
             logger.error("Failed to list recent filings: %s", exc)
             raise
 
-        payload = response.json()
+        try:
+            text = response.content.decode("utf-8")
+        except UnicodeDecodeError:
+            text = response.content.decode("euc-kr", errors="replace")
+        payload = json.loads(text)
         if payload.get("status") != "000":
             message = payload.get("message", "Unknown DART error")
             logger.error("DART returned error status: %s", message)

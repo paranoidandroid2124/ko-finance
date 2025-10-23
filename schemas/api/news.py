@@ -76,6 +76,9 @@ class NewsListItem(BaseModel):
     sentiment: str
     source: str
     publishedAt: str
+    sector: str
+    sentimentScore: Optional[float] = None
+    publishedAtIso: str
 
 
 class NewsInsightsResponse(BaseModel):
