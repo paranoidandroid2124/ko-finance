@@ -10,10 +10,12 @@ import { ChatMessageBubble } from '@/components/chat/ChatMessage';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { ChatContextPanel } from '@/components/chat/ChatContextPanel';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { createMessage as createChatMessageApi, postRagQuery, streamRagQuery } from '@/lib/chatApi';
 import {
   useChatStore,
   selectActiveSession,
   selectIsHydrated,
+  selectStoreLoading,
   selectPersistenceError,
   type RagEvidenceItem,
   type EvidenceHighlight,
@@ -341,14 +343,6 @@ const formatTimestamp = () =>
     minute: '2-digit'
   });
 
-const resolveApiBase = () => {
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!base) {
-    return '';
-  }
-  return base.endsWith('/') ? base.slice(0, -1) : base;
-};
-
 const deriveSessionTitleFromQuestion = (question: string) => {
   const normalized = question.replace(/\s+/g, ' ').trim();
   if (!normalized) {
@@ -369,6 +363,7 @@ export default function ChatPage() {
 
   const sessions = useChatStore((state) => state.sessions);
   const activeSessionId = useChatStore((state) => state.activeSessionId);
+  const hydrateSessions = useChatStore((state) => state.hydrateSessions);
   const setActiveSession = useChatStore((state) => state.setActiveSession);
   const addMessage = useChatStore((state) => state.addMessage);
   const updateMessage = useChatStore((state) => state.updateMessage);
@@ -382,6 +377,8 @@ export default function ChatPage() {
   const activeSession = useChatStore(selectActiveSession);
   const persistenceError = useChatStore(selectPersistenceError);
   const isHydrated = useChatStore(selectIsHydrated);
+  const isLoading = useChatStore(selectStoreLoading);
+  const resetStoreError = useChatStore((state) => state.resetError);
   const showToast = useToastStore((state) => state.show);
 
   const contextSummary = activeSession?.context?.summary;
@@ -399,17 +396,26 @@ export default function ChatPage() {
   );
 
   useEffect(() => {
+    if (!isHydrated) {
+      void hydrateSessions();
+    }
+  }, [hydrateSessions, isHydrated]);
+
+  useEffect(() => {
+    if (!isHydrated) {
+      return;
+    }
     if (querySessionId) {
       const exists = sessions.some((session) => session.id === querySessionId);
       if (exists) {
         if (activeSessionId !== querySessionId) {
-          setActiveSession(querySessionId);
+          void setActiveSession(querySessionId);
         }
       } else {
         router.replace(pathname as Route);
       }
     } else if (activeSessionId) {
-      setActiveSession(null);
+      void setActiveSession(null);
     }
   }, [querySessionId, sessions, activeSessionId, setActiveSession, router, pathname]);
 
@@ -420,41 +426,61 @@ export default function ChatPage() {
         title: '저장 실패',
         message: persistenceError
       });
+      resetStoreError();
     }
-  }, [persistenceError, showToast]);
+  }, [persistenceError, resetStoreError, showToast]);
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {
-      navigateToSession(sessionId);
+      void (async () => {
+        await setActiveSession(sessionId);
+        navigateToSession(sessionId);
+      })();
     },
-    [navigateToSession]
+    [navigateToSession, setActiveSession]
   );
 
   const handleCreateSession = useCallback(() => {
-    const newSessionId = createSession();
-    navigateToSession(newSessionId);
-  }, [createSession, navigateToSession]);
+    void (async () => {
+      try {
+        const newSessionId = await createSession({ context: { type: 'custom' } });
+        await setActiveSession(newSessionId);
+        navigateToSession(newSessionId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '새 세션을 생성하지 못했습니다.';
+        showToast({
+          intent: 'danger',
+          title: '세션 생성 실패',
+          message
+        });
+      }
+    })();
+  }, [createSession, navigateToSession, setActiveSession, showToast]);
 
   const handleDeleteSession = useCallback(
     (sessionId: string) => {
-      const stateBefore = useChatStore.getState();
-      const wasActive = stateBefore.activeSessionId === sessionId;
-      removeSession(sessionId);
-      const nextState = useChatStore.getState();
-      if (wasActive) {
-        if (nextState.activeSessionId) {
-          navigateToSession(nextState.activeSessionId);
-        } else {
-          router.replace(pathname as Route);
+      void (async () => {
+        const stateBefore = useChatStore.getState();
+        const wasActive = stateBefore.activeSessionId === sessionId;
+        await removeSession(sessionId);
+        const nextState = useChatStore.getState();
+        if (wasActive) {
+          if (nextState.activeSessionId) {
+            navigateToSession(nextState.activeSessionId);
+          } else {
+            router.replace(pathname as Route);
+          }
         }
-      }
+      })();
     },
     [navigateToSession, pathname, removeSession, router]
   );
 
   const handleClearSessions = useCallback(() => {
-    clearSessions();
-    router.replace(pathname as Route);
+    void (async () => {
+      await clearSessions();
+      router.replace(pathname as Route);
+    })();
   }, [clearSessions, pathname, router]);
 
   const handleOpenFiling = useCallback(() => {
@@ -466,20 +492,21 @@ export default function ChatPage() {
       router.push('/filings' as Route);
     }
   }, [filingReferenceId, isFilingContext, router]);
-
   const runQuery = useCallback(
     async ({
       question,
       sessionId,
       assistantMessageId,
       userMessageId,
-      isRetry = false
+      turnId,
+      retryOfMessageId = null
     }: {
       question: string;
       sessionId: string;
       assistantMessageId: string;
       userMessageId: string;
-      isRetry?: boolean;
+      turnId: string;
+      retryOfMessageId?: string | null;
     }) => {
       const sessionState = useChatStore.getState().sessions.find((session) => session.id === sessionId);
       const referenceId =
@@ -538,16 +565,34 @@ export default function ChatPage() {
         documentTitle,
         documentUrl
       });
+
       setSessionTelemetry(sessionId, {
-        guardrail: { status: 'loading' },
-        metrics: { status: 'loading', items: [] }
+        guardrail: { status: 'loading', message: '답변을 생성하는 중입니다.' },
+        metrics: idleMetricsTelemetry
       });
 
-      const finalizeResponse = (payload: RagStreamFinalPayload) => {
+      const ragPayload = {
+        question,
+        filing_id: referenceId,
+        session_id: sessionId,
+        turn_id: turnId,
+        user_message_id: userMessageId,
+        assistant_message_id: assistantMessageId,
+        retry_of_message_id: retryOfMessageId ?? null,
+        idempotency_key: nanoid(),
+        run_self_check: true,
+        meta: {}
+      };
+
+      let completed = false;
+      let streamedAnswer = '';
+
+      const finalizeResponse = (payload: RagApiResponse) => {
+        completed = true;
         const answerText =
           typeof payload.answer === 'string' && payload.answer.trim().length
             ? payload.answer
-            : ASSISTANT_ERROR_RESPONSE;
+            : streamedAnswer || ASSISTANT_ERROR_RESPONSE;
 
         const rawCitations =
           payload.citations && typeof payload.citations === 'object' ? payload.citations : {};
@@ -583,7 +628,7 @@ export default function ChatPage() {
           retryable: false,
           question,
           userMessageId,
-          model: payload.model_used,
+          model: typeof payload.model_used === 'string' ? payload.model_used : undefined,
           warnings: payloadWarnings,
           citations: sanitizedCitations,
           judgeDecision,
@@ -647,249 +692,85 @@ export default function ChatPage() {
         }
       };
 
-      const fetchStandard = async () => {
-        updateMessage(sessionId, assistantMessageId, {
-          meta: { status: 'streaming', retryable: false }
-        });
-
-        const response = await fetch(`${resolveApiBase()}/api/v1/rag/query`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            question,
-            filing_id: referenceId,
-            top_k: 5,
-            run_self_check: true
-          })
-        });
-
-        if (!response.ok) {
-          const detail = await response.text();
-          const message = detail || `RAG 호출에 실패했습니다. (HTTP ${response.status})`;
-          throw new Error(message);
-        }
-
-        const payload = (await response.json()) as RagApiResponse;
-        finalizeResponse(payload);
-        return true;
-      };
-
-      const attemptStreaming = async () => {
-        try {
-          const response = await fetch(`${resolveApiBase()}/api/v1/rag/query/stream`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Accept: 'application/x-ndjson, text/event-stream'
-            },
-            body: JSON.stringify({
-              question,
-              filing_id: referenceId,
-              top_k: 5,
-              run_self_check: true
-            })
-          });
-
-          if (!response.ok) {
-            const detail = await response.text();
-            throw new Error(detail || `Stream API returned ${response.status}`);
-          }
-
-          const contentType = response.headers.get('content-type') ?? '';
-          if (!response.body) {
-            if (contentType.includes('application/json')) {
-              const payload = (await response.json()) as RagApiResponse;
-              finalizeResponse(payload);
-              return true;
-            }
-            return false;
-          }
-
-          let metaUpdated = false;
-          const ensureStreamingMeta = () => {
-            if (!metaUpdated) {
-              metaUpdated = true;
+      try {
+        await streamRagQuery(ragPayload, {
+          onEvent: (event) => {
+            if (event.event === 'chunk') {
+              streamedAnswer += event.delta;
               updateMessage(sessionId, assistantMessageId, {
-                meta: { status: 'streaming', retryable: false }
+                content: streamedAnswer || ASSISTANT_LOADING_RESPONSE,
+                meta: {
+                  status: 'streaming',
+                  retryable: false,
+                  question,
+                  userMessageId,
+                  turnId
+                }
+              });
+            } else if (event.event === 'metadata') {
+              updateMessage(sessionId, assistantMessageId, {
+                meta: {
+                  status: 'streaming',
+                  retryable: false,
+                  question,
+                  userMessageId,
+                  turnId,
+                  ...event.meta
+                }
+              });
+            } else if (event.event === 'done') {
+              const payload = event.payload as RagApiResponse;
+              if (!payload.answer && streamedAnswer) {
+                payload.answer = streamedAnswer;
+              }
+              finalizeResponse(payload);
+            } else if (event.event === 'error') {
+              completed = true;
+              const errorMessage = event.message || '스트리밍 중 오류가 발생했습니다.';
+              updateMessage(sessionId, assistantMessageId, {
+                meta: {
+                  status: 'error',
+                  retryable: true,
+                  errorMessage,
+                  question,
+                  userMessageId
+                }
+              });
+              setSessionTelemetry(sessionId, {
+                guardrail: { status: 'error', message: errorMessage, errorMessage },
+                metrics: idleMetricsTelemetry
+              });
+              showToast({
+                intent: 'danger',
+                title: '스트리밍 오류',
+                message: errorMessage
               });
             }
-          };
-
-          const applyToken = (answer: string) => {
-            ensureStreamingMeta();
-            updateMessage(sessionId, assistantMessageId, {
-              content: answer || ASSISTANT_LOADING_RESPONSE
-            });
-          };
-
-          if (contentType.includes('application/x-ndjson')) {
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-            let streamedAnswer = '';
-            let finalPayload: RagStreamFinalPayload | null = null;
-
-            while (true) {
-              const { value, done } = await reader.read();
-              if (value) {
-                buffer += decoder.decode(value, { stream: !done });
-              }
-
-              let newlineIndex = buffer.indexOf('\n');
-              while (newlineIndex !== -1) {
-                const rawLine = buffer.slice(0, newlineIndex).trim();
-                buffer = buffer.slice(newlineIndex + 1);
-                if (rawLine) {
-                  try {
-                    const event = JSON.parse(rawLine) as RagStreamEvent;
-                    if (event.type === 'token') {
-                      const token = event.text ?? '';
-                      if (token) {
-                        streamedAnswer += token;
-                        applyToken(streamedAnswer);
-                      }
-                    } else if (event.type === 'final') {
-                      finalPayload = (event.payload ?? {}) as RagStreamFinalPayload;
-                    } else if (event.type === 'error') {
-                      throw new Error(event.message ?? 'Streaming error');
-                    }
-                  } catch (parseError) {
-                    console.warn('Failed to parse stream chunk', rawLine, parseError);
-                  }
-                }
-                newlineIndex = buffer.indexOf('\n');
-              }
-
-              if (done) {
-                break;
-              }
-            }
-
-            if (!finalPayload && buffer.trim()) {
-              try {
-                const event = JSON.parse(buffer.trim()) as RagStreamEvent;
-                if (event.type === 'final') {
-                  finalPayload = (event.payload ?? {}) as RagStreamFinalPayload;
-                } else if (event.type === 'error') {
-                  throw new Error(event.message ?? 'Streaming error');
-                }
-              } catch (parseError) {
-                console.warn('Failed to parse trailing stream chunk', buffer, parseError);
-              }
-            }
-
-            try {
-              await reader.cancel();
-            } catch {
-              // ignore cancellation errors
-            }
-
-            if (!finalPayload) {
-              throw new Error('Streaming ended without final payload');
-            }
-
-            finalizeResponse(finalPayload);
-            return true;
           }
+        });
+      } catch (error) {
+        console.warn('Streaming query failed', error);
+      }
 
-          if (contentType.includes('text/event-stream')) {
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-            let streamedAnswer = '';
-            let finalPayload: RagStreamFinalPayload | null = null;
-
-            while (true) {
-              const { value, done } = await reader.read();
-              if (value) {
-                buffer += decoder.decode(value, { stream: !done });
-              }
-              const events = buffer.split('\n\n');
-              buffer = events.pop() ?? '';
-
-              for (const rawEvent of events) {
-                const trimmed = rawEvent.trim();
-                if (!trimmed.startsWith('data:')) {
-                  continue;
-                }
-                const payloadText = trimmed.slice(5).trim();
-                if (!payloadText) {
-                  continue;
-                }
-                const parsed = JSON.parse(payloadText) as RagStreamEvent;
-                if (parsed.type === 'token') {
-                  const token = parsed.text ?? '';
-                  if (token) {
-                    streamedAnswer += token;
-                    applyToken(streamedAnswer);
-                  }
-                } else if (parsed.type === 'final') {
-                  finalPayload = (parsed.payload ?? {}) as RagStreamFinalPayload;
-                } else if (parsed.type === 'error') {
-                  throw new Error(parsed.message ?? 'Streaming error');
-                }
-              }
-
-              if (done) {
-                break;
-              }
-            }
-
-            if (!finalPayload && buffer.trim()) {
-              try {
-                const event = JSON.parse(buffer.trim()) as RagStreamEvent;
-                if (event.type === 'final') {
-                  finalPayload = (event.payload ?? {}) as RagStreamFinalPayload;
-                } else if (event.type === 'error') {
-                  throw new Error(event.message ?? 'Streaming error');
-                }
-              } catch (parseError) {
-                console.warn('Failed to parse trailing stream chunk', buffer, parseError);
-              }
-            }
-
-            try {
-              await reader.cancel();
-            } catch {
-              // ignore cancellation errors
-            }
-
-            if (!finalPayload) {
-              throw new Error('Streaming ended without final payload');
-            }
-
-            finalizeResponse(finalPayload);
-            return true;
-          }
-
-          if (contentType.includes('application/json')) {
-            const payload = (await response.json()) as RagApiResponse;
-            finalizeResponse(payload);
-            return true;
-          }
-
-          return false;
-        } catch (streamError) {
-          console.warn('Streaming query failed', streamError);
-          return false;
-        }
-      };
+      if (completed) {
+        return;
+      }
 
       try {
-        const streamingHandled = await attemptStreaming();
-        if (!streamingHandled) {
-          await fetchStandard();
+        const payload = (await postRagQuery(ragPayload)) as RagApiResponse;
+        if (!payload.answer && streamedAnswer) {
+          payload.answer = streamedAnswer;
         }
+        finalizeResponse(payload);
       } catch (error) {
         console.error('RAG query failed', error);
-        const fallbackMessage =
-          error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.';
+        const fallbackMessage = error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.';
         updateMessage(sessionId, assistantMessageId, {
           content: ASSISTANT_ERROR_RESPONSE,
           meta: {
             status: 'error',
-            errorMessage: fallbackMessage,
             retryable: true,
+            errorMessage: fallbackMessage,
             question,
             userMessageId
           }
@@ -904,20 +785,23 @@ export default function ChatPage() {
           documentUrl
         });
         setSessionTelemetry(sessionId, {
-          guardrail: {
-            status: 'error',
-            errorMessage: fallbackMessage
-          },
+          guardrail: { status: 'error', message: fallbackMessage, errorMessage: fallbackMessage },
           metrics: idleMetricsTelemetry
         });
         showToast({
-          intent: 'error',
-          title: isRetry ? '재시도 중 오류가 발생했습니다' : '답변 생성에 실패했습니다',
+          intent: 'danger',
+          title: '분석 실패',
           message: fallbackMessage
         });
       }
     },
-    [focusEvidence, setSessionEvidence, setSessionTelemetry, showToast, updateMessage]
+    [
+      focusEvidence,
+      setSessionEvidence,
+      setSessionTelemetry,
+      showToast,
+      updateMessage
+    ]
   );
 
   const handleSend = useCallback(
@@ -925,55 +809,101 @@ export default function ChatPage() {
       const trimmed = rawInput.trim();
       if (!trimmed) return;
 
-      let targetSessionId = activeSessionId;
-      if (!targetSessionId) {
-        targetSessionId = createSession();
-        navigateToSession(targetSessionId);
-      }
-
-      const timestamp = formatTimestamp();
-      const userMessageId = nanoid();
-      addMessage(targetSessionId, {
-        id: userMessageId,
-        role: 'user',
-        content: trimmed,
-        timestamp,
-        meta: { status: 'ready' }
-      });
-
-      const sessionAfterUserMessage = useChatStore
-        .getState()
-        .sessions.find((session) => session.id === targetSessionId);
-      if (sessionAfterUserMessage) {
-        const userMessageCount = sessionAfterUserMessage.messages.filter((message) => message.role === 'user')
-          .length;
-        if (userMessageCount === 1) {
-          renameSession(targetSessionId, deriveSessionTitleFromQuestion(trimmed));
+      try {
+        let targetSessionId = activeSessionId;
+        if (!targetSessionId) {
+          targetSessionId = await createSession({ context: { type: 'custom' } });
+          await setActiveSession(targetSessionId);
+          navigateToSession(targetSessionId);
+        } else {
+          await setActiveSession(targetSessionId);
         }
-      }
 
-      const assistantMessageId = nanoid();
-      addMessage(targetSessionId, {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: ASSISTANT_LOADING_RESPONSE,
-        timestamp,
-        meta: {
-          status: 'pending',
-          retryable: false,
+        const turnId = nanoid();
+        const userRecord = await createChatMessageApi({
+          session_id: targetSessionId,
+          role: 'user',
+          content: trimmed,
+          turn_id: turnId,
+          state: 'ready',
+          meta: { status: 'ready' }
+        });
+
+        addMessage(targetSessionId, {
+          id: userRecord.id,
+          role: 'user',
+          content: userRecord.content ?? trimmed,
+          timestamp: userRecord.created_at,
+          meta: {
+            ...(typeof userRecord.meta === 'object' ? (userRecord.meta as Record<string, unknown>) : {}),
+            status: 'ready'
+          }
+        });
+
+        const sessionAfterUser = useChatStore.getState().sessions.find((session) => session.id === targetSessionId);
+        if (sessionAfterUser) {
+          const userCount = sessionAfterUser.messages.filter((message) => message.role === 'user').length;
+          if (userCount === 1) {
+            await renameSession(targetSessionId, deriveSessionTitleFromQuestion(trimmed));
+          }
+        }
+
+        const assistantRecord = await createChatMessageApi({
+          session_id: targetSessionId,
+          role: 'assistant',
+          content: ASSISTANT_LOADING_RESPONSE,
+          turn_id: turnId,
+          state: 'pending',
+          meta: {
+            status: 'pending',
+            retryable: false,
+            question: trimmed,
+            userMessageId: userRecord.id,
+            turnId
+          }
+        });
+
+        addMessage(targetSessionId, {
+          id: assistantRecord.id,
+          role: 'assistant',
+          content: assistantRecord.content ?? ASSISTANT_LOADING_RESPONSE,
+          timestamp: assistantRecord.created_at,
+          meta: {
+            ...(typeof assistantRecord.meta === 'object' ? (assistantRecord.meta as Record<string, unknown>) : {}),
+            status: 'pending',
+            retryable: false,
+            question: trimmed,
+            userMessageId: userRecord.id,
+            turnId
+          }
+        });
+
+        await runQuery({
           question: trimmed,
-          userMessageId
-        }
-      });
-
-      await runQuery({
-        question: trimmed,
-        sessionId: targetSessionId,
-        assistantMessageId,
-        userMessageId
-      });
+          sessionId: targetSessionId,
+          assistantMessageId: assistantRecord.id,
+          userMessageId: userRecord.id,
+          turnId
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '메시지를 전송하지 못했습니다.';
+        showToast({
+          intent: 'danger',
+          title: '전송 실패',
+          message
+        });
+      }
     },
-    [activeSessionId, addMessage, createSession, navigateToSession, renameSession, runQuery]
+    [
+      activeSessionId,
+      addMessage,
+      createSession,
+      navigateToSession,
+      renameSession,
+      runQuery,
+      setActiveSession,
+      showToast
+    ]
   );
 
   const handleRetry = useCallback(
@@ -1003,6 +933,8 @@ export default function ChatPage() {
         typeof targetMessage.meta?.question === 'string' ? targetMessage.meta.question.trim() : '';
       const userMessageId =
         typeof targetMessage.meta?.userMessageId === 'string' ? targetMessage.meta.userMessageId : null;
+      const previousTurnId =
+        typeof targetMessage.meta?.turnId === 'string' ? targetMessage.meta.turnId : null;
 
       if (!question || !userMessageId) {
         showToast({
@@ -1013,6 +945,7 @@ export default function ChatPage() {
         return;
       }
 
+      const turnId = previousTurnId ?? nanoid();
       const timestamp = formatTimestamp();
       updateMessage(sessionId, messageId, {
         content: ASSISTANT_LOADING_RESPONSE,
@@ -1020,7 +953,10 @@ export default function ChatPage() {
         meta: {
           status: 'pending',
           retryable: false,
-          errorMessage: undefined
+          errorMessage: undefined,
+          question,
+          userMessageId,
+          turnId
         }
       });
 
@@ -1029,7 +965,8 @@ export default function ChatPage() {
         sessionId,
         assistantMessageId: messageId,
         userMessageId,
-        isRetry: true
+        turnId,
+        retryOfMessageId: messageId
       });
     },
     [activeSessionId, runQuery, showToast, updateMessage]
@@ -1039,6 +976,11 @@ export default function ChatPage() {
   const sessionTitle = activeSession?.title ?? '새 세션';
   const showEmptyState = messages.length === 0;
   const hasContextBanner = useMemo(() => Boolean(contextSummary), [contextSummary]);
+  const disclaimer = useMemo(
+    () =>
+      '본 서비스는 일반 정보 제공용입니다. 투자·법률·세무 자문이 아니며 전문 자문을 대체하지 않습니다. 제공 정보의 정확성·완전성·적시성은 보장되지 않습니다. 매수/매도·소송·계약 등 의사결정은 사용자 책임입니다.',
+    [],
+  );
 
   return (
     <AppShell>
@@ -1051,7 +993,7 @@ export default function ChatPage() {
           onDeleteSession={handleDeleteSession}
           onClearAll={handleClearSessions}
           persistenceError={persistenceError ?? undefined}
-          disabled={!isHydrated}
+          disabled={isLoading || !isHydrated}
         />
         <div className='flex min-h-[70vh] flex-1 flex-col gap-4 rounded-xl border border-border-light bg-background-cardLight p-4 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark'>
           <div className='h-12 rounded-lg border border-border-light px-4 py-2 text-sm text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark'>
@@ -1079,6 +1021,9 @@ export default function ChatPage() {
               <p className='mt-3 leading-relaxed text-text-secondaryLight dark:text-text-secondaryDark'>{contextSummary}</p>
             </div>
           )}
+          <div className='rounded-lg border border-dashed border-border-light bg-white/60 px-4 py-3 text-[11px] leading-relaxed text-text-secondaryLight dark:border-border-dark dark:bg-white/5 dark:text-text-secondaryDark'>
+            {disclaimer}
+          </div>
           <div className='flex-1 space-y-4 overflow-y-auto pr-2'>
             {showEmptyState ? (
               <EmptyState
@@ -1100,10 +1045,12 @@ export default function ChatPage() {
               ))
             )}
           </div>
-          <ChatInput onSubmit={handleSend} disabled={!isHydrated} />
+          <ChatInput onSubmit={handleSend} disabled={!isHydrated || isLoading} />
         </div>
         <ChatContextPanel />
       </div>
     </AppShell>
   );
 }
+
+

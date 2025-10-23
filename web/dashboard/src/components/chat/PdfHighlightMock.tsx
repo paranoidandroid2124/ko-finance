@@ -80,6 +80,7 @@ export function PdfHighlightMock({
   const showSkeleton = status === "loading";
   const showError = status === "error";
   const isEmpty = (status === "idle" || status === "ready") && highlightRanges.length === 0;
+  const showPdfPreview = Boolean(pdfUrl);
 
   const handleOpenPdf = () => {
     if (!pdfUrl) {
@@ -118,6 +119,16 @@ export function PdfHighlightMock({
         <p className="rounded-lg border border-border-light/70 bg-white/60 px-3 py-2 text-[11px] font-medium text-text-secondaryLight dark:border-border-dark/70 dark:bg-white/10 dark:text-text-secondaryDark">
           {documentTitle}
         </p>
+      ) : null}
+
+      {showPdfPreview ? (
+        <div className="overflow-hidden rounded-lg border border-border-light/70 dark:border-border-dark/60">
+          <iframe
+            src={`${pdfUrl}#toolbar=0&navpanes=0&view=FitH`}
+            title="PDF 미리보기"
+            className="h-80 w-full bg-white"
+          />
+        </div>
       ) : null}
 
       {showSkeleton ? (

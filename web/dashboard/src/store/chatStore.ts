@@ -1,22 +1,18 @@
 'use client';
 
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
 import { nanoid } from 'nanoid';
-
-const MAX_SESSION_HISTORY = 10;
-const STORAGE_KEY = 'chat-store-v1';
-
-const noopStorage: Storage = {
-  length: 0,
-  clear: () => {},
-  getItem: () => null,
-  key: () => null,
-  removeItem: () => {},
-  setItem: () => {}
-};
-
-let notifyPersistenceError: (message: string | null) => void = () => {};
+import {
+  ApiChatMessage,
+  ApiChatSession,
+  createMessage,
+  createSession as apiCreateSession,
+  fetchSessionMessages,
+  fetchSessions,
+  renameSession as apiRenameSession,
+  clearSessions as apiClearSessions,
+  deleteSession as apiDeleteSession,
+} from '@/lib/chatApi';
 
 export type ChatRole = 'user' | 'assistant';
 
@@ -98,52 +94,65 @@ export type SessionTelemetry = {
   metrics: MetricsTelemetry;
 };
 
-type RagEvidenceStateBase = {
-  items: RagEvidenceItem[];
-  activeId?: string;
-  confidence?: number;
-  documentTitle?: string;
-  documentUrl?: string;
-};
+export type ChatSessionContext =
+  | { type: 'filing'; referenceId?: string; summary?: string | null }
+  | { type: 'news'; referenceId?: string; summary?: string | null }
+  | { type: 'custom'; summary?: string | null };
 
 export type RagEvidenceState =
-  | (RagEvidenceStateBase & {
+  | {
       status: 'idle' | 'loading';
-    })
-  | (RagEvidenceStateBase & {
+      items: RagEvidenceItem[];
+      activeId?: string;
+      confidence?: number;
+      documentTitle?: string;
+      documentUrl?: string;
+      errorMessage?: string;
+    }
+  | {
       status: 'ready';
-    })
-  | (RagEvidenceStateBase & {
+      items: RagEvidenceItem[];
+      activeId?: string;
+      confidence?: number;
+      documentTitle?: string;
+      documentUrl?: string;
+      errorMessage?: string;
+    }
+  | {
       status: 'error';
+      items: RagEvidenceItem[];
+      activeId?: string;
+      confidence?: number;
+      documentTitle?: string;
+      documentUrl?: string;
       errorMessage: string;
-    });
+    };
 
 export type ChatSession = {
   id: string;
   title: string;
+  version?: number;
   updatedAt: string;
-  context?: {
-    type: 'filing' | 'news' | 'custom';
-    referenceId?: string;
-    summary?: string;
-  };
+  lastMessageAt?: string | null;
+  context?: ChatSessionContext;
   messages: ChatMessage[];
-  evidence?: RagEvidenceState;
-  telemetry?: SessionTelemetry;
+  messagesLoaded: boolean;
+  evidence: RagEvidenceState;
+  telemetry: SessionTelemetry;
 };
 
 type ChatStoreState = {
   sessions: ChatSession[];
   activeSessionId: string | null;
-  persistenceError: string | null;
   hydrated: boolean;
+  loading: boolean;
+  error: string | null;
 };
 
 type ChatStoreActions = {
-  setActiveSession: (id: string | null) => void;
-  addMessage: (sessionId: string, message: ChatMessage) => void;
-  updateMessage: (sessionId: string, messageId: string, patch: Partial<ChatMessage>) => void;
-  createSession: (title?: string) => string;
+  hydrateSessions: () => Promise<void>;
+  setActiveSession: (id: string | null) => Promise<void>;
+  createSession: (options?: { title?: string | null; context?: ChatSessionContext }) => Promise<string>;
   startFilingConversation: (payload: {
     filingId: string;
     company: string;
@@ -151,301 +160,358 @@ type ChatStoreActions = {
     summary: string;
     viewerUrl?: string;
     downloadUrl?: string;
-  }) => string;
-  removeSession: (sessionId: string) => void;
-  clearSessions: () => void;
-  renameSession: (sessionId: string, title: string) => void;
+  }) => Promise<string>;
+  removeSession: (sessionId: string) => Promise<void>;
+  clearSessions: () => Promise<void>;
+  renameSession: (sessionId: string, title: string) => Promise<void>;
+  loadSessionMessages: (sessionId: string) => Promise<void>;
+  addMessage: (sessionId: string, message: ChatMessage) => void;
+  updateMessage: (sessionId: string, messageId: string, patch: Partial<ChatMessage>) => void;
   setSessionEvidence: (sessionId: string, evidence: RagEvidenceState) => void;
   setSessionTelemetry: (sessionId: string, telemetry: Partial<SessionTelemetry>) => void;
   focus_evidence_item: (evidenceId?: string) => void;
+  resetError: () => void;
 };
 
-type StoreState = ChatStoreState & ChatStoreActions;
-
-type StoreSetter = (
-  partial: StoreState | Partial<StoreState> | ((state: StoreState) => StoreState | Partial<StoreState>),
-  replace?: boolean
-) => void;
-
-type StoreGetter = () => StoreState;
-
-let setRef: StoreSetter | null = null;
-let getRef: StoreGetter | null = null;
-
-const formatNow = () =>
-  new Date().toLocaleTimeString('ko-KR', {
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-
-const initialSessions: ChatSession[] = [];
+type Store = ChatStoreState & ChatStoreActions;
 
 const guardrailDefault: GuardrailTelemetry = { status: 'idle' };
 const metricsDefault: MetricsTelemetry = { status: 'idle', items: [] };
 
-export const useChatStore = create<StoreState>()(
-  persist(
-    (set, get) => {
-      setRef = set as StoreSetter;
-      getRef = get as StoreGetter;
-      notifyPersistenceError = (message) => set({ persistenceError: message });
+const mapContext = (record: ApiChatSession): ChatSessionContext => {
+  const type = (record.context_type ?? '').toLowerCase();
+  const referenceId = record.context_id ?? undefined;
+  const summary = record.summary ?? null;
+  if (type === 'filing') {
+    return { type: 'filing', referenceId, summary };
+  }
+  if (type === 'news') {
+    return { type: 'news', referenceId, summary };
+  }
+  return { type: 'custom', summary };
+};
 
-      return {
-        sessions: initialSessions,
-        activeSessionId: null,
-        persistenceError: null,
-        hydrated: false,
-        setActiveSession: (id) => set({ activeSessionId: id }),
-        addMessage: (sessionId, message) =>
-          set((state) => ({
-            sessions: state.sessions.map((session) =>
-              session.id === sessionId
-                ? {
-                    ...session,
-                    messages: [...session.messages, message],
-                    updatedAt: message.timestamp
-                  }
-                : session
-            )
-          })),
-        updateMessage: (sessionId, messageId, patch) =>
-          set((state) => ({
-            sessions: state.sessions.map((session) => {
-              if (session.id !== sessionId) {
-                return session;
-              }
-              const now = formatNow();
-              return {
-                ...session,
-                messages: session.messages.map((message) =>
-                  message.id === messageId
-                    ? {
-                        ...message,
-                        ...patch,
-                        meta:
-                          patch.meta !== undefined
-                            ? (() => {
-                                const nextMeta = { ...(message.meta ?? {}), ...(patch.meta ?? {}) };
-                                return Object.keys(nextMeta).length ? nextMeta : undefined;
-                              })()
-                            : message.meta
-                      }
-                    : message
-                ),
-                updatedAt: patch.timestamp ?? (patch.meta ? now : session.updatedAt)
-              };
-            })
-          })),
-        createSession: (title = '새 대화') => {
-          const sessionId = nanoid();
-          const now = formatNow();
-          const newSession: ChatSession = {
-            id: sessionId,
-            title,
-            updatedAt: now,
-            context: { type: 'custom' },
-            messages: [
-              {
-                id: nanoid(),
-                role: 'assistant',
-                content: '새 대화를 시작했어요. 공시나 뉴스에 대해 궁금한 점을 물어보면 근거와 함께 답변해 드릴게요.',
-                timestamp: now,
-                meta: { status: 'ready' }
-              }
-            ],
-            evidence: {
-              status: 'idle',
-              items: [],
-              activeId: undefined,
-              confidence: undefined
-            },
-            telemetry: {
-              guardrail: { ...guardrailDefault },
-              metrics: { ...metricsDefault }
-            }
-          };
-          set((state) => ({
-            sessions: [newSession, ...state.sessions].slice(0, MAX_SESSION_HISTORY),
-            activeSessionId: sessionId
-          }));
-          return sessionId;
-        },
-        startFilingConversation: ({ filingId, company, title, summary, viewerUrl, downloadUrl }) => {
-          const sessionId = nanoid();
-          const now = formatNow();
-          const newSession: ChatSession = {
-            id: sessionId,
-            title: `${company} 공시 분석`,
-            updatedAt: now,
-            context: {
-              type: 'filing',
-              referenceId: filingId,
-              summary
-            },
-            messages: [
-              {
-                id: nanoid(),
-                role: 'assistant',
-                content: `${title} 공시에 대해 어떤 점이 궁금한가요?`,
-                timestamp: now,
-                meta: { status: 'ready' }
-              }
-            ],
-            evidence: {
-              status: 'idle',
-              items: [],
-              activeId: undefined,
-              confidence: undefined,
-              documentTitle: title,
-              documentUrl: viewerUrl ?? downloadUrl
-            },
-            telemetry: {
-              guardrail: { ...guardrailDefault },
-              metrics: { ...metricsDefault }
-            }
-          };
-          set((state) => ({
-            sessions: [newSession, ...state.sessions].slice(0, MAX_SESSION_HISTORY),
-            activeSessionId: sessionId
-          }));
-          return sessionId;
-        },
-        removeSession: (sessionId) =>
-          set((state) => {
-            const filtered = state.sessions.filter((session) => session.id !== sessionId);
-            const nextActive = state.activeSessionId === sessionId ? filtered[0]?.id ?? null : state.activeSessionId;
-            return {
-              sessions: filtered,
-              activeSessionId: nextActive
-            };
-          }),
-        clearSessions: () =>
-          set(() => ({
-            sessions: [],
-            activeSessionId: null
-          })),
-        renameSession: (sessionId, title) =>
-          set((state) => ({
-            sessions: state.sessions.map((session) =>
-              session.id === sessionId
-                ? {
-                    ...session,
-                    title
-                  }
-                : session
-            )
-          })),
-        setSessionEvidence: (sessionId, evidence) =>
-          set((state) => ({
-            sessions: state.sessions.map((session) =>
-              session.id === sessionId
-                ? {
-                    ...session,
-                    evidence
-                  }
-                : session
-            )
-          })),
-        setSessionTelemetry: (sessionId, telemetry) =>
-          set((state) => ({
-            sessions: state.sessions.map((session) => {
-              if (session.id !== sessionId) {
-                return session;
-              }
-              const currentTelemetry: SessionTelemetry = session.telemetry ?? {
-                guardrail: { ...guardrailDefault },
-                metrics: { ...metricsDefault }
-              };
-              return {
-                ...session,
-                telemetry: {
-                  guardrail: telemetry.guardrail ?? currentTelemetry.guardrail,
-                  metrics: telemetry.metrics ?? currentTelemetry.metrics
-                }
-              };
-            })
-          })),
-        focus_evidence_item: (evidenceId) => {
-          const activeSessionId = get().activeSessionId;
-          if (!activeSessionId) return;
-          set((state) => ({
-            sessions: state.sessions.map((session) => {
-              if (session.id !== activeSessionId || !session.evidence) {
-                return session;
-              }
-              return {
-                ...session,
-                evidence: {
-                  ...session.evidence,
-                  activeId: evidenceId
-                }
-              };
-            })
-          }));
-        }
-      };
-    },
-    {
-      name: STORAGE_KEY,
-      version: 1,
-      storage: createJSONStorage(() => {
-        if (typeof window === 'undefined') {
-          return noopStorage;
-        }
-        const base = window.localStorage;
-        return {
-          getItem: base.getItem.bind(base),
-          setItem: (name: string, value: string) => {
-            try {
-              base.setItem(name, value);
-              notifyPersistenceError(null);
-            } catch (error) {
-              const message =
-                error instanceof Error
-                  ? error.message
-                  : '대화 내용을 로컬 저장소에 기록하지 못했습니다.';
-              notifyPersistenceError(message);
-              throw error;
-            }
-          },
-          removeItem: base.removeItem.bind(base)
-        } as Storage;
-      }),
-      partialize: (state) => ({
-        sessions: state.sessions.slice(0, MAX_SESSION_HISTORY),
-        activeSessionId: state.activeSessionId
-      }),
-      onRehydrateStorage: () => (_state, error) => {
-        if (error) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : '저장된 대화를 불러오지 못했습니다.';
-          notifyPersistenceError(message);
-          setRef?.((state) => ({ ...state, hydrated: true }));
-        } else {
-          notifyPersistenceError(null);
-          const sessions = getRef?.().sessions ?? [];
-          setRef?.((state) => ({
-            ...state,
-            hydrated: true,
-            sessions: sessions.slice(0, MAX_SESSION_HISTORY)
-          }));
-        }
-      }
+const mapStatus = (state: string): ChatMessageStatus => {
+  switch (state) {
+    case 'pending':
+      return 'pending';
+    case 'streaming':
+      return 'streaming';
+    case 'ready':
+      return 'ready';
+    case 'error':
+      return 'error';
+    default:
+      return 'ready';
+  }
+};
+
+const mapMeta = (record: ApiChatMessage): ChatMessageMeta => {
+  const status = mapStatus(record.state);
+  const baseMeta: ChatMessageMeta = {
+    status,
+  };
+  if (record.error_message) {
+    baseMeta.errorMessage = record.error_message;
+    baseMeta.retryable = true;
+  }
+  const rawMeta = record.meta ?? {};
+  if (typeof rawMeta === 'object') {
+    return { ...rawMeta, ...baseMeta };
+  }
+  return baseMeta;
+};
+
+const mapMessage = (record: ApiChatMessage): ChatMessage => ({
+  id: record.id,
+  role: record.role === 'assistant' ? 'assistant' : 'user',
+  content: (record.content ?? '').toString(),
+  timestamp: record.created_at,
+  meta: mapMeta(record),
+});
+
+const mapSession = (record: ApiChatSession): ChatSession => ({
+  id: record.id,
+  title: record.title || '새 대화',
+  version: record.version,
+  updatedAt: record.updated_at,
+  lastMessageAt: record.last_message_at,
+  context: mapContext(record),
+  messages: [],
+  messagesLoaded: false,
+  evidence: {
+    status: 'idle',
+    items: [],
+    activeId: undefined,
+    confidence: undefined,
+    documentTitle: undefined,
+    documentUrl: undefined,
+  },
+  telemetry: {
+    guardrail: { ...guardrailDefault },
+    metrics: { ...metricsDefault },
+  },
+});
+
+const upsertSession = (sessions: ChatSession[], session: ChatSession): ChatSession[] => {
+  const index = sessions.findIndex((item) => item.id === session.id);
+  if (index === -1) {
+    return [session, ...sessions];
+  }
+  const next = [...sessions];
+  next[index] = { ...next[index], ...session };
+  return next;
+};
+
+export const useChatStore = create<Store>((set, get) => ({
+  sessions: [],
+  activeSessionId: null,
+  hydrated: false,
+  loading: false,
+  error: null,
+
+  hydrateSessions: async () => {
+    if (get().loading) return;
+    set({ loading: true, error: null });
+    try {
+      const response = await fetchSessions();
+      const mapped = response.sessions.map(mapSession);
+      set((state) => ({
+        sessions: mapped,
+        activeSessionId: state.activeSessionId ?? mapped[0]?.id ?? null,
+        hydrated: true,
+        loading: false,
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '세션을 불러오지 못했습니다.';
+      set({ error: message, loading: false, hydrated: true });
     }
-  )
-);
+  },
 
-export const selectActiveSession = (state: ChatStoreState & ChatStoreActions) =>
+  setActiveSession: async (id) => {
+    set({ activeSessionId: id ?? null });
+    if (!id) {
+      return;
+    }
+    const target = get().sessions.find((session) => session.id === id);
+    if (!target || target.messagesLoaded) {
+      return;
+    }
+    await get().loadSessionMessages(id);
+  },
+
+  createSession: async (options) => {
+    const contextType = options?.context?.type ?? 'custom';
+    const contextId = options?.context?.type === 'custom' ? null : options?.context?.referenceId ?? null;
+    const response = await apiCreateSession({
+      title: options?.title ?? null,
+      context_type: contextType,
+      context_id: contextId,
+    });
+    const mapped = mapSession(response);
+    set((state) => ({
+      sessions: upsertSession(state.sessions, mapped),
+      activeSessionId: mapped.id,
+    }));
+    return mapped.id;
+  },
+
+  startFilingConversation: async ({ filingId, company, title, summary, viewerUrl, downloadUrl }) => {
+    const sessionId = await get().createSession({
+      title: `${company} 공시 분석`,
+      context: { type: 'filing', referenceId: filingId, summary },
+    });
+
+    const turnId = nanoid();
+    const initialMessage = await createMessage({
+      session_id: sessionId,
+      role: 'assistant',
+      content: `${title} 공시에 대해 어떤 점이 궁금한가요?`,
+      turn_id: turnId,
+      state: 'ready',
+      meta: { status: 'ready' },
+    });
+
+    const mappedMessage = mapMessage(initialMessage);
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              context: { type: 'filing', referenceId: filingId, summary },
+              messages: [mappedMessage, ...session.messages],
+              messagesLoaded: false,
+              evidence: {
+                status: 'idle',
+                items: [],
+                activeId: undefined,
+                confidence: undefined,
+                documentTitle: title,
+                documentUrl: viewerUrl ?? downloadUrl,
+              },
+            }
+          : session,
+      ),
+      activeSessionId: sessionId,
+    }));
+    return sessionId;
+  },
+
+  removeSession: async (sessionId) => {
+    await apiDeleteSession(sessionId);
+    set((state) => {
+      const filtered = state.sessions.filter((session) => session.id !== sessionId);
+      const activeSessionId =
+        state.activeSessionId === sessionId ? filtered[0]?.id ?? null : state.activeSessionId;
+      return { sessions: filtered, activeSessionId };
+    });
+  },
+
+  clearSessions: async () => {
+    await apiClearSessions();
+    set({ sessions: [], activeSessionId: null });
+  },
+
+  renameSession: async (sessionId, title) => {
+    const existing = get().sessions.find((session) => session.id === sessionId);
+    const version = existing?.version;
+    const response = await apiRenameSession(sessionId, title, version);
+    const mapped = mapSession(response);
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId ? { ...session, title: mapped.title, version: mapped.version } : session,
+      ),
+    }));
+  },
+
+  loadSessionMessages: async (sessionId) => {
+    try {
+      const response = await fetchSessionMessages(sessionId);
+      const mapped = response.messages.map(mapMessage).sort((a, b) => (a.timestamp > b.timestamp ? 1 : -1));
+      set((state) => ({
+        sessions: state.sessions.map((session) =>
+          session.id === sessionId
+            ? {
+                ...session,
+                messages: mapped,
+                messagesLoaded: true,
+              }
+            : session,
+        ),
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '메시지를 불러오지 못했습니다.';
+      set({ error: message });
+    }
+  },
+
+  addMessage: (sessionId, message) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              messages: [...session.messages.filter((item) => item.id !== message.id), message],
+              updatedAt: message.timestamp,
+            }
+          : session,
+      ),
+    }));
+  },
+
+  updateMessage: (sessionId, messageId, patch) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) => {
+        if (session.id !== sessionId) {
+          return session;
+        }
+        return {
+          ...session,
+          messages: session.messages.map((message) =>
+            message.id === messageId
+              ? {
+                  ...message,
+                  ...patch,
+                  meta:
+                    patch.meta !== undefined
+                      ? (() => {
+                          const nextMeta = { ...(message.meta ?? {}), ...(patch.meta ?? {}) };
+                          return Object.keys(nextMeta).length ? nextMeta : undefined;
+                        })()
+                      : message.meta,
+                }
+              : message,
+          ),
+        };
+      }),
+    }));
+  },
+
+  setSessionEvidence: (sessionId, evidence) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              evidence,
+            }
+          : session,
+      ),
+    }));
+  },
+
+  setSessionTelemetry: (sessionId, telemetry) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) => {
+        if (session.id !== sessionId) {
+          return session;
+        }
+        const currentTelemetry: SessionTelemetry = session.telemetry ?? {
+          guardrail: { ...guardrailDefault },
+          metrics: { ...metricsDefault },
+        };
+        return {
+          ...session,
+          telemetry: {
+            guardrail: telemetry.guardrail ?? currentTelemetry.guardrail,
+            metrics: telemetry.metrics ?? currentTelemetry.metrics,
+          },
+        };
+      }),
+    }));
+  },
+
+  focus_evidence_item: (evidenceId) => {
+    const activeSessionId = get().activeSessionId;
+    if (!activeSessionId) return;
+    set((state) => ({
+      sessions: state.sessions.map((session) => {
+        if (session.id !== activeSessionId || !session.evidence) {
+          return session;
+        }
+        return {
+          ...session,
+          evidence: {
+            ...session.evidence,
+            activeId: evidenceId,
+          },
+        };
+      }),
+    }));
+  },
+
+  resetError: () => set({ error: null }),
+}));
+
+export const selectActiveSession = (state: Store) =>
   state.sessions.find((session) => session.id === state.activeSessionId) ?? null;
 
-export const selectPersistenceError = (state: ChatStoreState & ChatStoreActions) =>
-  state.persistenceError;
+export const selectIsHydrated = (state: Store) => state.hydrated;
 
-export const selectIsHydrated = (state: ChatStoreState & ChatStoreActions) => state.hydrated;
+export const selectStoreError = (state: Store) => state.error;
+export const selectPersistenceError = selectStoreError;
 
-export const selectActiveEvidence = (state: ChatStoreState & ChatStoreActions): RagEvidenceState => {
+export const selectActiveEvidence = (state: Store): RagEvidenceState => {
   const evidence = selectActiveSession(state)?.evidence;
   if (!evidence) {
     return {
@@ -454,16 +520,16 @@ export const selectActiveEvidence = (state: ChatStoreState & ChatStoreActions): 
       activeId: undefined,
       confidence: undefined,
       documentTitle: undefined,
-      documentUrl: undefined
+      documentUrl: undefined,
     };
   }
   return evidence;
 };
 
-export const selectEvidenceStatus = (state: ChatStoreState & ChatStoreActions) =>
+export const selectEvidenceStatus = (state: Store) =>
   selectActiveSession(state)?.evidence?.status ?? 'idle';
 
-export const selectGuardrailTelemetry = (state: ChatStoreState & ChatStoreActions): GuardrailTelemetry => {
+export const selectGuardrailTelemetry = (state: Store): GuardrailTelemetry => {
   const guardrail = selectActiveSession(state)?.telemetry?.guardrail;
   if (!guardrail) {
     return { ...guardrailDefault };
@@ -471,7 +537,7 @@ export const selectGuardrailTelemetry = (state: ChatStoreState & ChatStoreAction
   return { ...guardrail };
 };
 
-export const selectMetricTelemetry = (state: ChatStoreState & ChatStoreActions): MetricsTelemetry => {
+export const selectMetricTelemetry = (state: Store): MetricsTelemetry => {
   const metrics = selectActiveSession(state)?.telemetry?.metrics;
   if (!metrics) {
     return { ...metricsDefault };
@@ -479,13 +545,13 @@ export const selectMetricTelemetry = (state: ChatStoreState & ChatStoreActions):
   return { ...metrics, items: [...metrics.items] };
 };
 
-export const selectContextPanelData = (state: ChatStoreState & ChatStoreActions) => ({
+export const selectContextPanelData = (state: Store) => ({
   evidence: selectActiveEvidence(state),
   guardrail: selectGuardrailTelemetry(state),
-  metrics: selectMetricTelemetry(state)
+  metrics: selectMetricTelemetry(state),
 });
 
-export const selectHighlightDisplay = (state: ChatStoreState & ChatStoreActions) => {
+export const selectHighlightDisplay = (state: Store) => {
   const session = selectActiveSession(state);
   const evidence = session?.evidence;
   if (!evidence) {
@@ -494,7 +560,7 @@ export const selectHighlightDisplay = (state: ChatStoreState & ChatStoreActions)
       ranges: [] as Array<EvidenceHighlight & { evidenceId: string }>,
       activeRangeId: undefined,
       documentTitle: session?.title,
-      documentUrl: undefined
+      documentUrl: undefined,
     };
   }
 
@@ -502,7 +568,7 @@ export const selectHighlightDisplay = (state: ChatStoreState & ChatStoreActions)
     .filter((item) => Boolean(item.highlightRange))
     .map((item) => ({
       ...item.highlightRange!,
-      evidenceId: item.id
+      evidenceId: item.id,
     }));
 
   return {
@@ -512,9 +578,8 @@ export const selectHighlightDisplay = (state: ChatStoreState & ChatStoreActions)
       ? ranges.find((range) => range.evidenceId === evidence.activeId)?.id ?? evidence.activeId
       : undefined,
     documentTitle: evidence.documentTitle ?? session?.title,
-    documentUrl: evidence.documentUrl
+    documentUrl: evidence.documentUrl,
   };
 };
 
-export type HighlightDisplayState = ReturnType<typeof selectHighlightDisplay>;
-
+export const selectStoreLoading = (state: Store) => state.loading;

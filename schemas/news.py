@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class NewsArticleBase(BaseModel):
@@ -33,8 +33,7 @@ class NewsArticle(NewsArticleBase):
     sentiment: Optional[float] = Field(None, description="LLM sentiment score (-1.0 ~ 1.0)")
     topics: List[str] = Field(default_factory=list, description="Topical keywords identified by LLM")
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TopicStat(BaseModel):
@@ -61,6 +60,4 @@ class NewsObservation(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        orm_mode = True
-
+    model_config = ConfigDict(from_attributes=True)

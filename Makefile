@@ -46,5 +46,5 @@ m1-smoke:
 
 # (TODO) 모델 평가 실행
 eval:
-	@echo "Running model evaluations... (Not implemented)"
-	# docker-compose run --rm eval promptfoo eval -c promptfooconfig.yaml
+	@echo "Running model evaluations..."
+	python -m scripts.run_eval $(EVAL_ARGS)

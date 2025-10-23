@@ -90,10 +90,25 @@ def seed_recent_filings(days_back: int = 1, db: Optional[Session] = None) -> int
                 continue
 
             pdf_path = package_data.get("pdf")
+            xml_entries = []
+            for xml_path in package_data.get("xml") or []:
+                entry = {"path": xml_path}
+                if minio_service.is_enabled():
+                    object_name = f"{receipt_no}/xml/{Path(xml_path).name}"
+                    uploaded_xml = minio_service.upload_file(
+                        xml_path,
+                        object_name=object_name,
+                        content_type="application/xml",
+                    )
+                    if uploaded_xml:
+                        entry["storage"] = "minio"
+                        entry["object"] = uploaded_xml
+                xml_entries.append(entry)
+
             source_files = {
                 "package": package_data.get("download_url"),
                 "pdf": pdf_path,
-                "xml": package_data.get("xml"),
+                "xml": xml_entries,
                 "attachments": package_data.get("attachments"),
             }
 

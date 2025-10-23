@@ -1,10 +1,14 @@
 import uuid
+import tempfile
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+from urllib.parse import urlparse
 
+import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
+from core.logging import get_logger
 from database import get_db
 from models.fact import ExtractedFact
 from models.filing import Filing
@@ -18,8 +22,10 @@ from schemas.api.filing import (
     FilingXmlResponse,
     SummaryResponse,
 )
+from services import minio_service
 
 router = APIRouter(prefix="/filings", tags=["Filings"])
+logger = get_logger(__name__)
 
 POSITIVE_CATEGORIES = {
     "buyback",
@@ -100,21 +106,26 @@ def _derive_sentiment(filing: Filing, summary: Optional[Summary]) -> Tuple[str, 
     return ("neutral", "No notable warning or opportunity detected.")
 
 
-def _resolve_xml_paths(filing: Filing) -> List[Path]:
+def _normalize_xml_entries(filing: Filing) -> List[Dict[str, Any]]:
     source_files = filing.source_files or {}
     xml_entries = source_files.get("xml") if isinstance(source_files, dict) else None
     if not xml_entries:
         return []
-    if isinstance(xml_entries, (str, Path)):
-        xml_candidates = [xml_entries]
-    else:
-        xml_candidates = list(xml_entries)
-    resolved: List[Path] = []
-    for candidate in xml_candidates:
-        path = Path(candidate)
-        if path.is_file():
-            resolved.append(path)
-    return resolved
+
+    normalized: List[Dict[str, Any]] = []
+    for entry in xml_entries:
+        if isinstance(entry, str):
+            normalized.append({"path": entry})
+        elif isinstance(entry, dict):
+            normalized.append(
+                {
+                    "path": entry.get("path"),
+                    "object": entry.get("object") or entry.get("minio_object"),
+                    "url": entry.get("url"),
+                    "name": entry.get("name"),
+                }
+            )
+    return normalized
 
 
 @router.post("/upload", response_model=FilingBriefResponse)
@@ -216,6 +227,57 @@ def get_filing_details(filing_id: uuid.UUID, db: Session = Depends(get_db)):
     )
 
 
+def _load_xml_document(entry: Dict[str, Any], temp_dir: Path, filing_id: uuid.UUID) -> Optional[FilingXmlDocument]:
+    candidate_path = entry.get("path")
+    object_name = entry.get("object")
+    remote_url = entry.get("url")
+    explicit_name = entry.get("name")
+
+    if candidate_path:
+        path_obj = Path(candidate_path)
+        if path_obj.is_file():
+            try:
+                content = path_obj.read_text(encoding="utf-8", errors="ignore")
+                return FilingXmlDocument(
+                    name=explicit_name or path_obj.name,
+                    path=str(path_obj),
+                    content=content,
+                )
+            except OSError as exc:
+                logger.warning("Failed to read XML file for filing %s (%s): %s", filing_id, candidate_path, exc)
+
+    if object_name and minio_service.is_enabled():
+        target_path = temp_dir / Path(object_name).name
+        downloaded = minio_service.download_file(object_name, str(target_path))
+        if downloaded:
+            try:
+                path_obj = Path(downloaded)
+                content = path_obj.read_text(encoding="utf-8", errors="ignore")
+                return FilingXmlDocument(
+                    name=explicit_name or path_obj.name,
+                    path=object_name,
+                    content=content,
+                )
+            except OSError as exc:
+                logger.warning("Failed to read downloaded XML for filing %s (%s): %s", filing_id, object_name, exc)
+
+    if remote_url and isinstance(remote_url, str) and remote_url.startswith("http"):
+        try:
+            response = httpx.get(remote_url, timeout=15.0)
+            response.raise_for_status()
+            parsed = urlparse(remote_url)
+            filename = explicit_name or Path(parsed.path).name or f"{filing_id}.xml"
+            return FilingXmlDocument(
+                name=filename,
+                path=remote_url,
+                content=response.text,
+            )
+        except Exception as exc:
+            logger.warning("Failed to fetch XML via URL for filing %s (%s): %s", filing_id, remote_url, exc)
+
+    return None
+
+
 @router.get("/{filing_id}/xml", response_model=FilingXmlResponse)
 def get_filing_xml_documents(filing_id: uuid.UUID, db: Session = Depends(get_db)) -> FilingXmlResponse:
     """Return raw XML sources associated with a filing for highlight rendering."""
@@ -223,22 +285,19 @@ def get_filing_xml_documents(filing_id: uuid.UUID, db: Session = Depends(get_db)
     if not filing:
         raise HTTPException(status_code=404, detail="Filing not found")
 
-    xml_paths = _resolve_xml_paths(filing)
-    if not xml_paths:
+    xml_entries = _normalize_xml_entries(filing)
+    if not xml_entries:
         raise HTTPException(status_code=404, detail="No XML source files available for this filing.")
 
     documents: list[FilingXmlDocument] = []
-    for path in xml_paths:
-        try:
-            content = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError as exc:
-            raise HTTPException(status_code=500, detail=f"Failed to read XML file: {path}") from exc
-        documents.append(
-            FilingXmlDocument(
-                name=path.name,
-                path=str(path),
-                content=content,
-            )
-        )
+    with tempfile.TemporaryDirectory() as temp_dir:
+        cache_dir = Path(temp_dir)
+        for entry in xml_entries:
+            document = _load_xml_document(entry, cache_dir, filing.id)
+            if document:
+                documents.append(document)
+
+    if not documents:
+        raise HTTPException(status_code=500, detail="XML sources are recorded but cannot be accessed.")
 
     return FilingXmlResponse(filing_id=filing.id, documents=documents)

@@ -4,33 +4,45 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from celery import shared_task
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import llm.llm_service as llm_service
-from core.env import env_float, env_int
+from core.env import env_float, env_int, env_str
 from database import SessionLocal
 from ingest.dart_seed import seed_recent_filings as seed_recent_filings_job
+from models.chat import ChatMessage, ChatSession
 from models.fact import ExtractedFact
 from models.filing import Filing, STATUS_PENDING
+from models.digest import DailyDigestLog
 from models.news import NewsObservation, NewsSignal
 from models.summary import Summary
 from parse.pdf_parser import extract_chunks
 from parse.xml_parser import extract_chunks_from_xml
 from schemas.news import NewsArticleCreate
-from services import minio_service, vector_service
+from services import chat_service, minio_service, vector_service
 from services.notification_service import send_telegram_alert
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
+
+DIGEST_ZONE = ZoneInfo("Asia/Seoul")
+DIGEST_TOP_LIMIT = env_int("DAILY_DIGEST_TOP_N", 3, minimum=1)
+DIGEST_BASE_URL = env_str("FILINGS_DASHBOARD_URL", "https://kofilot.com/filings")
+DIGEST_CHANNEL = "telegram"
+SUMMARY_RECENT_TURNS = env_int("CHAT_MEMORY_RECENT_TURNS", 3, minimum=1)
+SUMMARY_TRIGGER_MESSAGES = env_int("CHAT_SUMMARY_TRIGGER_MESSAGES", 20, minimum=6)
 
 
 def _open_session() -> Session:
@@ -65,11 +77,60 @@ def _load_xml_paths(filing: Filing) -> List[str]:
     xml_paths = source_files.get("xml") if isinstance(source_files, dict) else None
     if not xml_paths:
         return []
-    valid_paths = [path for path in xml_paths if Path(path).is_file()]
-    missing = set(xml_paths) - set(valid_paths)
-    if missing:
-        logger.warning("Missing XML files for filing %s: %s", filing.id, ", ".join(missing))
-    return valid_paths
+
+    cache_dir = Path(UPLOAD_DIR) / "xml_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    resolved_paths: List[str] = []
+
+    for entry in xml_paths:
+        candidate_path: Optional[str] = None
+        object_name: Optional[str] = None
+        remote_url: Optional[str] = None
+
+        if isinstance(entry, str):
+            candidate_path = entry
+        elif isinstance(entry, dict):
+            raw_path = entry.get("path")
+            candidate_path = str(raw_path) if raw_path else None
+            object_name = entry.get("object") or entry.get("minio_object")
+            remote_url = entry.get("url")
+        else:
+            continue
+
+        if candidate_path and Path(candidate_path).is_file():
+            resolved_paths.append(candidate_path)
+            continue
+
+        if object_name and minio_service.is_enabled():
+            target_path = cache_dir / Path(object_name).name
+            downloaded = minio_service.download_file(object_name, str(target_path))
+            if downloaded:
+                resolved_paths.append(downloaded)
+                continue
+
+        if remote_url and isinstance(remote_url, str) and remote_url.startswith("http"):
+            try:
+                import httpx  # Imported lazily to avoid hard dependency at module load time
+                from urllib.parse import urlparse
+
+                response = httpx.get(remote_url, timeout=15.0)
+                response.raise_for_status()
+                parsed = urlparse(remote_url)
+                filename = Path(parsed.path).name or f"{filing.id}.xml"
+                target_path = cache_dir / filename
+                target_path.write_text(response.text, encoding="utf-8")
+                resolved_paths.append(str(target_path))
+                continue
+            except Exception as exc:
+                logger.warning("Failed to fetch XML from %s for filing %s: %s", remote_url, filing.id, exc)
+
+        logger.warning("XML file not available for filing %s (entry=%s)", filing.id, entry)
+
+    if not resolved_paths:
+        logger.warning("No XML files could be resolved for filing %s.", filing.id)
+
+    return resolved_paths
 
 
 def _save_chunks(filing: Filing, chunks: List[Dict[str, Any]], db: Session) -> None:
@@ -439,6 +500,241 @@ def aggregate_news_data(window_end_iso: Optional[str] = None) -> str:
     except Exception as exc:
         db.rollback()
         logger.error("Error aggregating news metrics: %s", exc, exc_info=True)
+        return "error"
+    finally:
+        db.close()
+
+
+def _get_digest_bounds(target: date) -> Tuple[datetime, datetime]:
+    """Return UTC window (naive) covering the given local date."""
+    start_local = datetime.combine(target, time.min, tzinfo=DIGEST_ZONE)
+    end_local = start_local + timedelta(days=1)
+    start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
+    end_utc = end_local.astimezone(timezone.utc).replace(tzinfo=None)
+    return start_utc, end_utc
+
+
+def _load_digest_filings(
+    db: Session,
+    bounds: Tuple[datetime, datetime],
+    limit: int,
+) -> Tuple[int, List[Filing]]:
+    """Fetch count and top filings for the digest window."""
+    start_utc, end_utc = bounds
+    total = (
+        db.query(Filing)
+        .filter(Filing.created_at >= start_utc, Filing.created_at < end_utc)
+        .count()
+    )
+    if total == 0:
+        return 0, []
+
+    top_filings = (
+        db.query(Filing)
+        .filter(Filing.created_at >= start_utc, Filing.created_at < end_utc)
+        .order_by(Filing.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return total, top_filings
+
+
+def _check_digest_sent(db: Session, digest_date: date) -> bool:
+    """Return True if the digest was already sent for the given date."""
+    record = (
+        db.query(DailyDigestLog)
+        .filter(
+            DailyDigestLog.digest_date == digest_date,
+            DailyDigestLog.channel == DIGEST_CHANNEL,
+        )
+        .first()
+    )
+    return record is not None
+
+
+def _mark_digest_sent(db: Session, digest_date: date) -> None:
+    """Persist that the digest was delivered."""
+    entry = DailyDigestLog(digest_date=digest_date, channel=DIGEST_CHANNEL)
+    db.add(entry)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        logger.info("Digest already recorded for %s", digest_date.isoformat())
+
+
+def _build_digest_message(digest_date: date, total: int, filings: List[Filing]) -> str:
+    """Compose the Telegram digest message."""
+    date_str = digest_date.isoformat()
+    lines = [
+        f"[일일 공시 요약] {date_str}",
+        "오늘자 공시가 업데이트되었습니다.",
+        f"오늘 등록된 공시: {total}건",
+    ]
+
+    for filing in filings:
+        corp = filing.corp_name or filing.ticker or "알수없음"
+        title = filing.report_name or filing.title or "공시"
+        lines.append(f"- {corp}: {title}")
+
+    remaining = total - len(filings)
+    if remaining > 0:
+        lines.append(f"...외 {remaining}건")
+
+    if DIGEST_BASE_URL:
+        connector = "&" if "?" in DIGEST_BASE_URL else "?"
+        lines.append(f"자세히 보기: {DIGEST_BASE_URL}{connector}date={date_str}")
+
+    return "\n".join(lines)
+
+
+@shared_task(name="m4.send_filing_digest")
+def send_filing_digest(target_date_iso: Optional[str] = None) -> str:
+    """Send a weekday filing digest to Telegram."""
+    reference = datetime.now(DIGEST_ZONE)
+    if target_date_iso:
+        try:
+            parsed = datetime.fromisoformat(target_date_iso)
+            if parsed.tzinfo is None:
+                reference = parsed.replace(tzinfo=DIGEST_ZONE)
+            else:
+                reference = parsed.astimezone(DIGEST_ZONE)
+        except ValueError:
+            logger.warning("Invalid target_date_iso '%s'. Using current time.", target_date_iso)
+
+    digest_date = reference.date()
+    if digest_date.weekday() >= 5:
+        logger.info("Skipping filing digest on weekend: %s", digest_date.isoformat())
+        return "skipped_weekend"
+
+    bounds = _get_digest_bounds(digest_date)
+    db = _open_session()
+    try:
+        if _check_digest_sent(db, digest_date):
+            logger.info("Digest already sent for %s", digest_date.isoformat())
+            return "skipped_duplicate"
+
+        total, filings = _load_digest_filings(db, bounds, DIGEST_TOP_LIMIT)
+        message = _build_digest_message(digest_date, total, filings)
+
+        if not send_telegram_alert(message):
+            logger.error("Telegram digest send failed for %s", digest_date.isoformat())
+            return "send_failed"
+
+        _mark_digest_sent(db, digest_date)
+        logger.info("Daily filing digest sent for %s (total=%d)", digest_date.isoformat(), total)
+        return "sent"
+    except Exception as exc:
+        db.rollback()
+        logger.error("Daily digest failed for %s: %s", digest_date.isoformat(), exc, exc_info=True)
+        return "error"
+    finally:
+        db.close()
+
+
+def _flatten_citation_entries(meta: Dict[str, Any]) -> List[str]:
+    if not isinstance(meta, dict):
+        return []
+    collected: List[str] = []
+    citation_map = meta.get("citations")
+    if isinstance(citation_map, dict):
+        for value in citation_map.values():
+            if isinstance(value, list):
+                collected.extend(str(item) for item in value if item)
+    retrieval = meta.get("retrieval")
+    if isinstance(retrieval, dict):
+        doc_ids = retrieval.get("doc_ids")
+        if isinstance(doc_ids, list):
+            collected.extend(str(item) for item in doc_ids if item)
+    return collected
+
+
+def _build_transcript_payload(messages: List[ChatMessage]) -> List[Dict[str, str]]:
+    payload: List[Dict[str, str]] = []
+    for message in messages:
+        if not message.content:
+            continue
+        payload.append({"role": message.role, "content": message.content})
+    return payload
+
+
+@shared_task(name="m5.summarize_chat_session")
+def summarize_chat_session(session_id: str) -> str:
+    """Generate a condensed summary for a chat session and archive older turns."""
+    try:
+        session_uuid = uuid.UUID(session_id)
+    except ValueError:
+        return "invalid_session_id"
+
+    db = _open_session()
+    try:
+        session = (
+            db.query(ChatSession)
+            .filter(ChatSession.id == session_uuid, ChatSession.archived_at.is_(None))
+            .with_for_update()
+            .first()
+        )
+        if session is None:
+            return "session_missing"
+
+        snapshot = session.memory_snapshot or {}
+        summarized_until = int(snapshot.get("summarized_until") or 0)
+
+        messages = (
+            db.query(ChatMessage)
+            .filter(ChatMessage.session_id == session_uuid)
+            .order_by(ChatMessage.seq.asc())
+            .all()
+        )
+        if not messages:
+            return "no_messages"
+
+        unsummarized = [message for message in messages if message.seq > summarized_until]
+        keep_count = SUMMARY_RECENT_TURNS * 2
+        if len(unsummarized) <= keep_count:
+            return "insufficient_history"
+        if len(unsummarized) < SUMMARY_TRIGGER_MESSAGES:
+            return "below_threshold"
+
+        archive_candidates = unsummarized[:-keep_count]
+        transcript = _build_transcript_payload(archive_candidates)
+        if not transcript:
+            return "insufficient_history"
+
+        try:
+            summary_text = llm_service.summarize_chat_transcript(transcript)
+        except Exception as exc:  # pragma: no cover - summariser best-effort
+            logger.error("Chat summary failed for %s: %s", session_uuid, exc, exc_info=True)
+            db.rollback()
+            return "summary_failed"
+
+        citations: List[str] = []
+        for message in archive_candidates:
+            citations.extend(_flatten_citation_entries(message.meta))
+        unique_citations = sorted({item for item in citations if item})
+
+        snapshot_payload = dict(snapshot)
+        snapshot_payload["summary"] = summary_text
+        snapshot_payload["citations"] = unique_citations
+        snapshot_payload["summarized_until"] = archive_candidates[-1].seq
+        snapshot_payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+        session.memory_snapshot = snapshot_payload
+        if summary_text:
+            session.summary = chat_service.trim_preview(summary_text)
+
+        max_seq = archive_candidates[-1].seq
+        archived = chat_service.archive_chat_messages(db, session_id=session_uuid, seq_threshold=max_seq)
+        db.commit()
+        logger.info(
+            "Summarised chat session %s up to seq %d (archived=%d)",
+            session_uuid,
+            max_seq,
+            archived,
+        )
+        return "summarized"
+    except Exception as exc:
+        db.rollback()
+        logger.error("Chat summarisation error for %s: %s", session_id, exc, exc_info=True)
         return "error"
     finally:
         db.close()

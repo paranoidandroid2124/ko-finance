@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class NewsSignalResponse(BaseModel):
@@ -21,8 +21,7 @@ class NewsSignalResponse(BaseModel):
     sentiment: Optional[float] = None
     topics: List[str] = Field(default_factory=list)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TopicStatResponse(BaseModel):
@@ -49,8 +48,7 @@ class NewsObservationResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class NewsSentimentHeatmapPoint(BaseModel):
