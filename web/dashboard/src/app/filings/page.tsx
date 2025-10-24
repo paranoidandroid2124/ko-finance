@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
-import { FilingsTable } from "@/components/filings/FilingsTable";
 import { FilingDetailPanel } from "@/components/filings/FilingDetailPanel";
+import { FilingSelector } from "@/components/filings/FilingSelector";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -14,12 +14,21 @@ export default function FilingsPage() {
   const searchParams = useSearchParams();
   const initialFilingId = searchParams?.get("filingId");
 
-  const { data: filings = [], isLoading, isError } = useFilings();
+  const [days, setDays] = useState(30);
+  const filingQuery = useMemo(() => ({ days, limit: 200 }), [days]);
+
+  const {
+    data: filings = [],
+    isLoading,
+    isFetching,
+    isError,
+  } = useFilings(filingQuery);
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const {
     data: filingDetail,
     isLoading: isDetailLoading,
-    isError: isDetailError
+    isError: isDetailError,
   } = useFilingDetail(selectedId ?? undefined);
 
   useEffect(() => {
@@ -36,7 +45,12 @@ export default function FilingsPage() {
     });
   }, [filings, initialFilingId]);
 
+  const handleDaysChange = useCallback((value: number) => {
+    setDays(value);
+  }, []);
+
   const hasFilings = filings.length > 0;
+  const isListLoading = isLoading || isFetching;
 
   return (
     <AppShell>
@@ -45,17 +59,20 @@ export default function FilingsPage() {
           title="공시 정보를 불러오지 못했어요"
           description="네트워크 상태를 확인한 뒤 다시 시도해주세요. 문제가 지속되면 관리자에게 문의하세요."
         />
-      ) : isLoading ? (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+      ) : isLoading && !hasFilings ? (
+        <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
           <SkeletonBlock lines={6} />
           <SkeletonBlock lines={8} />
         </div>
       ) : hasFilings ? (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <FilingsTable
+        <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
+          <FilingSelector
             filings={filings}
             selectedId={selectedId ?? undefined}
             onSelect={setSelectedId}
+            days={days}
+            onDaysChange={handleDaysChange}
+            isLoading={isListLoading}
           />
           {isDetailError ? (
             <ErrorState

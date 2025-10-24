@@ -50,7 +50,7 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
   }, [filing.pdfViewerUrl, filing.pdfDownloadUrl]);
 
   return (
-    <aside className="flex h-full flex-col rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
+    <aside className="flex h-full max-h-[calc(100vh-160px)] flex-col overflow-hidden rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
       <header>
         <p className="text-xs font-semibold uppercase text-text-secondaryLight dark:text-text-secondaryDark">기본 정보</p>
         <h2 className="mt-2 text-lg font-semibold">{filing.company}</h2>
@@ -67,31 +67,33 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
         </div>
       </header>
 
-      <section className="mt-5 space-y-4 text-sm">
-        <div>
-          <h3 className="text-sm font-semibold">요약</h3>
-          <p className="mt-2 text-text-secondaryLight dark:text-text-secondaryDark">
-            {filing.summary || "요약이 제공되지 않았습니다."}
-          </p>
-        </div>
+      <section className="mt-5 flex-1 overflow-y-auto pr-1 text-sm">
+        <div className="space-y-4 pb-4">
+          <div>
+            <h3 className="text-sm font-semibold">요약</h3>
+            <p className="mt-2 text-text-secondaryLight dark:text-text-secondaryDark">
+              {filing.summary || "요약이 제공되지 않았습니다."}
+            </p>
+          </div>
 
-        <div>
-          <h3 className="text-sm font-semibold">핵심 사실</h3>
-          {filing.facts.length > 0 ? (
-            <ul className="mt-2 space-y-2 text-sm">
-              {filing.facts.map((fact) => (
-                <li key={`${fact.label}-${fact.value}`} className="rounded-lg border border-border-light px-3 py-2 text-xs dark:border-border-dark">
-                  <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">{fact.label}</p>
-                  <p className="text-text-secondaryLight dark:text-text-secondaryDark">
-                    {fact.value}
-                    {fact.anchor && <span className="ml-2 text-[11px] text-primary">({fact.anchor})</span>}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">핵심 사실이 없습니다.</p>
-          )}
+          <div>
+            <h3 className="text-sm font-semibold">핵심 사실</h3>
+            {filing.facts.length > 0 ? (
+              <ul className="mt-2 space-y-2 text-sm">
+                {filing.facts.map((fact) => (
+                  <li key={`${fact.label}-${fact.value}`} className="rounded-lg border border-border-light px-3 py-2 text-xs dark:border-border-dark">
+                    <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">{fact.label}</p>
+                    <p className="text-text-secondaryLight dark:text-text-secondaryDark">
+                      {fact.value}
+                      {fact.anchor && <span className="ml-2 text-[11px] text-primary">({fact.anchor})</span>}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">핵심 사실이 없습니다.</p>
+            )}
+          </div>
         </div>
       </section>
 

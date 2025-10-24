@@ -25,7 +25,8 @@ export default function NewsInsightsPage() {
   const { data: signalsData, isLoading: isSignalsLoading } = useSectorSignals();
   const [drawerPoint, setDrawerPoint] = useState<SectorSignalPoint | null>(null);
 
-  const signalPoints = signalsData?.points ?? [];
+  const rawSignalPoints = signalsData?.points;
+  const signalPoints = useMemo(() => rawSignalPoints ?? [], [rawSignalPoints]);
   const sparkPoints = useMemo(() => {
     const sorted = [...signalPoints].sort((a, b) => (b.sentimentZ ?? 0) - (a.sentimentZ ?? 0));
     const unique = new Map<number, SectorSignalPoint>();

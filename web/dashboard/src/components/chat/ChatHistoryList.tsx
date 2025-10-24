@@ -60,7 +60,7 @@ export function ChatHistoryList({
   const showLoadingState = Boolean(disabled && isEmpty);
 
   return (
-    <aside className="hidden w-64 flex-none flex-col gap-3 rounded-xl border border-border-light bg-background-cardLight p-4 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark xl:flex">
+    <aside className="hidden w-64 max-h-[calc(100vh-160px)] flex-none flex-col gap-3 overflow-hidden rounded-xl border border-border-light bg-background-cardLight p-4 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark xl:flex">
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -94,7 +94,7 @@ export function ChatHistoryList({
           <p className="text-xs text-accent-negative">{persistenceError}</p>
         )}
       </div>
-      <div className="space-y-2 text-sm">
+      <div className="flex-1 min-h-0 space-y-2 overflow-y-auto pr-1 text-sm">
         {showLoadingState ? (
           <p className="rounded-lg border border-dashed border-border-light px-3 py-4 text-center text-xs text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
             대화 기록을 불러오는 중입니다...

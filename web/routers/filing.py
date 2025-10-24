@@ -1,5 +1,6 @@
 import uuid
 import tempfile
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -229,15 +230,39 @@ def upload_filing(file: UploadFile = File(...), db: Session = Depends(get_db)):
 @router.get("/", response_model=list[FilingBriefResponse])
 def list_filings(
     skip: int = 0,
-    limit: int = 10,
+    limit: int = Query(100, ge=1, le=500, description="Maximum number of filings to return."),
     ticker: str | None = Query(None, description="Filter by ticker symbol"),
+    corp_code: str | None = Query(None, description="Filter by DART corporation code."),
+    days: int = Query(30, ge=1, le=365, description="Look-back window in days when start_date is not provided."),
+    start_date: date | None = Query(None, description="Start date (inclusive) in YYYY-MM-DD format."),
+    end_date: date | None = Query(None, description="End date (inclusive) in YYYY-MM-DD format."),
     db: Session = Depends(get_db),
 ):
-    """List filings with optional ticker filter."""
+    """List filings with optional ticker, corp_code, and date range filters."""
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date must be earlier than or equal to end_date.")
+
     query = db.query(Filing)
     if ticker:
         query = query.filter(Filing.ticker == ticker)
-    filings = query.order_by(Filing.filed_at.desc()).offset(skip).limit(limit).all()
+    if corp_code:
+        query = query.filter(Filing.corp_code == corp_code)
+
+    window_end_date = end_date or datetime.utcnow().date()
+    window_start_date = start_date or (window_end_date - timedelta(days=days - 1))
+
+    window_start = datetime.combine(window_start_date, time.min)
+    window_end = datetime.combine(window_end_date, time.max)
+
+    query = query.filter(Filing.filed_at.isnot(None))
+    query = query.filter(Filing.filed_at >= window_start, Filing.filed_at <= window_end)
+
+    filings = (
+        query.order_by(Filing.filed_at.desc(), Filing.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
 
     if not filings:
         return []

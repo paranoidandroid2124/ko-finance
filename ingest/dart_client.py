@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import os
+import time
 import zipfile
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -73,38 +74,75 @@ class DartClient:
     def list_recent_filings(
         self,
         since: datetime,
+        until: Optional[datetime] = None,
         page_no: int = 1,
         page_count: int = 100,
+        max_pages: Optional[int] = None,
+        throttle_seconds: float = 0.2,
+        corp_code: Optional[str] = None,
     ) -> List[Dict[str, str]]:
-        """Return filings submitted between ``since`` and now."""
-        params = {
-            "crtfc_key": self.api_key,
-            "bgn_de": since.strftime("%Y%m%d"),
-            "end_de": datetime.now().strftime("%Y%m%d"),
-            "page_no": page_no,
-            "page_count": page_count,
-        }
+        """Return filings submitted between ``since`` and ``until`` (inclusive).
+
+        Fetches pages sequentially until the API stops returning results or ``max_pages`` is
+        reached. A small delay is applied between requests to respect OpenDART rate limits.
+        """
+        aggregated: List[Dict[str, str]] = []
+        current_page = page_no
+        fetched_pages = 0
+        range_end_dt = until or datetime.now()
+        end_date = range_end_dt.strftime("%Y%m%d")
+        range_end_display = range_end_dt.date()
+
         try:
             with httpx.Client(timeout=60.0) as client:
-                response = client.get(f"{DART_API_BASE}/list.json", params=params)
-                response.raise_for_status()
+                while True:
+                    params = {
+                        "crtfc_key": self.api_key,
+                        "bgn_de": since.strftime("%Y%m%d"),
+                        "end_de": end_date,
+                        "page_no": current_page,
+                        "page_count": page_count,
+                    }
+                    if corp_code:
+                        params["corp_code"] = corp_code
+                    response = client.get(f"{DART_API_BASE}/list.json", params=params)
+                    response.raise_for_status()
+
+                    try:
+                        text = response.content.decode("utf-8")
+                    except UnicodeDecodeError:
+                        text = response.content.decode("euc-kr", errors="replace")
+                    payload = json.loads(text)
+                    if payload.get("status") != "000":
+                        message = payload.get("message", "Unknown DART error")
+                        logger.error("DART returned error status (page %s): %s", current_page, message)
+                        raise RuntimeError(f"DART error: {message}")
+
+                    page_items = payload.get("list") or []
+                    aggregated.extend(page_items)
+                    fetched_pages += 1
+                    logger.info(
+                        "Fetched %d filings from page %d (total=%d) between %s and %s.",
+                        len(page_items),
+                        current_page,
+                        len(aggregated),
+                        since.date(),
+                        range_end_display,
+                    )
+
+                    if max_pages is not None and fetched_pages >= max_pages:
+                        break
+                    if len(page_items) < page_count or not page_items:
+                        break
+
+                    current_page += 1
+                    if throttle_seconds > 0:
+                        time.sleep(throttle_seconds)
         except httpx.HTTPError as exc:
             logger.error("Failed to list recent filings: %s", exc)
             raise
 
-        try:
-            text = response.content.decode("utf-8")
-        except UnicodeDecodeError:
-            text = response.content.decode("euc-kr", errors="replace")
-        payload = json.loads(text)
-        if payload.get("status") != "000":
-            message = payload.get("message", "Unknown DART error")
-            logger.error("DART returned error status: %s", message)
-            raise RuntimeError(f"DART error: {message}")
-
-        filings = payload.get("list", [])
-        logger.info("Fetched %d filings between %s and today.", len(filings), since.date())
-        return filings
+        return aggregated
 
     def download_document_zip(self, receipt_no: str) -> Optional[bytes]:
         """Download the raw filing ZIP payload for a given receipt number."""

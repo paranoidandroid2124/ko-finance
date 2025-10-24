@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -47,7 +47,13 @@ def _enqueue_filing_task(filing_id: uuid.UUID) -> None:
         logger.warning("process_filing task does not expose delay().")
 
 
-def seed_recent_filings(days_back: int = 1, db: Optional[Session] = None) -> int:
+def seed_recent_filings(
+    days_back: int = 1,
+    db: Optional[Session] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    corp_code: Optional[str] = None,
+) -> int:
     own_session = False
     if db is None:
         db = SessionLocal()
@@ -57,8 +63,18 @@ def seed_recent_filings(days_back: int = 1, db: Optional[Session] = None) -> int
 
     try:
         client = DartClient()
-        since = datetime.now() - timedelta(days=days_back)
-        filings_meta = client.list_recent_filings(since=since)
+        if start_date:
+            since = datetime.combine(start_date, datetime.min.time())
+        else:
+            since = datetime.now() - timedelta(days=days_back)
+        until = None
+        if end_date:
+            until = datetime.combine(end_date, datetime.min.time())
+        filings_meta = client.list_recent_filings(
+            since=since,
+            until=until,
+            corp_code=corp_code,
+        )
         if not filings_meta:
             logger.info("No new filings detected in the last %d day(s).", days_back)
             return 0
