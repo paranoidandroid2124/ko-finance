@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List
+import html
+import re
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -226,7 +228,7 @@ def _build_news_insights(
                     sentimentScore=entry.sentiment,
                     publishedAtIso=entry.published_at.isoformat() if entry.published_at else "",
                     url=entry.url,
-                    summary=entry.summary,
+                    summary=_sanitize_summary(entry.summary),
                 )
             )
 
@@ -340,3 +342,14 @@ def read_news_insights(
 
 
 
+_SUMMARY_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _sanitize_summary(summary: str | None) -> str | None:
+    if not summary:
+        return None
+    text = _SUMMARY_TAG_RE.sub(" ", summary)
+    text = html.unescape(text)
+    text = re.sub(r"\s+", " ", text)
+    cleaned = text.strip()
+    return cleaned or None
