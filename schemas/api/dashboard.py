@@ -21,6 +21,7 @@ class DashboardAlert(BaseModel):
     body: str
     timestamp: str
     tone: Literal["positive", "negative", "neutral", "warning"]
+    targetUrl: str | None = None
 
 
 class DashboardNewsItem(BaseModel):
@@ -29,6 +30,7 @@ class DashboardNewsItem(BaseModel):
     sentiment: Literal["positive", "negative", "neutral"]
     source: str
     publishedAt: str
+    url: str
 
 
 class DashboardOverviewResponse(BaseModel):

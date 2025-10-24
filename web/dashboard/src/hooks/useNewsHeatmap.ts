@@ -6,11 +6,23 @@ export type HeatmapBucket = {
   end: string;
 };
 
+export type HeatmapArticle = {
+  id: string;
+  title: string;
+  url: string;
+  source?: string;
+  sentiment?: number | null;
+  summary?: string | null;
+  publishedAt?: string | null;
+  publishedAtIso?: string | null;
+};
+
 export type HeatmapPoint = {
   sector_index: number;
   bucket_index: number;
   sentiment: number | null;
   article_count: number;
+  articles?: HeatmapArticle[];
 };
 
 export type NewsHeatmapData = {

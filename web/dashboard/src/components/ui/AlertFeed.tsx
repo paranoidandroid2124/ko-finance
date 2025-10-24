@@ -7,7 +7,7 @@ const toneBadge: Record<DashboardAlert["tone"], string> = {
   positive: "bg-accent-positive/15 text-accent-positive",
   negative: "bg-accent-negative/15 text-accent-negative",
   warning: "bg-accent-warning/20 text-accent-warning",
-  neutral: "bg-border-light/60 text-text-secondaryLight dark:bg-border-dark/60 dark:text-text-secondaryDark"
+  neutral: "bg-border-light/60 text-text-secondaryLight dark:bg-border-dark/60 dark:text-text-secondaryDark",
 };
 
 type AlertFeedProps = {
@@ -15,8 +15,24 @@ type AlertFeedProps = {
   onSelect?: (alert: DashboardAlert) => void;
 };
 
+const isExternalUrl = (value: string) => /^https?:\/\//i.test(value);
+
 export function AlertFeed({ alerts, onSelect }: AlertFeedProps) {
   const items = useMemo(() => alerts.slice(0, 5), [alerts]);
+
+  const handleClick = (alert: DashboardAlert) => {
+    if (onSelect) {
+      onSelect(alert);
+      return;
+    }
+    if (alert.targetUrl) {
+      if (isExternalUrl(alert.targetUrl)) {
+        window.open(alert.targetUrl, "_blank", "noopener,noreferrer");
+      } else {
+        window.location.assign(alert.targetUrl);
+      }
+    }
+  };
 
   return (
     <div className="rounded-xl border border-border-light bg-background-cardLight p-4 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
@@ -26,7 +42,8 @@ export function AlertFeed({ alerts, onSelect }: AlertFeedProps) {
           {items.map((alert) => (
             <button
               key={alert.id}
-              onClick={() => onSelect?.(alert)}
+              type="button"
+              onClick={() => handleClick(alert)}
               className="w-full rounded-lg border border-border-light/70 p-3 text-left transition-colors hover:border-primary hover:text-primary dark:border-border-dark/70"
             >
               <div className="flex items-start justify-between gap-3">
@@ -35,9 +52,7 @@ export function AlertFeed({ alerts, onSelect }: AlertFeedProps) {
                   <p className="mt-1 text-xs text-text-secondaryLight dark:text-text-secondaryDark">{alert.body}</p>
                 </div>
                 {alert.tone && (
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ${toneBadge[alert.tone]}`}
-                  >
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ${toneBadge[alert.tone]}`}>
                     {alert.tone}
                   </span>
                 )}

@@ -16,6 +16,7 @@ export type DashboardAlert = {
   body: string;
   timestamp: string;
   tone: "positive" | "negative" | "neutral" | "warning";
+  targetUrl?: string | null;
 };
 
 export type DashboardNewsItem = {
@@ -24,6 +25,7 @@ export type DashboardNewsItem = {
   sentiment: "positive" | "negative" | "neutral";
   source: string;
   publishedAt: string;
+  url: string;
 };
 
 type DashboardOverview = {

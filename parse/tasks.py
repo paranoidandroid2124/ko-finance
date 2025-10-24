@@ -9,7 +9,7 @@ from collections import Counter
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from celery import shared_task
 from pydantic import ValidationError
@@ -31,6 +31,8 @@ from parse.pdf_parser import extract_chunks
 from parse.xml_parser import extract_chunks_from_xml
 from schemas.news import NewsArticleCreate
 from services import chat_service, minio_service, vector_service
+from services.aggregation.sector_classifier import assign_article_to_sector
+from services.aggregation.sector_metrics import compute_sector_daily_metrics, compute_sector_window_metrics
 from services.notification_service import send_telegram_alert
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,7 @@ logger.setLevel(logging.INFO)
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 
 DIGEST_ZONE = ZoneInfo("Asia/Seoul")
+SECTOR_ZONE = ZoneInfo("Asia/Seoul")
 DIGEST_TOP_LIMIT = env_int("DAILY_DIGEST_TOP_N", 3, minimum=1)
 DIGEST_BASE_URL = env_str("FILINGS_DASHBOARD_URL", "https://kofilot.com/filings")
 DIGEST_CHANNEL = "telegram"
@@ -487,6 +490,10 @@ def process_news_article(article_payload: Any) -> str:
             evidence=evidence,
         )
         db.add(news_signal)
+        try:
+            assign_article_to_sector(db, news_signal)
+        except Exception as exc:
+            logger.warning("Failed to assign sector for news signal %s: %s", article.url, exc, exc_info=True)
         db.commit()
         logger.info("Stored news signal %s for %s", news_signal.id, article.url)
         return str(news_signal.id)
@@ -613,6 +620,64 @@ def aggregate_news_data(window_end_iso: Optional[str] = None) -> str:
         db.rollback()
         logger.error("Error aggregating news metrics: %s", exc, exc_info=True)
         return "error"
+    finally:
+        db.close()
+
+
+@shared_task(name="m2.aggregate_sector_daily")
+def aggregate_sector_daily(hours_back: int = 36) -> str:
+    """Compute sector daily metrics for the recent horizon (default 36h)."""
+    now_local = datetime.now(SECTOR_ZONE)
+    start_local = now_local - timedelta(hours=max(1, hours_back))
+    start_day = start_local.date()
+    end_day = now_local.date()
+
+    db = _open_session()
+    try:
+        metrics = compute_sector_daily_metrics(db, start_day, end_day)
+        db.commit()
+        logger.info(
+            "Aggregated %d sector daily metric rows for %s -> %s",
+            len(metrics),
+            start_day.isoformat(),
+            end_day.isoformat(),
+        )
+        return str(len(metrics))
+    except Exception as exc:
+        db.rollback()
+        logger.error("Sector daily aggregation failed: %s", exc, exc_info=True)
+        raise
+    finally:
+        db.close()
+
+
+@shared_task(name="m2.aggregate_sector_windows")
+def aggregate_sector_windows(as_of_iso: Optional[str] = None, window_days: Sequence[int] = (7, 30, 90)) -> str:
+    """Compute rolling sector metrics (hotspot + sparkline)."""
+    if as_of_iso:
+        try:
+            as_of_day = datetime.fromisoformat(as_of_iso).date()
+        except ValueError:
+            logger.warning("Invalid as_of_iso %s. Falling back to current date.", as_of_iso)
+            as_of_day = datetime.now(SECTOR_ZONE).date()
+    else:
+        as_of_day = datetime.now(SECTOR_ZONE).date()
+
+    db = _open_session()
+    try:
+        records = compute_sector_window_metrics(db, as_of_day, window_days=window_days)
+        db.commit()
+        logger.info(
+            "Aggregated %d sector window metric rows for %s (windows=%s)",
+            len(records),
+            as_of_day.isoformat(),
+            ",".join(str(item) for item in window_days),
+        )
+        return str(len(records))
+    except Exception as exc:
+        db.rollback()
+        logger.error("Sector window aggregation failed: %s", exc, exc_info=True)
+        raise
     finally:
         db.close()
 

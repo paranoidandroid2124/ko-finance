@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { KpiCard } from "@/components/ui/KpiCard";
@@ -9,8 +10,10 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { FilingTrendChart } from "@/components/charts/FilingTrendChart";
-import { NewsSentimentHeatmap } from "@/components/charts/NewsSentimentHeatmap";
 import { useDashboardOverview } from "@/hooks/useDashboardOverview";
+import { useSectorSignals } from "@/hooks/useSectorSignals";
+import { SectorHotspotScatter } from "@/components/sectors/SectorHotspotScatter";
+import { SectorSparkCard } from "@/components/sectors/SectorSparkCard";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -19,8 +22,29 @@ export default function DashboardPage() {
   const metrics = data?.metrics ?? [];
   const alerts = data?.alerts ?? [];
   const newsItems = data?.news ?? [];
+  const { data: sectorSignals, isLoading: isSectorLoading } = useSectorSignals();
+  const sectorPoints = sectorSignals?.points ?? [];
+  const dashboardSparkPoints = useMemo(() => {
+    const sorted = [...sectorPoints].sort((a, b) => (b.sentimentZ ?? 0) - (a.sentimentZ ?? 0));
+    const unique = new Map<number, (typeof sectorPoints)[number]>();
+    sorted.forEach((point) => {
+      if (!unique.has(point.sector.id)) {
+        unique.set(point.sector.id, point);
+      }
+    });
+    return Array.from(unique.values()).slice(0, 3);
+  }, [sectorPoints]);
 
   const handleAlertSelect = (alert: typeof alerts[number]) => {
+    const target = alert.targetUrl?.trim();
+    if (target) {
+      if (/^https?:\/\//i.test(target)) {
+        window.open(target, "_blank", "noopener,noreferrer");
+      } else {
+        router.push(target);
+      }
+      return;
+    }
     if (alert.title.includes("뉴스")) {
       router.push("/news");
     } else if (alert.title.includes("공시")) {
@@ -83,17 +107,29 @@ export default function DashboardPage() {
       <section className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           <FilingTrendChart />
-          <NewsSentimentHeatmap />
+          <SectorHotspotScatter points={sectorPoints} isLoading={isSectorLoading} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            {dashboardSparkPoints.map((point) => (
+              <SectorSparkCard key={`dashboard-spark-${point.sector.id}`} point={point} />
+            ))}
+            {!isSectorLoading && dashboardSparkPoints.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border-light p-4 text-xs text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
+                섹터 데이터가 아직 집계되지 않았습니다.
+              </div>
+            ) : null}
+          </div>
         </div>
         <div className="space-y-6">
-          {alerts.length > 0 ? (
-            <AlertFeed alerts={alerts} onSelect={handleAlertSelect} />
-          ) : (
-            <EmptyState
-              title="실시간 알림이 없습니다"
-              description="파이프라인이 재개되면 guardrail 경고와 공시 알림이 여기에 표시됩니다."
-            />
-          )}
+          <div className="xl:hidden">
+            {alerts.length > 0 ? (
+              <AlertFeed alerts={alerts} onSelect={handleAlertSelect} />
+            ) : (
+              <EmptyState
+                title="실시간 알림이 없습니다"
+                description="파이프라인이 재개되면 guardrail 경고와 공시 알림이 여기에 표시됩니다."
+              />
+            )}
+          </div>
           {newsItems.length > 0 ? (
             <NewsList items={newsItems} />
           ) : (

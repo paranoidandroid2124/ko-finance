@@ -11,12 +11,19 @@ export type NewsItem = {
   sector: string;
   sentimentScore: number | null;
   publishedAtIso: string;
+  url: string;
+  summary?: string | null;
 };
 
 export type NewsTopic = {
   name: string;
   change: string;
   sentiment: NewsSentiment;
+  topArticleId?: string;
+  topArticleTitle?: string;
+  topArticleUrl?: string;
+  topArticleSource?: string;
+  topArticlePublishedAt?: string;
 };
 
 type NewsInsights = {

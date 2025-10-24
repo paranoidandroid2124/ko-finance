@@ -1,4 +1,4 @@
-﻿"""FastAPI routes exposing Market Mood data."""
+"""FastAPI routes exposing Market Mood data."""
 
 from __future__ import annotations
 
@@ -20,48 +20,22 @@ from schemas.api.news import (
     NewsSignalResponse,
     NewsTopicInsight,
 )
+from services.aggregation.sector_classifier import (
+    DEFAULT_SECTOR_SLUG,
+    SECTOR_DEFINITIONS,
+    resolve_sector_slug,
+)
 from web.routers.dashboard import format_timespan, map_sentiment
 
 router = APIRouter(prefix="/news", tags=["News"])
 
-DEFAULT_SECTOR = "기타"
-SECTOR_KEYWORDS: Dict[str, List[str]] = {
-    "반도체": ["반도체", "semi", "chip", "hbm", "메모리", "memory"],
-    "에너지": ["에너지", "energy", "전력", "oil", "gas", "원유"],
-    "금융": ["금융", "bank", "은행", "금리", "증권", "보험"],
-    "바이오": ["바이오", "bio", "제약", "pharma", "의료", "헬스"],
-    "소비재": ["소비", "유통", "리테일", "consumer", "생활", "식품"],
-    "모빌리티": ["모빌", "자동차", "car", "전기차", "모빌리티", "모빌"],
-}
-TICKER_SECTOR_MAP: Dict[str, str] = {
-    "005930": "반도체",
-    "000660": "반도체",
-    "051910": "소비재",
-    "035720": "모빌리티",
-    "035420": "모빌리티",
-    "068270": "바이오",
-    "207940": "바이오",
-    "096770": "에너지",
-}
+
+def _sector_name_from_slug(slug: str) -> str:
+    return SECTOR_DEFINITIONS.get(slug, SECTOR_DEFINITIONS[DEFAULT_SECTOR_SLUG])
 
 
-def _normalize_topic(topic: str) -> str:
-    return topic.strip().lower()
-
-
-def _classify_sector(topics: List[str] | None, ticker: str | None) -> str:
-    if topics:
-        normalized = [_normalize_topic(topic) for topic in topics if isinstance(topic, str) and topic.strip()]
-        for sector, keywords in SECTOR_KEYWORDS.items():
-            for keyword in keywords:
-                keyword_normalized = keyword.lower()
-                if any(keyword_normalized in topic for topic in normalized):
-                    return sector
-
-    if ticker:
-        return TICKER_SECTOR_MAP.get(ticker, DEFAULT_SECTOR)
-
-    return DEFAULT_SECTOR
+def _normalize_topic(value: str) -> str:
+    return value.strip().lower()
 
 
 def _resolve_bucket_minutes(window_minutes: int, requested_bucket: int | None) -> int:
@@ -130,8 +104,11 @@ def _build_heatmap(
     sector_counts: Counter[str] = Counter()
     bucket_values: dict[tuple[str, int], dict[str, object]] = defaultdict(lambda: {"sentiments": [], "count": 0})
 
+    default_sector_name = _sector_name_from_slug(DEFAULT_SECTOR_SLUG)
+
     for signal in signals:
-        sector = _classify_sector(signal.topics, signal.ticker)
+        slug = resolve_sector_slug(signal.topics, signal.ticker)
+        sector = _sector_name_from_slug(slug)
         sector_counts[sector] += 1
 
         published_at = signal.published_at
@@ -154,14 +131,14 @@ def _build_heatmap(
 
     top_sectors = [sector for sector, _ in sector_counts.most_common(max_sectors)]
     if not top_sectors:
-        top_sectors = [DEFAULT_SECTOR]
+        top_sectors = [default_sector_name]
 
-    # Ensure DEFAULT_SECTOR present if data exists but filtered out
-    if DEFAULT_SECTOR in sector_counts and DEFAULT_SECTOR not in top_sectors:
+    # Ensure default sector present if data exists but filtered out
+    if default_sector_name in sector_counts and default_sector_name not in top_sectors:
         if len(top_sectors) >= max_sectors:
-            top_sectors[-1] = DEFAULT_SECTOR
+            top_sectors[-1] = default_sector_name
         else:
-            top_sectors.append(DEFAULT_SECTOR)
+            top_sectors.append(default_sector_name)
 
     points: List[NewsSentimentHeatmapPoint] = []
     sector_index_map = {sector: idx for idx, sector in enumerate(top_sectors)}
@@ -219,16 +196,17 @@ def _build_news_insights(
         .all()
     )
 
-    normalized_sectors = {sector.strip() for sector in (sectors or []) if sector.strip()}
+    requested_sectors = {sector.strip() for sector in (sectors or []) if sector.strip()}
 
     news_items: List[NewsListItem] = []
     filtered_signals: List[tuple[NewsSignal, str, str]] = []
 
     for entry in candidate_news:
-        sector = _classify_sector(entry.topics, entry.ticker)
+        slug = resolve_sector_slug(entry.topics, entry.ticker)
+        sector = _sector_name_from_slug(slug)
         sentiment_label = map_sentiment(entry.sentiment)
 
-        if normalized_sectors and sector not in normalized_sectors:
+        if requested_sectors and (slug not in requested_sectors) and (sector not in requested_sectors):
             continue
         if negative_only and sentiment_label != "negative":
             continue
@@ -247,12 +225,15 @@ def _build_news_insights(
                     sector=sector,
                     sentimentScore=entry.sentiment,
                     publishedAtIso=entry.published_at.isoformat() if entry.published_at else "",
+                    url=entry.url,
+                    summary=entry.summary,
                 )
             )
 
     topic_counts: Counter[str] = Counter()
     topic_sentiments: Dict[str, List[float]] = defaultdict(list)
     topic_labels: Dict[str, str] = {}
+    topic_top_articles: Dict[str, NewsSignal] = {}
 
     for entry, _, _ in filtered_signals:
         if not entry.topics:
@@ -265,17 +246,32 @@ def _build_news_insights(
             topic_labels.setdefault(normalized, topic)
             if entry.sentiment is not None:
                 topic_sentiments[normalized].append(float(entry.sentiment))
+            if normalized not in topic_top_articles:
+                topic_top_articles[normalized] = entry
 
     top_topics = topic_counts.most_common(5)
     topics: List[NewsTopicInsight] = []
     for normalized, count in top_topics:
         scores = topic_sentiments.get(normalized, [])
         avg_score = sum(scores) / len(scores) if scores else 0.0
+        article = topic_top_articles.get(normalized)
+        top_article_id = article.id if article else None
+        top_article_title = article.headline if article else None
+        top_article_url = article.url if article else None
+        top_article_source = article.source if article else None
+        top_article_published = (
+            format_timespan(article.published_at) if article and article.published_at else None
+        )
         topics.append(
             NewsTopicInsight(
                 name=topic_labels.get(normalized, normalized),
                 change=f"{count}건",
                 sentiment=map_sentiment(avg_score),
+                topArticleId=top_article_id,
+                topArticleTitle=top_article_title,
+                topArticleUrl=top_article_url,
+                topArticleSource=top_article_source,
+                topArticlePublishedAt=top_article_published,
             )
         )
 
