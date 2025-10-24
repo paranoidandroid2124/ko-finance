@@ -198,6 +198,7 @@ def build_alerts(db: Session) -> list[DashboardAlert]:
             body=f"{filing.corp_name or filing.ticker or '기업'} {filing.report_name or filing.title or '공시'}",
             timestamp=format_timespan(base_time),
             tone="neutral",
+            targetUrl=f"/filings?filingId={filing.id}",
         )
         if base_time is None:
             base_time = datetime.now()
@@ -219,6 +220,7 @@ def build_alerts(db: Session) -> list[DashboardAlert]:
             body=body,
             timestamp=format_timespan(signal.published_at),
             tone=tone,
+            targetUrl=signal.url,
         )
         if base_time.tzinfo is None:
             base_time = base_time.replace(tzinfo=timezone.utc)
@@ -248,6 +250,7 @@ def build_news_items(db: Session) -> list[DashboardNewsItem]:
                 sentiment=sentiment_label,
                 source=news.source,
                 publishedAt=format_timespan(news.published_at),
+                url=news.url,
             )
         )
     return items

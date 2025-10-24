@@ -241,6 +241,9 @@ const toGuardrailMessage = (code: string, judgeReason?: string): string => {
   if (!code) {
     return '';
   }
+  if (code.startsWith('intent_filter')) {
+    return '';
+  }
   if (code.startsWith('missing_citations')) {
     const parts = code.split(':')[1];
     if (!parts) {
@@ -283,9 +286,20 @@ const deriveGuardrailTelemetry = (
   error: string | null | undefined,
   judgeReason?: string
 ): GuardrailTelemetry => {
-  const warningMessages = (warnings ?? [])
+  const rawWarnings = warnings ?? [];
+  const hasIntentWarning = rawWarnings.some((warning) => warning.startsWith('intent_filter'));
+  const warningMessages = rawWarnings
+    .filter((warning) => !warning.startsWith('intent_filter'))
     .map((warning) => toGuardrailMessage(warning, judgeReason))
     .filter((message) => Boolean(message));
+
+  if (error && error.startsWith('intent_filter')) {
+    return { status: 'ready', level: 'pass', message: '' };
+  }
+
+  if (!error && hasIntentWarning) {
+    return { status: 'ready', level: 'pass', message: '' };
+  }
 
   if (error) {
     if (error.startsWith('missing_citations')) {
@@ -336,7 +350,7 @@ const deriveGuardrailTelemetry = (
   return {
     status: 'ready',
     level: 'pass',
-    message: 'guardrail 경고 없음'
+    message: ''
   };
 };
 
@@ -388,7 +402,8 @@ export default function ChatPage() {
 
   const contextSummary = activeSession?.context?.summary;
   const isFilingContext = activeSession?.context?.type === 'filing';
-  const filingReferenceId = activeSession?.context?.referenceId;
+  const filingReferenceId =
+    activeSession?.context?.type === 'filing' ? activeSession.context.referenceId : undefined;
 
   const navigateToSession = useCallback(
     (sessionId: string) => {
@@ -454,7 +469,7 @@ export default function ChatPage() {
       } catch (error) {
         const message = error instanceof Error ? error.message : '새 세션을 생성하지 못했습니다.';
         showToast({
-          intent: 'danger',
+          intent: 'error',
           title: '세션 생성 실패',
           message
         });
@@ -715,7 +730,7 @@ export default function ChatPage() {
                 metrics: idleMetricsTelemetry
               });
               showToast({
-                intent: 'danger',
+                intent: 'error',
                 title: '스트리밍 오류',
                 message: errorMessage
               });
@@ -763,7 +778,7 @@ export default function ChatPage() {
           metrics: idleMetricsTelemetry
         });
         showToast({
-          intent: 'danger',
+          intent: 'error',
           title: '분석 실패',
           message: fallbackMessage
         });
@@ -862,7 +877,7 @@ export default function ChatPage() {
       } catch (error) {
         const message = error instanceof Error ? error.message : '메시지를 전송하지 못했습니다.';
         showToast({
-          intent: 'danger',
+          intent: 'error',
           title: '전송 실패',
           message
         });

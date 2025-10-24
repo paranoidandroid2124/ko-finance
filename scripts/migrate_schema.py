@@ -78,6 +78,88 @@ def _ensure_eval_runs_table() -> None:
         """
     )
 
+
+def _ensure_sector_tables() -> None:
+    logger.info("Ensuring sector metrics tables exist.")
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS sectors (
+            id SERIAL PRIMARY KEY,
+            slug TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        """
+    )
+    _execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_sectors_slug ON sectors(slug);
+        """
+    )
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS news_article_sectors (
+            article_id UUID NOT NULL REFERENCES news_signals(id) ON DELETE CASCADE,
+            sector_id INT NOT NULL REFERENCES sectors(id) ON DELETE CASCADE,
+            weight DOUBLE PRECISION DEFAULT 1.0,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (article_id, sector_id)
+        );
+        """
+    )
+    _execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_news_article_sectors_sector
+            ON news_article_sectors(sector_id);
+        """
+    )
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS sector_daily_metrics (
+            sector_id INT NOT NULL REFERENCES sectors(id) ON DELETE CASCADE,
+            date DATE NOT NULL,
+            sent_mean DOUBLE PRECISION,
+            sent_std DOUBLE PRECISION,
+            volume INTEGER,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (sector_id, date)
+        );
+        """
+    )
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS sector_window_metrics (
+            sector_id INT NOT NULL REFERENCES sectors(id) ON DELETE CASCADE,
+            window_days SMALLINT NOT NULL,
+            asof_date DATE NOT NULL,
+            sent_mean DOUBLE PRECISION,
+            vol_sum INTEGER,
+            sent_z DOUBLE PRECISION,
+            vol_z DOUBLE PRECISION,
+            delta_sent_7d DOUBLE PRECISION,
+            top_article_id UUID REFERENCES news_signals(id) ON DELETE SET NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (sector_id, window_days, asof_date)
+        );
+        """
+    )
+    _execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_sector_window_metrics_sector
+            ON sector_window_metrics(sector_id);
+        """
+    )
+    _execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_sector_window_metrics_top_article
+            ON sector_window_metrics(top_article_id);
+        """
+    )
+
 def _add_columns() -> None:
     logger.info("Ensuring filings table columns are up to date.")
     filings_columns = [
@@ -175,6 +257,7 @@ def _add_columns() -> None:
 
     _ensure_news_observations_table()
     _ensure_eval_runs_table()
+    _ensure_sector_tables()
 
 
 def migrate_schema() -> None:

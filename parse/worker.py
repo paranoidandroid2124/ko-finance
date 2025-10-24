@@ -24,6 +24,18 @@ app.conf.beat_schedule = {
         "args": (),
         "kwargs": {},
     },
+    "sector-daily-hourly": {
+        "task": "m2.aggregate_sector_daily",
+        "schedule": crontab(minute=10),
+        "args": (),
+        "kwargs": {"hours_back": 36},
+    },
+    "sector-window-hourly": {
+        "task": "m2.aggregate_sector_windows",
+        "schedule": crontab(minute=20),
+        "args": (),
+        "kwargs": {},
+    },
     "daily-filing-digest": {
         "task": "m4.send_filing_digest",
         "schedule": crontab(hour=18, minute=0, day_of_week="mon-fri"),

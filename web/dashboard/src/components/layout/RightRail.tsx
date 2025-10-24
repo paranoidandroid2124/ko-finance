@@ -28,6 +28,17 @@ export function RightRail() {
 
   const handleAlertClick = useCallback(
     (alert: DashboardAlert) => {
+      const target = alert.targetUrl?.trim();
+      if (target) {
+        if (/^https?:\/\//i.test(target)) {
+          window.open(target, "_blank", "noopener,noreferrer");
+          return;
+        }
+        if (pathname !== target) {
+          router.push(target);
+        }
+        return;
+      }
       if (alert.title.includes("뉴스")) {
         router.push("/news");
       } else if (alert.title.includes("공시")) {

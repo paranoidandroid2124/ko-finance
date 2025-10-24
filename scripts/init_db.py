@@ -7,6 +7,13 @@ add_root()
 from database import Base, engine
 from models.fact import ExtractedFact  # noqa: F401
 from models.filing import Filing  # noqa: F401
+from models.news import NewsObservation, NewsSignal  # noqa: F401
+from models.sector import (  # noqa: F401
+    NewsArticleSector,
+    Sector,
+    SectorDailyMetric,
+    SectorWindowMetric,
+)
 from models.summary import Summary  # noqa: F401
 from scripts.migrate_schema import migrate_schema
 

@@ -51,11 +51,23 @@ class NewsObservationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class NewsHeatmapArticle(BaseModel):
+    id: uuid.UUID
+    title: str
+    url: str
+    source: Optional[str] = None
+    sentiment: float | None = None
+    summary: Optional[str] = None
+    publishedAt: Optional[str] = None
+    publishedAtIso: Optional[str] = None
+
+
 class NewsSentimentHeatmapPoint(BaseModel):
     sector_index: int
     bucket_index: int
     sentiment: float | None = None
     article_count: int = 0
+    articles: List[NewsHeatmapArticle] = Field(default_factory=list)
 
 
 class NewsSentimentHeatmapResponse(BaseModel):
@@ -68,6 +80,11 @@ class NewsTopicInsight(BaseModel):
     name: str
     change: str
     sentiment: str
+    topArticleId: uuid.UUID | None = None
+    topArticleTitle: str | None = None
+    topArticleUrl: str | None = None
+    topArticleSource: str | None = None
+    topArticlePublishedAt: str | None = None
 
 
 class NewsListItem(BaseModel):
@@ -79,8 +96,11 @@ class NewsListItem(BaseModel):
     sector: str
     sentimentScore: Optional[float] = None
     publishedAtIso: str
+    url: str
+    summary: Optional[str] = None
 
 
 class NewsInsightsResponse(BaseModel):
     news: List[NewsListItem]
     topics: List[NewsTopicInsight]
+

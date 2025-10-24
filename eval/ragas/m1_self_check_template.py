@@ -7,10 +7,15 @@ Usage:
 
 import argparse
 import logging
-from typing import List, Dict
+from typing import Dict, List, Optional
 
-from ragas.metrics import answer_relevancy, faithfulness
-from ragas import evaluate
+try:
+    from ragas.metrics import answer_relevancy, faithfulness
+    from ragas import evaluate
+except ImportError:  # pragma: no cover - optional dependency
+    answer_relevancy = None  # type: ignore[assignment]
+    faithfulness = None  # type: ignore[assignment]
+    evaluate = None
 
 from services import vector_service
 from llm import llm_service
@@ -20,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 def run_ragas_evaluation(filing_id: str, question: str, top_k: int = 5):
+    if evaluate is None or answer_relevancy is None or faithfulness is None:  # pragma: no cover - runtime guard
+        logger.error("ragas 패키지가 설치되어 있지 않습니다. `pip install ragas` 후 다시 시도하세요.")
+        return None
+
     retrieval = vector_service.query_vector_store(
         query_text=question,
         filing_id=filing_id,
