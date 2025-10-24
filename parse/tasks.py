@@ -33,6 +33,7 @@ from schemas.news import NewsArticleCreate
 from services import chat_service, minio_service, vector_service
 from services.aggregation.sector_classifier import assign_article_to_sector
 from services.aggregation.sector_metrics import compute_sector_daily_metrics, compute_sector_window_metrics
+from services.aggregation.news_metrics import compute_news_window_metrics
 from services.notification_service import send_telegram_alert
 
 logger = logging.getLogger(__name__)
@@ -582,6 +583,8 @@ def aggregate_news_data(window_end_iso: Optional[str] = None) -> str:
             neutral_threshold=neutral_threshold,
         )
 
+        tickers = {signal.ticker for signal in signals if getattr(signal, "ticker", None)}
+
         record = (
             db.query(NewsObservation)
             .filter(NewsObservation.window_start == metrics["window_start"])
@@ -604,6 +607,26 @@ def aggregate_news_data(window_end_iso: Optional[str] = None) -> str:
         record.top_topics = metrics["top_topics"]
 
         db.commit()
+
+        try:
+            for window_days in (7, 30):
+                compute_news_window_metrics(
+                    db=db,
+                    window_end=metrics["window_end"],
+                    window_days=window_days,
+                    scope="global",
+                    ticker=None,
+                )
+                for ticker in tickers:
+                    compute_news_window_metrics(
+                        db=db,
+                        window_end=metrics["window_end"],
+                        window_days=window_days,
+                        scope="ticker",
+                        ticker=ticker,
+                    )
+        except Exception as exc:  # pragma: no cover - resilience
+            logger.warning("Failed to compute extended news window metrics: %s", exc, exc_info=True)
 
         if metrics["article_count"] > 0:
             message = _build_news_alert(metrics)

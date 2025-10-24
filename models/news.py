@@ -103,3 +103,49 @@ class NewsObservation(Base):
 
     def __repr__(self) -> str:
         return f"<NewsObservation(window_start={self.window_start}, articles={self.article_count})>"
+
+
+class NewsWindowAggregate(Base):
+    """Longer horizon aggregated metrics for dashboard signals."""
+
+    __tablename__ = "news_window_aggregates"
+    __table_args__ = (
+        UniqueConstraint(
+            "scope",
+            "ticker",
+            "window_days",
+            "computed_for",
+            name="uq_news_window_scope",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    scope = Column(String, nullable=False, default="global", comment="Aggregation scope label (global/sector/etc.)")
+    ticker = Column(String, index=True, nullable=True, comment="Optional ticker scope")
+    window_days = Column(Integer, nullable=False, comment="Number of days covered by the aggregation window")
+    computed_for = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        comment="Reference timestamp (window end) the metrics correspond to",
+    )
+
+    article_count = Column(Integer, nullable=False, default=0, comment="Articles counted in the window")
+    avg_sentiment = Column(Float, nullable=True, comment="Mean sentiment score across the window")
+    sentiment_z = Column(Float, nullable=True, comment="Z-score of sentiment relative to global baseline")
+
+    novelty_kl = Column(Float, nullable=True, comment="Topic novelty via KL divergence against trailing window")
+    topic_shift = Column(Float, nullable=True, comment="Topic drift measured by cosine distance")
+
+    domestic_ratio = Column(Float, nullable=True, comment="Share of domestic sources (0~1)")
+    domain_diversity = Column(Float, nullable=True, comment="Unique domain diversity ratio")
+
+    top_topics = Column(JSON, nullable=True, comment="Top topics distribution for the window")
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self) -> str:
+        return (
+            f"<NewsWindowAggregate(scope={self.scope}, ticker={self.ticker}, "
+            f"window_days={self.window_days}, computed_for={self.computed_for})>"
+        )

@@ -9,8 +9,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    entrypoint: []
-    command: uvicorn web.main:app --host 0.0.0.0 --port 8000 --reload
+    entrypoint:
+      - sh
+      - -c
+      - >
+        python -m scripts.init_db &&
+        python -m scripts.seed_bootstrap &&
+        uvicorn web.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app  # 소스코드 변경 시 핫 리로딩
     ports:
@@ -30,8 +35,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    entrypoint: []
-    command: watchmedo auto-restart --directory=./ --pattern=*.py --recursive -- celery -A parse.worker worker --loglevel=info
+    entrypoint:
+      - sh
+      - -c
+      - >
+        python -m scripts.init_db &&
+        watchmedo auto-restart --directory=./ --pattern=*.py --recursive -- celery -A parse.worker worker --loglevel=info
     volumes:
       - .:/app
     env_file:
@@ -103,8 +112,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    entrypoint: []
-    command: celery -A parse.worker beat -l info
+    entrypoint:
+      - sh
+      - -c
+      - >
+        python -m scripts.init_db &&
+        celery -A parse.worker beat -l info
     volumes:
       - .:/app
     env_file:

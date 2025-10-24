@@ -15,6 +15,7 @@ from ingest.dart_client import DartClient
 from ingest.file_downloader import fetch_viewer_bundle, parse_filing_bundle
 from models.filing import Filing, STATUS_PENDING
 from services import minio_service
+from services.dart_sync import sync_additional_disclosures
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -148,6 +149,16 @@ def seed_recent_filings(days_back: int = 1, db: Optional[Session] = None) -> int
                 new_filing.urls = urls
                 db.commit()
 
+            try:
+                sync_additional_disclosures(db=db, client=client, filing=new_filing)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.warning(
+                    "Failed to sync extended DART disclosures for %s: %s",
+                    receipt_no,
+                    exc,
+                    exc_info=True,
+                )
+
             _enqueue_filing_task(new_filing.id)
             created_count += 1
 
@@ -164,3 +175,13 @@ def seed_recent_filings(days_back: int = 1, db: Optional[Session] = None) -> int
 
 
 __all__ = ["seed_recent_filings"]
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Seed recent filings from DART.")
+    parser.add_argument("--days-back", type=int, default=1, help="How many days back to fetch filings for.")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO)
+    seed_recent_filings(days_back=max(1, args.days_back))

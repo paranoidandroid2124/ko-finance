@@ -5,9 +5,10 @@ from scripts._path import add_root
 add_root()
 
 from database import Base, engine
+from models.company import CorpMetric, FilingEvent, InsiderTransaction  # noqa: F401
 from models.fact import ExtractedFact  # noqa: F401
 from models.filing import Filing  # noqa: F401
-from models.news import NewsObservation, NewsSignal  # noqa: F401
+from models.news import NewsObservation, NewsSignal, NewsWindowAggregate  # noqa: F401
 from models.sector import (  # noqa: F401
     NewsArticleSector,
     Sector,
