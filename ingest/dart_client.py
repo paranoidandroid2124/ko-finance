@@ -8,7 +8,7 @@ import logging
 import os
 import zipfile
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 import xmltodict
@@ -158,6 +158,64 @@ class DartClient:
     @staticmethod
     def make_document_url(receipt_no: str) -> str:
         return f"{DOCUMENT_URL}?rcept_no={receipt_no}"
+
+    def _get_json(self, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Fetch JSON payload from a DART endpoint with shared error handling."""
+        payload: Dict[str, Any] = {}
+        merged_params = {"crtfc_key": self.api_key, **params}
+        url = f"{DART_API_BASE}/{endpoint}"
+        try:
+            with httpx.Client(timeout=60.0) as client:
+                response = client.get(url, params=merged_params)
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.error("DART request failed for %s: %s", endpoint, exc)
+            raise
+
+        try:
+            text = response.content.decode("utf-8")
+        except UnicodeDecodeError:
+            text = response.content.decode("euc-kr", errors="replace")
+
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            logger.error("Unable to decode DART JSON payload from %s", endpoint)
+            raise
+
+        status = payload.get("status")
+        if status and status != "000":
+            message = payload.get("message", "Unknown DART error")
+            logger.warning("DART endpoint %s returned status %s: %s", endpoint, status, message)
+        return payload
+
+    def fetch_single_account_summary(self, corp_code: str, bsns_year: int, reprt_code: str) -> Dict[str, Any]:
+        """Fetch DE002 (단일회사 주요계정) summary."""
+        return self._get_json(
+            "fnlttSinglAcnt.json",
+            {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code},
+        )
+
+    def fetch_single_account_detail(self, corp_code: str, bsns_year: int, reprt_code: str) -> Dict[str, Any]:
+        """Fetch DE003 (단일회사 전표준재무제표) data."""
+        return self._get_json(
+            "fnlttSinglAcntAll.json",
+            {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code},
+        )
+
+    def fetch_major_shareholders(self, corp_code: str, bsns_year: int, reprt_code: str) -> Dict[str, Any]:
+        """Fetch DE004 (임원·주요주주 현황) dataset."""
+        return self._get_json(
+            "majorstock.json",
+            {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code},
+        )
+
+    def fetch_major_issues(self, corp_code: str, bsns_year: int, reprt_code: Optional[str] = None) -> Dict[str, Any]:
+        """Fetch DE005 (주요사항 보고) dataset."""
+        params: Dict[str, Any] = {"corp_code": corp_code, "bsns_year": str(bsns_year)}
+        if reprt_code:
+            params["reprt_code"] = reprt_code
+        return self._get_json("majorissue.json", params)
 
 
 __all__ = ["DartClient"]

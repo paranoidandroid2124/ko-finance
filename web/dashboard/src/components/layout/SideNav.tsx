@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, FileText, MessageSquare, Newspaper, Settings, Shield } from "lucide-react";
+import { Building2, LayoutDashboard, FileText, MessageSquare, Newspaper, Settings, Shield } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { Route } from "next";
@@ -10,6 +10,7 @@ type NavItem = { href: Route; label: string; icon: typeof LayoutDashboard };
 const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/filings", label: "Filings", icon: FileText },
+  { href: "/company", label: "Companies", icon: Building2 },
   { href: "/news", label: "News", icon: Newspaper },
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/admin", label: "Admin", icon: Shield },

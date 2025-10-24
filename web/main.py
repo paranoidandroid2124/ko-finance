@@ -33,6 +33,7 @@ app.include_router(routers.news.router, prefix="/api/v1")
 app.include_router(routers.chat.router, prefix="/api/v1")
 app.include_router(routers.rag.router, prefix="/api/v1")
 app.include_router(routers.sectors.router, prefix="/api/v1")
+app.include_router(routers.company.router, prefix="/api/v1")
 
 if getattr(routers, "filing", None):
     app.include_router(routers.filing.router, prefix="/api/v1")
