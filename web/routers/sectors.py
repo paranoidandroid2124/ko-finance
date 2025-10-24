@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from typing import List, Optional
+import html
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
@@ -28,6 +30,7 @@ from services.aggregation.sector_metrics import list_top_articles_for_sector
 router = APIRouter(prefix="/sectors", tags=["Sectors"])
 
 KST = ZoneInfo("Asia/Seoul")
+_SUMMARY_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def _to_sector_ref(sector: Sector) -> SectorRef:
@@ -63,7 +66,7 @@ def list_sector_signals(
             top_article = SectorTopArticle(
                 id=article.id,
                 title=article.headline,
-                summary=article.summary,
+                summary=_sanitize_summary(article.summary),
                 url=article.url,
                 targetUrl=article.url,
                 tone=article.sentiment,
@@ -162,7 +165,7 @@ def get_sector_top_articles(
         SectorTopArticle(
             id=signal.id,
             title=signal.headline,
-            summary=signal.summary,
+            summary=_sanitize_summary(signal.summary),
             url=signal.url,
             targetUrl=signal.url,
             tone=signal.sentiment,
@@ -172,3 +175,11 @@ def get_sector_top_articles(
     ]
 
     return SectorTopArticlesResponse(sector=_to_sector_ref(sector), items=items)
+def _sanitize_summary(summary: Optional[str]) -> Optional[str]:
+    if not summary:
+        return None
+    text = _SUMMARY_TAG_RE.sub(" ", summary)
+    text = html.unescape(text)
+    text = re.sub(r"\s+", " ", text)
+    cleaned = text.strip()
+    return cleaned or None

@@ -14,6 +14,9 @@ export function SectorDetailDrawer({ open, point, onClose }: SectorDetailDrawerP
   const sectorId = point?.sector.id ?? null;
   const { data, isLoading, isError, refetch } = useSectorTopArticles(sectorId, 72, 3);
 
+  const sanitizeSummary = (summary: string): string =>
+    summary.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim();
+
   useEffect(() => {
     if (open && sectorId) {
       void refetch();
@@ -63,17 +66,17 @@ export function SectorDetailDrawer({ open, point, onClose }: SectorDetailDrawerP
             <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
               72시간 기준 주요 기사. 점수를 높인 순서대로 정렬되어 있습니다.
             </p>
-            {isLoading ? (
-              <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">기사를 불러오는 중...</p>
-            ) : isError ? (
-              <p className="text-xs text-destructive">주요 기사를 가져오지 못했습니다.</p>
-            ) : (
-              <ul className="space-y-3">
-                {data?.items.length ? (
-                  data.items.map((item) => (
-                    <li key={item.id} className="rounded-lg border border-border-light/70 p-3 dark:border-border-dark/70">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
+                {isLoading ? (
+                  <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">기사를 불러오는 중...</p>
+                ) : isError ? (
+                  <p className="text-xs text-destructive">주요 기사를 가져오지 못했습니다.</p>
+                ) : (
+                  <ul className="space-y-3">
+                    {data?.items.length ? (
+                      data.items.map((item) => (
+                        <li key={item.id} className="rounded-lg border border-border-light/70 p-3 dark:border-border-dark/70">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
                           <button
                             type="button"
                             onClick={() => window.open(item.targetUrl || item.url, "_blank", "noopener,noreferrer")}
@@ -91,12 +94,17 @@ export function SectorDetailDrawer({ open, point, onClose }: SectorDetailDrawerP
                             </p>
                           ) : null}
                         </div>
-                      </div>
-                    </li>
-                  ))
-                ) : (
-                  <li className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">표시할 기사가 없습니다.</li>
-                )}
+                          </div>
+                          {item.summary ? (
+                            <p className="mt-2 text-xs leading-relaxed text-text-secondaryLight dark:text-text-secondaryDark">
+                              {sanitizeSummary(item.summary)}
+                            </p>
+                          ) : null}
+                        </li>
+                      ))
+                    ) : (
+                      <li className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">표시할 기사가 없습니다.</li>
+                    )}
               </ul>
             )}
           </div>
