@@ -491,6 +491,7 @@ def process_news_article(article_payload: Any) -> str:
             evidence=evidence,
         )
         db.add(news_signal)
+        db.flush()
         try:
             assign_article_to_sector(db, news_signal)
         except Exception as exc:

@@ -17,7 +17,8 @@ export function RightRail() {
   const activeSession = useChatStore(selectActiveSession);
 
   const { data, isLoading, isError } = useDashboardOverview();
-  const alerts = data?.alerts ?? [];
+  const rawAlerts = data?.alerts;
+  const alerts = useMemo(() => rawAlerts ?? [], [rawAlerts]);
 
   const topAlerts = useMemo(() => alerts.slice(0, MAX_ALERT_ITEMS), [alerts]);
 

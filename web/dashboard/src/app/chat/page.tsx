@@ -68,21 +68,7 @@ type RagApiResponse = {
   judge_reason?: string | null;
 };
 
-type RagStreamFinalPayload = RagApiResponse & {
-  trace_id?: string | null;
-  question?: string;
-  filing_id?: string;
-};
-
-type RagStreamTokenEvent = { type: 'token'; text?: string };
-type RagStreamFinalEvent = { type: 'final'; payload: RagStreamFinalPayload };
-type RagStreamErrorEvent = { type: 'error'; message?: string };
-type RagStreamEvent = RagStreamTokenEvent | RagStreamFinalEvent | RagStreamErrorEvent;
-
-
 const ASSISTANT_LOADING_RESPONSE = '답변을 준비하고 있어요. 잠시만 기다려주세요.';
-const ASSISTANT_UNAVAILABLE_RESPONSE =
-  '현재는 공시 기반 질문에 대해 답변합니다. 공시 상세 화면에서 "질문하기" 버튼을 사용해 새 세션을 시작해주세요.';
 const ASSISTANT_ERROR_RESPONSE =
   '답변을 생성하는 중 문제가 발생했습니다. 잠시 후 다시 시도하거나 질문을 다시 작성해주세요.';
 
@@ -437,7 +423,7 @@ export default function ChatPage() {
     } else if (activeSessionId) {
       void setActiveSession(null);
     }
-  }, [querySessionId, sessions, activeSessionId, setActiveSession, router, pathname]);
+  }, [querySessionId, sessions, activeSessionId, setActiveSession, router, pathname, isHydrated]);
 
   useEffect(() => {
     if (persistenceError) {

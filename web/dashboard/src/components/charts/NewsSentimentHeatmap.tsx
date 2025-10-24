@@ -33,9 +33,13 @@ export function NewsSentimentHeatmap() {
     setSelectedCell(null);
   }, [windowMinutes, selectedSectors]);
 
-  const sectors = data?.sectors ?? [];
-  const buckets = data?.buckets ?? [];
-  const points = data?.points ?? [];
+  const rawSectors = data?.sectors;
+  const rawBuckets = data?.buckets;
+  const rawPoints = data?.points;
+
+  const sectors = useMemo(() => rawSectors ?? [], [rawSectors]);
+  const buckets = useMemo(() => rawBuckets ?? [], [rawBuckets]);
+  const points = useMemo(() => rawPoints ?? [], [rawPoints]);
 
   const filteredHeatmap = useMemo(() => {
     if (!points.length || !sectors.length) {

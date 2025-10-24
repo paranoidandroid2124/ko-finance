@@ -1,4 +1,13 @@
-﻿import { useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+
+type FilingListParams = {
+  days?: number;
+  limit?: number;
+  ticker?: string;
+  corpCode?: string;
+  startDate?: string;
+  endDate?: string;
+};
 
 export type FilingSentiment = "positive" | "neutral" | "negative";
 
@@ -126,16 +135,16 @@ const resolveApiBase = () => {
   if (!base) {
     return "";
   }
-  return base.endsWith("/") ? base.slice(0, -1) : base;
+  return base.replace(/\/+$/, "");
 };
 
-const formatDateTime = (value?: string | null) => {
-  if (!value) {
-    return "알 수 없음";
+const formatDateTime = (isoDate?: string | null) => {
+  if (!isoDate) {
+    return "날짜 미상";
   }
-  const parsed = new Date(value);
+  const parsed = new Date(isoDate);
   if (Number.isNaN(parsed.getTime())) {
-    return value;
+    return "날짜 미상";
   }
   return new Intl.DateTimeFormat("ko-KR", {
     year: "numeric",
@@ -230,9 +239,31 @@ const toDetail = (detail: ApiFilingDetail): FilingDetail => {
   };
 };
 
-const fetchFilings = async (): Promise<FilingListItem[]> => {
+const buildQueryString = (params: FilingListParams) => {
+  const search = new URLSearchParams();
+  search.set("limit", String(params.limit ?? 100));
+  if (params.days !== undefined) {
+    search.set("days", String(params.days));
+  }
+  if (params.ticker) {
+    search.set("ticker", params.ticker);
+  }
+  if (params.corpCode) {
+    search.set("corp_code", params.corpCode);
+  }
+  if (params.startDate) {
+    search.set("start_date", params.startDate);
+  }
+  if (params.endDate) {
+    search.set("end_date", params.endDate);
+  }
+  return search.toString();
+};
+
+const fetchFilings = async (params: FilingListParams): Promise<FilingListItem[]> => {
   const baseUrl = resolveApiBase();
-  const response = await fetch(`${baseUrl}/api/v1/filings/?limit=50`);
+  const query = buildQueryString(params);
+  const response = await fetch(`${baseUrl}/api/v1/filings/?${query}`);
   if (!response.ok) {
     throw new Error("공시 목록을 불러오지 못했습니다.");
   }
@@ -250,16 +281,16 @@ const fetchFilingDetail = async (filingId: string): Promise<FilingDetail> => {
   return toDetail(payload);
 };
 
-export function useFilings() {
+export function useFilings(params: FilingListParams = {}) {
   return useQuery({
-    queryKey: ["filings"],
-    queryFn: fetchFilings
+    queryKey: ["filings", params],
+    queryFn: () => fetchFilings(params)
   });
 }
 
 export function useFilingDetail(filingId?: string) {
   return useQuery({
-    queryKey: ["filings", filingId],
+    queryKey: ["filing-detail", filingId],
     queryFn: () => fetchFilingDetail(filingId as string),
     enabled: Boolean(filingId)
   });

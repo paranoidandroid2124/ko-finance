@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import fitz  # PyMuPDF
 
@@ -14,7 +14,9 @@ from parse.chunk_utils import build_chunk, normalize_text
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-MIN_PARAGRAPH_LENGTH = 50
+MIN_PARAGRAPH_LENGTH = 25
+VERTICAL_GAP_TOLERANCE = 24.0
+COLUMN_ALIGNMENT_TOLERANCE = 40.0
 FOOTNOTE_PATTERN = re.compile(r"^(\(?\d+[\)\.]|\[\d+\]|[*†‡])\s+", re.IGNORECASE)
 FOOTNOTE_Y_RATIO = 0.8
 
@@ -60,11 +62,68 @@ def _sanitize_rect(rect: Any) -> List[float]:
 
 def _table_to_text(table_data: List[List[str]]) -> str:
     lines: List[str] = []
+    if not table_data:
+        return ""
+
+    header: Optional[List[str]] = None
     for row in table_data:
         sanitized = [normalize_text(cell) if isinstance(cell, str) else "" for cell in row]
-        if any(sanitized):
-            lines.append(" \t ".join(sanitized))
+        if not any(sanitized):
+            continue
+
+        if header is None:
+            header = sanitized
+            continue
+
+        row_entries: List[str] = []
+        for idx, value in enumerate(sanitized):
+            if not value:
+                continue
+            key = ""
+            if header and idx < len(header) and header[idx].strip():
+                key = header[idx].strip()
+            elif header is None:
+                key = f"항목{idx + 1}"
+            else:
+                key = f"열{idx + 1}"
+            row_entries.append(f"{key}: {value}")
+
+        if not row_entries:
+            row_entries.append(" ".join(filter(None, sanitized)))
+        lines.append(" · ".join(row_entries))
+
     return "\n".join(lines)
+
+
+def _build_block_info(block: Sequence[Any]) -> Dict[str, Any]:
+    x0, y0, x1, y1, raw_text = block[:5]
+    text = raw_text.strip()
+    if not text:
+        return {"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1), "body_lines": [], "footnote_lines": [], "block_index": block[5] if len(block) > 5 else None}
+
+    lines = [normalize_text(line) for line in text.splitlines() if line.strip()]
+    footnote_lines = [line for line in lines if FOOTNOTE_PATTERN.match(line)]
+    body_lines = [line for line in lines if line not in footnote_lines]
+
+    return {
+        "x0": float(x0),
+        "y0": float(y0),
+        "x1": float(x1),
+        "y1": float(y1),
+        "body_lines": body_lines,
+        "footnote_lines": footnote_lines,
+        "block_index": block[5] if len(block) > 5 else None,
+    }
+
+
+def _should_merge(prev_block: Dict[str, Any], next_block: Dict[str, Any]) -> bool:
+    if not prev_block["body_lines"] or not next_block["body_lines"]:
+        return False
+    vertical_gap = next_block["y0"] - prev_block["y1"]
+    if vertical_gap < 0 or vertical_gap > VERTICAL_GAP_TOLERANCE:
+        return False
+    horizontal_shift = abs(prev_block["x0"] - next_block["x0"])
+    return horizontal_shift <= COLUMN_ALIGNMENT_TOLERANCE
 
 
 def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
@@ -85,34 +144,123 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
             page_height = float(page.rect.height or 1.0)
             page_width = float(page.rect.width or 1.0)
 
-            for block in page.get_text("blocks"):
-                x0, y0, x1, y1, raw_text = block[:5]
-                block_text = raw_text.strip()
-                if not block_text:
-                    continue
+            block_infos = [_build_block_info(block) for block in page.get_text("blocks")]
 
-                lines = [normalize_text(line) for line in block_text.splitlines() if line.strip()]
-                footnote_lines = [line for line in lines if FOOTNOTE_PATTERN.match(line)]
-                body_lines = [line for line in lines if line not in footnote_lines]
+            pending_lines: List[str] = []
+            pending_blocks: List[Any] = []
+            pending_bbox = [float("inf"), float("inf"), 0.0, 0.0]
+            current_span: Optional[Dict[str, Any]] = None
 
-                base_metadata = {"block_index": block[5] if len(block) > 5 else None}
+            def _reset_pending() -> None:
+                nonlocal pending_lines, pending_blocks, pending_bbox, current_span
+                pending_lines = []
+                pending_blocks = []
+                pending_bbox = [float("inf"), float("inf"), 0.0, 0.0]
+                current_span = None
+
+            def _flush_pending() -> None:
+                nonlocal chunk_counter, pending_lines, pending_blocks, pending_bbox, current_span
+                if not pending_lines:
+                    return
+                content = " ".join(pending_lines).strip()
+                if not content:
+                    _reset_pending()
+                    return
+
+                base_meta: Dict[str, Any] = {
+                    "block_indices": [idx for idx in pending_blocks if idx is not None],
+                    "approx_char_length": len(content),
+                }
                 metadata = _enrich_metadata(
-                    float(x0),
-                    float(y0),
-                    float(x1),
-                    float(y1),
+                    pending_bbox[0],
+                    pending_bbox[1],
+                    pending_bbox[2],
+                    pending_bbox[3],
                     page_width=page_width,
                     page_height=page_height,
-                    base=base_metadata,
+                    base=base_meta,
                 )
+                chunks.append(
+                    build_chunk(
+                        f"pdf-text-{page_number}-{chunk_counter}",
+                        chunk_type="text",
+                        content=content,
+                        section="body",
+                        source="pdf",
+                        page_number=page_number,
+                        metadata=metadata,
+                    )
+                )
+                chunk_counter += 1
+                _reset_pending()
 
-                if body_lines and sum(len(line) for line in body_lines) >= MIN_PARAGRAPH_LENGTH:
+            for info in block_infos:
+                has_body = bool(info["body_lines"])
+                has_footnote = bool(info["footnote_lines"])
+
+                if has_body:
+                    if not pending_lines:
+                        pending_lines = list(info["body_lines"])
+                        pending_blocks = [info["block_index"]]
+                        pending_bbox = [info["x0"], info["y0"], info["x1"], info["y1"]]
+                        current_span = {
+                            "x0": info["x0"],
+                            "y0": info["y0"],
+                            "x1": info["x1"],
+                            "y1": info["y1"],
+                            "body_lines": list(info["body_lines"]),
+                        }
+                    else:
+                        should_merge = current_span is not None and _should_merge(current_span, info)
+                        pending_text_length = sum(len(line) for line in pending_lines)
+                        if should_merge or pending_text_length < MIN_PARAGRAPH_LENGTH:
+                            pending_lines.extend(info["body_lines"])
+                            pending_blocks.append(info["block_index"])
+                            pending_bbox[0] = min(pending_bbox[0], info["x0"])
+                            pending_bbox[1] = min(pending_bbox[1], info["y0"])
+                            pending_bbox[2] = max(pending_bbox[2], info["x1"])
+                            pending_bbox[3] = max(pending_bbox[3], info["y1"])
+                            current_span = {
+                                "x0": min(current_span["x0"], info["x0"]) if current_span else info["x0"],
+                                "y0": min(current_span["y0"], info["y0"]) if current_span else info["y0"],
+                                "x1": max(current_span["x1"], info["x1"]) if current_span else info["x1"],
+                                "y1": max(current_span["y1"], info["y1"]) if current_span else info["y1"],
+                                "body_lines": list(pending_lines),
+                            }
+                        else:
+                            _flush_pending()
+                            pending_lines = list(info["body_lines"])
+                            pending_blocks = [info["block_index"]]
+                            pending_bbox = [info["x0"], info["y0"], info["x1"], info["y1"]]
+                            current_span = {
+                                "x0": info["x0"],
+                                "y0": info["y0"],
+                                "x1": info["x1"],
+                                "y1": info["y1"],
+                                "body_lines": list(info["body_lines"]),
+                            }
+                else:
+                    _flush_pending()
+
+                if has_footnote and (info["y0"] / page_height) >= FOOTNOTE_Y_RATIO:
+                    metadata = _enrich_metadata(
+                        info["x0"],
+                        info["y0"],
+                        info["x1"],
+                        info["y1"],
+                        page_width=page_width,
+                        page_height=page_height,
+                        base={
+                            "block_index": info["block_index"],
+                            "footnote_lines": info["footnote_lines"],
+                        },
+                    )
                     chunks.append(
                         build_chunk(
-                            f"pdf-text-{page_number}-{chunk_counter}",
-                            chunk_type="text",
-                            content=" ".join(body_lines),
-                            section="body",
+                            f"pdf-footnote-{page_number}-{chunk_counter}",
+                            chunk_type="footnote",
+                            content=" ".join(info["footnote_lines"]),
+                            section="footnote",
                             source="pdf",
                             page_number=page_number,
                             metadata=metadata,
@@ -120,19 +268,7 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
                     )
                     chunk_counter += 1
 
-                if footnote_lines and (y0 / page_height) >= FOOTNOTE_Y_RATIO:
-                    chunks.append(
-                        build_chunk(
-                            f"pdf-footnote-{page_number}-{chunk_counter}",
-                            chunk_type="footnote",
-                            content=" ".join(footnote_lines),
-                            section="footnote",
-                            source="pdf",
-                            page_number=page_number,
-                            metadata={**metadata, "footnote_lines": footnote_lines},
-                        )
-                    )
-                    chunk_counter += 1
+            _flush_pending()
 
             tables = page.find_tables()
             for table_index, table in enumerate(tables, start=1):

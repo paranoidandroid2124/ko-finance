@@ -23,7 +23,8 @@ export default function DashboardPage() {
   const alerts = data?.alerts ?? [];
   const newsItems = data?.news ?? [];
   const { data: sectorSignals, isLoading: isSectorLoading } = useSectorSignals();
-  const sectorPoints = sectorSignals?.points ?? [];
+  const rawSectorPoints = sectorSignals?.points;
+  const sectorPoints = useMemo(() => rawSectorPoints ?? [], [rawSectorPoints]);
   const dashboardSparkPoints = useMemo(() => {
     const sorted = [...sectorPoints].sort((a, b) => (b.sentimentZ ?? 0) - (a.sentimentZ ?? 0));
     const unique = new Map<number, (typeof sectorPoints)[number]>();
