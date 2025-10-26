@@ -98,3 +98,8 @@
 - Next.js 프로젝트 초기화 (`web/dashboard`) 및 스타일 시스템 반영
 - Storybook 세팅 후 핵심 컴포넌트 개발 착수
 
+
+## Phase 0 References
+- Motion tokens: design/motion_tokens.md (timings, easings, lock interactions)
+- Deliverables tracker: design/phase0_deliverables.md
+

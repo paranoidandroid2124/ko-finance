@@ -89,6 +89,8 @@ export type NewsWindowInsight = {
   domesticRatio?: number | null;
   domainDiversity?: number | null;
   topTopics: TopicWeight[];
+  sourceReliability?: number | null;
+  deduplicationClusterId?: string | null;
 };
 
 export type CompanySnapshot = {
@@ -149,6 +151,8 @@ const mapNewsInsights = (records: unknown): NewsWindowInsight[] => {
         domesticRatio: toNumberOrNull(raw.domestic_ratio ?? raw.domesticRatio),
         domainDiversity: toNumberOrNull(raw.domain_diversity ?? raw.domainDiversity),
         topTopics: mapTopicWeights(raw.top_topics ?? raw.topTopics),
+        sourceReliability: toNumberOrNull(raw.source_reliability ?? raw.sourceReliability),
+        deduplicationClusterId: toStringOrNull(raw.deduplication_cluster_id ?? raw.deduplicationClusterId),
       };
     })
     .filter((entry): entry is NewsWindowInsight => Boolean(entry));

@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import { nanoid } from 'nanoid';
+import { CHAT_STRINGS } from '@/i18n/ko';
 import {
   ApiChatMessage,
   ApiChatSession,
@@ -175,6 +176,36 @@ type ChatStoreActions = {
 
 type Store = ChatStoreState & ChatStoreActions;
 
+const MAX_SESSIONS = 10;
+
+const createGreetingMessage = (sessionId: string): ChatMessage => ({
+  id: `greeting-${sessionId}`,
+  role: 'assistant',
+  content: CHAT_STRINGS.greeting,
+  timestamp: new Date().toISOString(),
+  meta: {
+    status: 'ready'
+  }
+});
+
+const ensureGreeting = (session: ChatSession): ChatSession => {
+  if (session.messages.length > 0) {
+    return session;
+  }
+  return {
+    ...session,
+    messages: [createGreetingMessage(session.id)],
+    messagesLoaded: session.messagesLoaded
+  };
+};
+
+const enforceSessionLimit = (sessions: ChatSession[]): ChatSession[] => {
+  if (sessions.length <= MAX_SESSIONS) {
+    return sessions;
+  }
+  return sessions.slice(0, MAX_SESSIONS);
+};
+
 const guardrailDefault: GuardrailTelemetry = { status: 'idle' };
 const metricsDefault: MetricsTelemetry = { status: 'idle', items: [] };
 
@@ -275,9 +306,9 @@ export const useChatStore = create<Store>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const response = await fetchSessions();
-      const mapped = response.sessions.map(mapSession);
+    const mapped = response.sessions.map(mapSession).map(ensureGreeting);
       set((state) => ({
-        sessions: mapped,
+        sessions: enforceSessionLimit(mapped),
         activeSessionId: state.activeSessionId ?? mapped[0]?.id ?? null,
         hydrated: true,
         loading: false,
@@ -294,7 +325,18 @@ export const useChatStore = create<Store>((set, get) => ({
       return;
     }
     const target = get().sessions.find((session) => session.id === id);
-    if (!target || target.messagesLoaded) {
+    if (!target) {
+      return;
+    }
+    const hasLocalMessages = Array.isArray(target.messages) && target.messages.length > 0;
+    if (target.messagesLoaded || hasLocalMessages) {
+      if (!target.messagesLoaded) {
+        set((state) => ({
+          sessions: state.sessions.map((session) =>
+            session.id === id ? { ...session, messagesLoaded: true } : session,
+          ),
+        }));
+      }
       return;
     }
     await get().loadSessionMessages(id);
@@ -308,9 +350,9 @@ export const useChatStore = create<Store>((set, get) => ({
       context_type: contextType,
       context_id: contextId,
     });
-    const mapped = mapSession(response);
+    const mapped = ensureGreeting(mapSession(response));
     set((state) => ({
-      sessions: upsertSession(state.sessions, mapped),
+      sessions: enforceSessionLimit(upsertSession(state.sessions, mapped)),
       activeSessionId: mapped.id,
     }));
     return mapped.id;
@@ -332,25 +374,30 @@ export const useChatStore = create<Store>((set, get) => ({
       meta: { status: 'ready' },
     });
 
-    const mappedMessage = mapMessage(initialMessage);
+    const mappedMessage = mapMessage({
+      ...initialMessage,
+      content: initialMessage.content ?? CHAT_STRINGS.newSessionGreeting(title),
+    });
     set((state) => ({
-      sessions: state.sessions.map((session) =>
-        session.id === sessionId
-          ? {
-              ...session,
-              context: { type: 'filing', referenceId: filingId, summary },
-              messages: [mappedMessage, ...session.messages],
-              messagesLoaded: false,
-              evidence: {
-                status: 'idle',
-                items: [],
-                activeId: undefined,
-                confidence: undefined,
-                documentTitle: title,
-                documentUrl: viewerUrl ?? downloadUrl,
-              },
-            }
-          : session,
+      sessions: enforceSessionLimit(
+        state.sessions.map((session) =>
+          session.id === sessionId
+            ? {
+                ...session,
+                context: { type: 'filing', referenceId: filingId, summary },
+                messages: [mappedMessage, ...session.messages],
+                messagesLoaded: false,
+                evidence: {
+                  status: 'idle',
+                  items: [],
+                  activeId: undefined,
+                  confidence: undefined,
+                  documentTitle: title,
+                  documentUrl: viewerUrl ?? downloadUrl,
+                },
+              }
+            : session,
+        ),
       ),
       activeSessionId: sessionId,
     }));

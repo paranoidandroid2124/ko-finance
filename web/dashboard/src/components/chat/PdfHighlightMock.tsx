@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useMemo } from "react";
+import { PDF_STRINGS } from "@/i18n/ko";
 
 export type PdfHighlightRange = {
   id: string;
@@ -21,14 +22,6 @@ type PdfHighlightMockProps = {
   status: "idle" | "loading" | "ready" | "error";
   onFocusHighlight?: (evidenceId: string) => void;
 };
-
-const STATUS_LABEL: Record<PdfHighlightMockProps["status"], string> = {
-  idle: "표시할 하이라이트가 없습니다.",
-  loading: "PDF 하이라이트를 불러오는 중입니다.",
-  ready: "하이라이트가 준비되었습니다.",
-  error: "PDF 하이라이트를 불러오지 못했습니다."
-};
-
 
 const clampPercent = (value: number) => Math.min(100, Math.max(0, value));
 
@@ -81,6 +74,14 @@ export function PdfHighlightMock({
   const showError = status === "error";
   const isEmpty = (status === "idle" || status === "ready") && highlightRanges.length === 0;
   const showPdfPreview = Boolean(pdfUrl);
+  const headerHint =
+    status === "loading"
+      ? PDF_STRINGS.loading
+      : showError
+      ? PDF_STRINGS.errorHint
+      : isEmpty
+      ? PDF_STRINGS.emptyHint
+      : "";
 
   const handleOpenPdf = () => {
     if (!pdfUrl) {
@@ -102,7 +103,9 @@ export function PdfHighlightMock({
       <header className="flex items-center justify-between gap-3">
         <div>
           <p className="text-[11px] font-semibold uppercase text-primary">PDF 하이라이트</p>
-          <p className="text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">{STATUS_LABEL[status]}</p>
+          {headerHint ? (
+            <p className="text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">{headerHint}</p>
+          ) : null}
         </div>
         <button
           type="button"
@@ -147,13 +150,13 @@ export function PdfHighlightMock({
 
       {showError ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-4 text-text-secondaryLight dark:border-destructive/50 dark:bg-destructive/10 dark:text-text-secondaryDark">
-          PDF 하이라이트를 가져오는 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.
+          {PDF_STRINGS.error}
         </div>
       ) : null}
 
       {isEmpty ? (
         <div className="rounded-lg border border-dashed border-border-light px-3 py-6 text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
-          표시할 PDF 하이라이트가 없습니다. 근거 문서를 선택하거나 다른 질문을 시도해 보세요.
+          {PDF_STRINGS.empty}
         </div>
       ) : null}
 
@@ -191,7 +194,7 @@ export function PdfHighlightMock({
                           handleFocus(range);
                         }
                       }}
-                      aria-label={`${range.summary ?? "하이라이트"} 하이라이트 영역`}
+                      aria-label={PDF_STRINGS.overlayLabel}
                       aria-pressed={isActive}
                     >
                       <span className="font-semibold">{range.summary ?? "하이라이트"}</span>
@@ -208,15 +211,27 @@ export function PdfHighlightMock({
                   const isActive = activeRangeId ? derivedId === activeRangeId : false;
                   return (
                     <li key={`summary-${derivedId}`}>
-                      <button
-                        type="button"
-                        className={`w-full text-left underline-offset-2 ${
-                          isActive ? "text-primary underline" : "text-text-secondaryLight hover:text-primary hover:underline dark:text-text-secondaryDark"
-                        }`}
-                        onClick={() => handleFocus(range)}
-                      >
-                        {range.summary ?? "하이라이트"} (위치 {Math.round(range.topPct)}%)
-                      </button>
+                      {(() => {
+                        const label = PDF_STRINGS.listButton(
+                          range.summary ?? "하이라이트",
+                          Math.round(range.topPct),
+                          pageEntry.page
+                        );
+                        return (
+                          <button
+                            type="button"
+                            className={`w-full text-left underline-offset-2 ${
+                              isActive
+                                ? "text-primary underline"
+                                : "text-text-secondaryLight hover:text-primary hover:underline dark:text-text-secondaryDark"
+                            }`}
+                            onClick={() => handleFocus(range)}
+                            aria-label={label}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })()}
                     </li>
                   );
                 })}
