@@ -1,8 +1,9 @@
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatPage from "@/app/chat/page";
 import { useChatStore, type ChatSession } from "@/store/chatStore";
+import { renderWithProviders } from "./testUtils";
 
 const searchParamsState = { value: "" };
 const replaceMock = vi.fn();
@@ -66,7 +67,7 @@ vi.mock("@/components/chat/ChatContextPanel", () => ({
 }));
 
 const resetStore = () => {
-  useChatStore.setState({ sessions: [], activeSessionId: null });
+  useChatStore.setState({ sessions: [], activeSessionId: null, hydrated: true, loading: false, error: null });
 };
 
 const setSearchParams = (value: string) => {
@@ -105,26 +106,30 @@ describe("ChatPage", () => {
     useChatStore.setState({ sessions: [existingSession], activeSessionId: null });
     setSearchParams("session=chat-100");
 
-    render(<ChatPage />);
+    renderWithProviders(<ChatPage />);
 
     expect(screen.getByText("existing message")).toBeInTheDocument();
   });
 
   // 사용자 입력: 새 세션 버튼을 누르면 createSession이 호출되고 URL 쿼리가 업데이트된다.
-  it("creates a new session from history control", () => {
-    render(<ChatPage />);
+  it("creates a new session from history control", async () => {
+    renderWithProviders(<ChatPage />);
 
     fireEvent.click(screen.getByText("new-session"));
 
-    expect(useChatStore.getState().sessions.length).toBeGreaterThan(0);
-    expect(pushMock).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(useChatStore.getState().sessions.length).toBeGreaterThan(0);
+    });
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalled();
+    });
     const targetPath = pushMock.mock.calls.at(-1)?.[0];
     expect(targetPath).toContain(`${PATHNAME}?`);
     expect(targetPath).toContain("session=");
   });
 
   // 정상 흐름: 메시지를 전송하면 사용자/어시스턴트 메시지가 세션에 누적된다.
-  it("appends user and assistant messages on send", () => {
+  it("appends user and assistant messages on send", async () => {
     const session: ChatSession = {
       id: "chat-200",
       title: "세션B",
@@ -135,13 +140,16 @@ describe("ChatPage", () => {
 
     useChatStore.setState({ sessions: [session], activeSessionId: "chat-200" });
     setSearchParams("session=chat-200");
-    render(<ChatPage />);
+    renderWithProviders(<ChatPage />);
 
     fireEvent.click(screen.getByText("send-message"));
 
-    const updated = useChatStore.getState().sessions.find((item) => item.id === "chat-200");
+    await waitFor(() => {
+      const updated = useChatStore.getState().sessions.find((item) => item.id === "chat-200");
+      expect(updated?.messages.filter((message) => message.role === "user").length).toBe(1);
+      expect(updated?.messages.filter((message) => message.role === "assistant").length).toBeGreaterThanOrEqual(1);
+    });
 
-    expect(updated?.messages.filter((message) => message.role === "user").length).toBe(1);
-    expect(updated?.messages.filter((message) => message.role === "assistant").length).toBeGreaterThanOrEqual(1);
+    expect(pushMock).not.toHaveBeenCalledWith(expect.stringContaining("undefined"));
   });
 });

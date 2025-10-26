@@ -1,0 +1,64 @@
+:root {
+  --motion-fast-duration: 120ms;
+  --motion-fast-ease: cubic-bezier(0.2, 0, 0.38, 0.9);
+
+  --motion-medium-duration: 220ms;
+  --motion-medium-ease: cubic-bezier(0.2, 0, 0, 1);
+
+  --motion-slow-duration: 320ms;
+  --motion-slow-ease: cubic-bezier(0.33, 1, 0.68, 1);
+
+  --motion-delayed-duration: 500ms;
+  --motion-delayed-ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+
+  --motion-tactile-duration: 80ms;
+  --motion-tactile-ease: cubic-bezier(0.4, 0, 1, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast-duration: 80ms;
+    --motion-medium-duration: 120ms;
+    --motion-slow-duration: 160ms;
+    --motion-delayed-duration: 240ms;
+    --motion-tactile-duration: 60ms;
+  }
+}
+
+.motion-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.6) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  background-size: 200% 100%;
+  animation: motion-shimmer var(--motion-medium-duration) var(--motion-medium-ease)
+    infinite;
+}
+
+@keyframes motion-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.motion-lock-shake {
+  animation: motion-lock-shake var(--motion-tactile-duration) var(--motion-tactile-ease);
+}
+
+@keyframes motion-lock-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-3px);
+  }
+  75% {
+    transform: translateX(3px);
+  }
+}

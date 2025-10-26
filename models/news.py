@@ -42,6 +42,7 @@ class NewsSignal(Base):
     sentiment = Column(Float, nullable=True, comment="LLM sentiment score (-1.0 ~ 1.0)")
     topics = Column(ARRAY(String), nullable=True, comment="Topical keywords identified by LLM")
     evidence = Column(JSON, nullable=True, comment="Model supplied rationales or anchors")
+    source_reliability = Column(Float, nullable=True, comment="Heuristic source reliability score (0~1)")
 
     created_at = Column(
         DateTime(timezone=True),
@@ -138,6 +139,7 @@ class NewsWindowAggregate(Base):
 
     domestic_ratio = Column(Float, nullable=True, comment="Share of domestic sources (0~1)")
     domain_diversity = Column(Float, nullable=True, comment="Unique domain diversity ratio")
+    source_reliability = Column(Float, nullable=True, comment="Average source reliability for window")
 
     top_topics = Column(JSON, nullable=True, comment="Top topics distribution for the window")
 

@@ -91,6 +91,7 @@ def company_snapshot(identifier: str, db: Session = Depends(get_db)) -> CompanyS
             topic_shift=record.topic_shift,
             domestic_ratio=record.domestic_ratio,
             domain_diversity=record.domain_diversity,
+            source_reliability=record.source_reliability,
             top_topics=[TopicWeight(**topic) for topic in (record.top_topics or [])],
         )
         for record in news_metrics
@@ -104,7 +105,7 @@ def company_snapshot(identifier: str, db: Session = Depends(get_db)) -> CompanyS
         summary=_build_summary_block(summary_record),
         key_metrics=key_metrics,
         major_events=event_models,
-    news_signals=news_models,
+        news_signals=news_models,
     )
     return response
 

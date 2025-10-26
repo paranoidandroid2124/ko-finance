@@ -119,17 +119,17 @@ export function RagEvidencePanel({
   const render_guardrail = () => {
     if (guardrail.status === "loading") {
       return (
-        <div className="flex flex-col gap-2 rounded-lg border border-border-light/70 bg-background-cardLight/60 p-3 dark:border-border-dark/50 dark:bg-background-cardDark/40">
-          <div className="h-3 w-16 animate-pulse rounded bg-border-light/60 dark:bg-border-dark/40" />
-          <div className="h-3 w-3/4 animate-pulse rounded bg-border-light/50 dark:bg-border-dark/30" />
+        <div className="flex flex-col gap-2 rounded-lg border border-border-light/70 bg-background-cardLight/60 p-3 transition-motion-medium dark:border-border-dark/50 dark:bg-background-cardDark/40">
+          <div className="h-3 w-16 motion-shimmer animate-motion-shimmer animate-pulse rounded bg-border-light/60 dark:bg-border-dark/40" />
+          <div className="h-3 w-3/4 motion-shimmer animate-motion-shimmer animate-pulse rounded bg-border-light/50 dark:bg-border-dark/30" />
         </div>
       );
     }
 
     if (guardrail.status === "error") {
       return (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-[11px] text-destructive dark:border-destructive/60 dark:bg-destructive/15">
-          <p>가드레일 정보를 불러오지 못했습니다.</p>
+        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-[11px] text-destructive transition-motion-medium dark:border-destructive/60 dark:bg-destructive/15">
+            <p>Guardrail 정보를 불러오지 못했습니다.</p>
           {guardrail.errorMessage ? <p className="mt-1">{guardrail.errorMessage}</p> : null}
         </div>
       );
@@ -138,7 +138,7 @@ export function RagEvidencePanel({
     if (guardrail.status === "ready" && guardrail.level) {
       const tone = GUARDRAIL_TONE[guardrail.level];
       return (
-        <div className={`space-y-2 rounded-lg border px-3 py-3 text-[11px] ${tone.container}`}>
+        <div className={`space-y-2 rounded-lg border px-3 py-3 text-[11px] transition-motion-medium motion-safe:hover:-translate-y-0.5 ${tone.container}`}>
           <div className="flex items-center justify-between gap-2">
             <p className="font-semibold">가드레일 상태</p>
             {guardrailBadge}
@@ -149,7 +149,7 @@ export function RagEvidencePanel({
     }
 
     return (
-      <div className="rounded-lg border border-dashed border-border-light px-3 py-3 text-[11px] text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
+      <div className="rounded-lg border border-dashed border-border-light px-3 py-3 text-[11px] text-text-secondaryLight transition-motion-medium dark:border-border-dark dark:text-text-secondaryDark">
         가드레일 결과가 준비되면 여기에 표시됩니다.
       </div>
     );
@@ -162,11 +162,11 @@ export function RagEvidencePanel({
           {Array.from({ length: 2 }).map((_, index) => (
             <div
               key={`metric-skeleton-${index}`}
-              className="rounded-lg border border-border-light/70 bg-background-cardLight/60 p-3 dark:border-border-dark/50 dark:bg-background-cardDark/40"
+              className="rounded-lg border border-border-light/70 bg-background-cardLight/60 p-3 transition-motion-medium dark:border-border-dark/50 dark:bg-background-cardDark/40"
             >
-              <div className="h-3 w-1/3 animate-pulse rounded bg-border-light/60 dark:bg-border-dark/40" />
-              <div className="mt-2 h-4 w-16 animate-pulse rounded bg-border-light/50 dark:bg-border-dark/30" />
-              <div className="mt-2 h-3 w-1/2 animate-pulse rounded bg-border-light/40 dark:bg-border-dark/20" />
+              <div className="h-3 w-1/3 motion-shimmer animate-motion-shimmer animate-pulse rounded bg-border-light/60 dark:bg-border-dark/40" />
+              <div className="mt-2 h-4 w-16 motion-shimmer animate-motion-shimmer animate-pulse rounded bg-border-light/50 dark:bg-border-dark/30" />
+              <div className="mt-2 h-3 w-1/2 motion-shimmer animate-motion-shimmer animate-pulse rounded bg-border-light/40 dark:bg-border-dark/20" />
             </div>
           ))}
         </div>
@@ -175,7 +175,7 @@ export function RagEvidencePanel({
 
     if (metrics.status === "error") {
       return (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-3 text-[11px] text-destructive dark:border-destructive/60 dark:bg-destructive/15">
+        <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-3 text-[11px] text-destructive transition-motion-medium dark:border-destructive/60 dark:bg-destructive/15">
           <p>주요 지표를 표시할 수 없습니다.</p>
           {metrics.errorMessage ? <p className="mt-1">{metrics.errorMessage}</p> : null}
         </div>
@@ -190,7 +190,7 @@ export function RagEvidencePanel({
             return (
               <div
                 key={metric.id}
-                className="rounded-lg border border-border-light px-3 py-3 text-[11px] dark:border-border-dark"
+                className="rounded-lg border border-border-light px-3 py-3 text-[11px] transition-motion-medium motion-safe:hover:-translate-y-0.5 dark:border-border-dark"
               >
                 <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">{metric.label}</p>
                 <p className="mt-1 text-base font-semibold text-text-primaryLight dark:text-text-primaryDark">{metric.value}</p>
@@ -215,7 +215,7 @@ export function RagEvidencePanel({
   };
 
   return (
-    <section className="space-y-3 rounded-xl border border-border-light bg-white/70 p-3 text-xs shadow-sm transition-colors dark:border-border-dark dark:bg-white/5">
+    <section className="space-y-3 rounded-xl border border-border-light bg-white/70 p-3 text-xs shadow-sm transition-colors transition-motion-medium dark:border-border-dark dark:bg-white/5">
       <header className="flex items-center justify-between gap-3">
         <div>
           <p className="text-[11px] font-semibold uppercase text-primary">RAG 근거</p>
@@ -273,7 +273,7 @@ export function RagEvidencePanel({
             return (
               <li
                 key={item.id}
-                className={`rounded-lg border px-3 py-3 ${
+                className={`rounded-lg border px-3 py-3 transition-motion-medium motion-safe:hover:-translate-y-1 ${
                   isActive
                     ? "border-primary bg-primary/5 text-text-primaryLight dark:border-primary.dark dark:bg-primary/10"
                     : "border-border-light bg-white text-text-secondaryLight shadow-sm transition-colors hover:border-primary/50 hover:text-text-primaryLight dark:border-border-dark dark:bg-white/5 dark:text-text-secondaryDark"
@@ -281,7 +281,7 @@ export function RagEvidencePanel({
               >
                 <button
                   type="button"
-                  className="w-full text-left"
+                  className="w-full text-left transition-motion-fast focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                   aria-pressed={isActive}
                   onClick={() => handle_select_item(item.id)}
                 >
@@ -294,7 +294,7 @@ export function RagEvidencePanel({
                   <span>p.{item.page ?? "?"}</span>
                   <div className="flex items-center gap-2">
                     {typeof item.score === "number" && (
-                      <span className="rounded bg-border-light/50 px-2 py-0.5 text-[10px] dark:bg-border-dark/40">
+                      <span className="rounded bg-border-light/50 px-2 py-0.5 text-[10px] transition-motion-fast dark:bg-border-dark/40">
                         {Math.round(item.score * 100)}점
                       </span>
                     )}

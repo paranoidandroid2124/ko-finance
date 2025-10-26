@@ -2,6 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
+@import "../styles/motion.css";
+
 :root {
   color-scheme: light;
   background-color: #f5f7fb;
@@ -21,4 +23,3 @@ body {
 a {
   @apply text-primary underline-offset-2 transition-colors hover:text-primary-hover;
 }
-

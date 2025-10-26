@@ -259,6 +259,10 @@ def _add_columns() -> None:
     _ensure_eval_runs_table()
     _ensure_sector_tables()
 
+    logger.info("Ensuring reliability columns on news tables.")
+    _execute('ALTER TABLE news_signals ADD COLUMN IF NOT EXISTS "source_reliability" DOUBLE PRECISION;')
+    _execute('ALTER TABLE news_window_aggregates ADD COLUMN IF NOT EXISTS "source_reliability" DOUBLE PRECISION;')
+
 
 def migrate_schema() -> None:
     logger.info("Starting schema migration for K-Finance data tables.")

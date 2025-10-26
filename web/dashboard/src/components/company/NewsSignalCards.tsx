@@ -1,5 +1,4 @@
-
-"use client";
+﻿"use client";
 
 import { NewsWindowInsight } from "@/hooks/useCompanySnapshot";
 
@@ -22,11 +21,18 @@ const scopeLabel = (scope: string, ticker?: string | null, companyName?: string 
   return "시장 전체";
 };
 
+const reliabilityLabel = (value?: number | null) => {
+  if (value === undefined || value === null || Number.isNaN(value)) {
+    return null;
+  }
+  return `${(value * 100).toFixed(0)}%`;
+};
+
 export function NewsSignalCards({ signals, companyName }: NewsSignalCardsProps) {
   if (!signals.length) {
     return (
       <section className="rounded-xl border border-dashed border-border-light p-6 text-sm text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
-        뉴스 시그널이 아직 계산되지 않았습니다. 최근 7~30일 뉴스가 축적되면 자동으로 제공됩니다.
+        뉴스 시그널이 아직 계산되지 않았습니다. 최근 7~30일 뉴스가 축적되면 자동으로 제공합니다.
       </section>
     );
   }
@@ -35,64 +41,87 @@ export function NewsSignalCards({ signals, companyName }: NewsSignalCardsProps) 
     <section className="rounded-xl border border-border-light bg-background-cardLight p-6 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-text-secondaryLight dark:text-text-secondaryDark">뉴스 시그널</h2>
       <div className="mt-4 grid gap-4 md:grid-cols-2">
-        {signals.map((signal) => (
-          <article
-            key={`${signal.scope}-${signal.ticker ?? "global"}-${signal.windowDays}`}
-            className="rounded-lg border border-border-light bg-background-light/70 p-4 text-sm dark:border-border-dark dark:bg-background-dark/60"
-          >
-            <header className="flex items-baseline justify-between gap-2">
-              <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">
-                {scopeLabel(signal.scope, signal.ticker, companyName)}
-              </p>
-              <span className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">{signal.windowDays}일</span>
-            </header>
-            <dl className="mt-3 grid grid-cols-2 gap-3 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-              <div>
-                <dt className="font-semibold uppercase tracking-wide text-[10px]">기사수</dt>
-                <dd className="mt-1 text-sm text-text-primaryLight dark:text-text-primaryDark">{signal.articleCount}</dd>
+        {signals.map((signal) => {
+          const reliability = reliabilityLabel(signal.sourceReliability);
+          return (
+            <article
+              key={`${signal.scope}-${signal.ticker ?? "global"}-${signal.windowDays}`}
+              className="rounded-lg border border-border-light bg-background-light/70 p-4 text-sm dark:border-border-dark dark:bg-background-dark/60"
+            >
+              <header className="flex items-baseline justify-between gap-2">
+                <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">
+                  {scopeLabel(signal.scope, signal.ticker, companyName)}
+                </p>
+                <span className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">{signal.windowDays}일</span>
+              </header>
+              <div className="mt-2 flex flex-wrap gap-2 text-[11px] uppercase tracking-wide text-text-secondaryLight dark:text-text-secondaryDark">
+                {reliability ? (
+                  <span className="rounded-full border border-border-light px-2 py-0.5 text-primary dark:border-border-dark dark:text-primary.dark">
+                    신뢰도 {reliability}
+                  </span>
+                ) : (
+                  <span className="rounded-full border border-dashed border-border-light px-2 py-0.5 dark:border-border-dark">
+                    신뢰도 준비 중
+                  </span>
+                )}
+                {signal.deduplicationClusterId ? (
+                  <span className="rounded-full border border-border-light px-2 py-0.5 dark:border-border-dark">
+                    중복 그룹 {signal.deduplicationClusterId}
+                  </span>
+                ) : (
+                  <span className="rounded-full border border-dashed border-border-light px-2 py-0.5 dark:border-border-dark">
+                    중복 그룹 정보 없음
+                  </span>
+                )}
               </div>
-              <div>
-                <dt className="font-semibold uppercase tracking-wide text-[10px]">평균 감성</dt>
-                <dd className="mt-1 text-sm text-text-primaryLight dark:text-text-primaryDark">{formatNumber(signal.avgSentiment)}</dd>
-              </div>
-              <div>
-                <dt className="font-semibold uppercase tracking-wide text-[10px]">감성 Z</dt>
-                <dd className="mt-1 text-sm text-text-primaryLight dark:text-text-primaryDark">{formatNumber(signal.sentimentZ)}</dd>
-              </div>
-              <div>
-                <dt className="font-semibold uppercase tracking-wide text-[10px]">새로운 주제</dt>
-                <dd className="mt-1 text-sm text-text-primaryLight dark:text-text-primaryDark">{formatNumber(signal.noveltyKl)}</dd>
-              </div>
-              <div>
-                <dt className="font-semibold uppercase tracking-wide text-[10px]">주제 이동</dt>
-                <dd className="mt-1 text-sm text-text-primaryLight dark:text-text-primaryDark">{formatNumber(signal.topicShift)}</dd>
-              </div>
-              <div>
-                <dt className="font-semibold uppercase tracking-wide text-[10px]">국내 비중</dt>
-                <dd className="mt-1 text-sm text-text-primaryLight dark:text-text-primaryDark">{formatNumber(signal.domesticRatio, 3)}</dd>
-              </div>
-              <div>
-                <dt className="font-semibold uppercase tracking-wide text-[10px]">도메인 다양성</dt>
-                <dd className="mt-1 text-sm text-text-primaryLight dark:text-text-primaryDark">{formatNumber(signal.domainDiversity, 3)}</dd>
-              </div>
-            </dl>
-            {signal.topTopics.length ? (
-              <div className="mt-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-text-secondaryLight dark:text-text-secondaryDark">Top Topics</p>
-                <ul className="mt-2 flex flex-wrap gap-2 text-xs text-text-primaryLight dark:text-text-primaryDark">
-                  {signal.topTopics.map((topic) => (
-                    <li
-                      key={`${topic.topic}-${topic.weight}`}
-                      className="rounded-full bg-primary/10 px-2 py-1 text-primary dark:bg-primary.dark/15 dark:text-primary.dark"
-                    >
-                      {topic.topic} · {(topic.weight * 100).toFixed(1)}%
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </article>
-        ))}
+              <dl className="mt-3 grid grid-cols-2 gap-3 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                <div>
+                  <dt className="font-semibold uppercase tracking-wide text-[10px]">기사수</dt>
+                  <dd className="mt-1 text-sm text-text-primaryLight dark:text-text-primaryDark">{signal.articleCount}</dd>
+                </div>
+                <div>
+                  <dt className="font-semibold uppercase tracking-wide text-[10px]">평균 감성</dt>
+                  <dd className="mt-1 text-sm text-text-primaryLight dark:text-text-primaryDark">{formatNumber(signal.avgSentiment)}</dd>
+                </div>
+                <div>
+                  <dt className="font-semibold uppercase tracking-wide text-[10px]">감성 Z</dt>
+                  <dd className="mt-1 text-sm text-text-primaryLight dark:text-text-primaryDark">{formatNumber(signal.sentimentZ)}</dd>
+                </div>
+                <div>
+                  <dt className="font-semibold uppercase tracking-wide text-[10px]">새로운 주제</dt>
+                  <dd className="mt-1 text-sm text-text-primaryLight dark:text-text-primaryDark">{formatNumber(signal.noveltyKl)}</dd>
+                </div>
+                <div>
+                  <dt className="font-semibold uppercase tracking-wide text-[10px]">주제 이동</dt>
+                  <dd className="mt-1 text-sm text-text-primaryLight dark:text-text-primaryDark">{formatNumber(signal.topicShift)}</dd>
+                </div>
+                <div>
+                  <dt className="font-semibold uppercase tracking-wide text-[10px]">국내 비중</dt>
+                  <dd className="mt-1 text-sm text-text-primaryLight dark:text-text-primaryDark">{formatNumber(signal.domesticRatio, 3)}</dd>
+                </div>
+                <div>
+                  <dt className="font-semibold uppercase tracking-wide text-[10px]">도메인 다양성</dt>
+                  <dd className="mt-1 text-sm text-text-primaryLight dark:text-text-primaryDark">{formatNumber(signal.domainDiversity, 3)}</dd>
+                </div>
+              </dl>
+              {signal.topTopics.length ? (
+                <div className="mt-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-text-secondaryLight dark:text-text-secondaryDark">Top Topics</p>
+                  <ul className="mt-2 flex flex-wrap gap-2 text-xs text-text-primaryLight dark:text-text-primaryDark">
+                    {signal.topTopics.map((topic) => (
+                      <li
+                        key={`${topic.topic}-${topic.weight}`}
+                        className="rounded-full bg-primary/10 px-2 py-1 text-primary dark:bg-primary.dark/15 dark:text-primary.dark"
+                      >
+                        {topic.topic} · {(topic.weight * 100).toFixed(1)}%
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </article>
+          );
+        })}
       </div>
     </section>
   );

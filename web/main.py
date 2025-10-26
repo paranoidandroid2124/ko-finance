@@ -32,6 +32,7 @@ app.include_router(routers.dashboard.router, prefix="/api/v1")
 app.include_router(routers.news.router, prefix="/api/v1")
 app.include_router(routers.chat.router, prefix="/api/v1")
 app.include_router(routers.rag.router, prefix="/api/v1")
+app.include_router(routers.search.router, prefix="/api/v1")
 app.include_router(routers.sectors.router, prefix="/api/v1")
 app.include_router(routers.company.router, prefix="/api/v1")
 

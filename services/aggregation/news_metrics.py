@@ -6,13 +6,18 @@ import math
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Iterable, List, Optional, Tuple
-from urllib.parse import urlparse
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from core.logging import get_logger
 from models.news import NewsSignal, NewsWindowAggregate
+from services.reliability.source_reliability import (
+    apply_window_penalties,
+    average_reliability,
+    normalize_domain,
+    score_article,
+)
 
 logger = get_logger(__name__)
 
@@ -40,8 +45,23 @@ def compute_news_window_metrics(
     signals: List[NewsSignal] = query.all()
 
     article_count = len(signals)
+    reliability_scores: List[float] = []
+    updated_reliability = False
+    for signal in signals:
+        current_reliability = getattr(signal, "source_reliability", None)
+        if current_reliability is None:
+            computed = score_article(getattr(signal, "source", None), getattr(signal, "url", None))
+            try:
+                setattr(signal, "source_reliability", computed)
+                updated_reliability = True
+            except (AttributeError, TypeError):
+                pass
+            current_reliability = computed
+        if current_reliability is not None:
+            reliability_scores.append(float(current_reliability))
     sentiments = [signal.sentiment for signal in signals if signal.sentiment is not None]
     avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else None
+    aggregate_reliability = average_reliability(reliability_scores)
 
     sentiment_z = _compute_sentiment_z_score(db, avg_sentiment)
     topic_counts = _collect_topic_counts(signals)
@@ -75,18 +95,30 @@ def compute_news_window_metrics(
     record.topic_shift = topic_shift
     record.domestic_ratio = domestic_ratio
     record.domain_diversity = domain_diversity
+    domain_counts: Counter[str] = Counter()
+    for signal in signals:
+        domain = normalize_domain(getattr(signal, "url", None))
+        if domain:
+            domain_counts[domain] += 1
+
+    aggregate_reliability = apply_window_penalties(aggregate_reliability, domain_counts)
+
+    record.source_reliability = aggregate_reliability
     record.top_topics = top_topics
 
     db.add(record)
+    if updated_reliability:
+        db.flush()
     db.commit()
 
     logger.info(
-        "Computed %s news metrics window=%dd articles=%d sentiment=%.3f z=%.3f",
+        "Computed %s news metrics window=%dd articles=%d sentiment=%.3f z=%.3f reliability=%.3f",
         scope,
         window_days,
         article_count,
         avg_sentiment if avg_sentiment is not None else float("nan"),
         sentiment_z if sentiment_z is not None else float("nan"),
+        aggregate_reliability if aggregate_reliability is not None else float("nan"),
     )
     return record
 
@@ -135,8 +167,7 @@ def _compute_domain_metrics(signals: Iterable[NewsSignal], article_count: int) -
     domains = []
     domestic = 0
     for signal in signals:
-        url = getattr(signal, "url", None)
-        domain = _extract_domain(url)
+        domain = normalize_domain(getattr(signal, "url", None))
         if not domain:
             continue
         domains.append(domain)
@@ -148,15 +179,6 @@ def _compute_domain_metrics(signals: Iterable[NewsSignal], article_count: int) -
     domestic_ratio = domestic / len(domains) if domains else None
     diversity = unique_domains / len(domains)
     return domestic_ratio, diversity
-
-
-def _extract_domain(url: Optional[str]) -> Optional[str]:
-    if not url:
-        return None
-    parsed = urlparse(url)
-    if parsed.netloc:
-        return parsed.netloc.lower()
-    return None
 
 
 def _compute_novelty(

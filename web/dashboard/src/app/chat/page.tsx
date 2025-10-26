@@ -819,7 +819,11 @@ export default function ChatPage() {
         if (sessionAfterUser) {
           const userCount = sessionAfterUser.messages.filter((message) => message.role === 'user').length;
           if (userCount === 1) {
-            await renameSession(targetSessionId, deriveSessionTitleFromQuestion(trimmed));
+            try {
+              await renameSession(targetSessionId, deriveSessionTitleFromQuestion(trimmed));
+            } catch (renameError) {
+              console.warn('Failed to rename session', renameError);
+            }
           }
         }
 

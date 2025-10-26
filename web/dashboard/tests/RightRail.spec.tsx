@@ -1,8 +1,9 @@
 ﻿import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RightRail } from "@/components/layout/RightRail";
 import { useChatStore, type ChatSession } from "@/store/chatStore";
+import { renderWithProviders } from "./testUtils";
 
 const pushMock = vi.fn();
 let pathnameValue = "/chat";
@@ -15,7 +16,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 const resetStore = () => {
-  useChatStore.setState({ sessions: [], activeSessionId: null });
+  useChatStore.setState({ sessions: [], activeSessionId: null, hydrated: true, loading: false, error: null });
 };
 
 describe("RightRail", () => {
@@ -49,24 +50,28 @@ describe("RightRail", () => {
 
     useChatStore.setState({ sessions, activeSessionId: "chat-1" });
 
-    render(<RightRail />);
+    renderWithProviders(<RightRail />);
 
     expect(screen.getByText("활성 세션")).toBeInTheDocument();
     expect(screen.getByText("1시간 전")).toBeInTheDocument();
   });
 
-  it("creates new session and navigates to chat with query when off chat page", () => {
+  it("creates new session and navigates to chat with query when off chat page", async () => {
     pathnameValue = "/dashboard";
-    render(<RightRail />);
+    renderWithProviders(<RightRail />);
 
     fireEvent.click(screen.getByText("새 대화 시작"));
 
+    await waitFor(() => {
+      expect(useChatStore.getState().activeSessionId).toBeTruthy();
+    });
     const activeSessionId = useChatStore.getState().activeSessionId;
-    expect(activeSessionId).toBeTruthy();
-    expect(pushMock).toHaveBeenCalledWith(`/chat?session=${activeSessionId}`);
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalledWith(`/chat?session=${activeSessionId}`);
+    });
   });
 
-  it("does not navigate when already on chat and selecting another session", () => {
+  it("does not navigate when already on chat and selecting another session", async () => {
     const sessions: ChatSession[] = [
       { id: "chat-1", title: "세션1", updatedAt: "방금", messages: [], context: { type: "custom" } },
       { id: "chat-2", title: "세션2", updatedAt: "5분 전", messages: [], context: { type: "custom" } }
@@ -74,11 +79,13 @@ describe("RightRail", () => {
 
     useChatStore.setState({ sessions, activeSessionId: "chat-1" });
 
-    render(<RightRail />);
+    renderWithProviders(<RightRail />);
 
     fireEvent.click(screen.getByText("세션2"));
 
-    expect(useChatStore.getState().activeSessionId).toBe("chat-2");
+    await waitFor(() => {
+      expect(useChatStore.getState().activeSessionId).toBe("chat-2");
+    });
     expect(pushMock).not.toHaveBeenCalled();
   });
 });

@@ -30,15 +30,15 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
   const canRetry = Boolean(meta?.retryable && onRetry);
 
   return (
-    <div className={classNames("flex w-full gap-3", isUser ? "justify-end" : "justify-start")}>
+    <div className={classNames("group flex w-full gap-3", isUser ? "justify-end" : "justify-start")}>
       {!isUser && (
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/20 text-sm font-semibold text-primary">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/20 text-sm font-semibold text-primary transition-motion-fast motion-safe:group-hover:-translate-y-1">
           AI
         </div>
       )}
       <div
         className={classNames(
-          "max-w-xl rounded-2xl px-4 py-3 text-sm shadow-card transition-colors",
+          "max-w-xl rounded-2xl px-4 py-3 text-sm shadow-card transition-colors transition-motion-medium motion-safe:hover:-translate-y-1 motion-safe:group-hover:-translate-y-1",
           isUser
             ? "bg-primary text-white"
             : "bg-background-cardLight text-text-primaryLight dark:bg-background-cardDark dark:text-text-primaryDark"
@@ -66,7 +66,7 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
               <button
                 type="button"
                 onClick={onRetry}
-                className="rounded-md border border-accent-negative/60 px-3 py-1 text-[11px] font-semibold text-accent-negative transition-colors hover:border-accent-negative hover:bg-accent-negative/20"
+                className="rounded-md border border-accent-negative/60 px-3 py-1 text-[11px] font-semibold text-accent-negative transition-colors transition-motion-fast hover:border-accent-negative hover:bg-accent-negative/20 motion-safe:active:translate-y-[1px]"
               >
                 다시 시도
               </button>

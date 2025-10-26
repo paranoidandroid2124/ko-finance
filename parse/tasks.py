@@ -35,6 +35,7 @@ from services.aggregation.sector_classifier import assign_article_to_sector
 from services.aggregation.sector_metrics import compute_sector_daily_metrics, compute_sector_window_metrics
 from services.aggregation.news_metrics import compute_news_window_metrics
 from services.notification_service import send_telegram_alert
+from services.reliability.source_reliability import score_article as score_source_reliability
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -479,6 +480,8 @@ def process_news_article(article_payload: Any) -> str:
         rationale = validated.get("rationale")
         evidence = {"rationale": rationale} if rationale else None
 
+        reliability = score_source_reliability(article.source, article.url)
+
         news_signal = NewsSignal(
             ticker=article.ticker,
             source=article.source,
@@ -489,6 +492,7 @@ def process_news_article(article_payload: Any) -> str:
             sentiment=sentiment,
             topics=topics,
             evidence=evidence,
+            source_reliability=reliability,
         )
         db.add(news_signal)
         db.flush()

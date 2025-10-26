@@ -78,6 +78,9 @@ class NewsWindowInsight(BaseModel):
     domestic_ratio: Optional[float] = None
     domain_diversity: Optional[float] = None
     top_topics: List[TopicWeight] = Field(default_factory=list)
+    source_reliability: Optional[float] = Field(
+        None, description="Heuristic reliability score for the aggregated window"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
