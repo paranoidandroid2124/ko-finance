@@ -48,13 +48,13 @@ class NotificationFormattingTests(unittest.TestCase):
     def test_format_notification_includes_ticker_and_link(self):
         filing = types.SimpleNamespace(
             ticker="005930",
-            report_name="???? ??",
+            report_name="주요사항 보고",
             title=None,
             urls={"viewer": "http://example.com"},
         )
-        summary = {"insight": "????? 1?? ?? ????"}
+        summary = {"insight": "핵심 요약 문장이 들어갑니다"}
         message = _format_notification(filing, summary)
         self.assertIn("005930", message)
-        self.assertIn("???? ??", message)
-        self.assertIn("?????", message)
+        self.assertIn("주요사항 보고", message)
+        self.assertIn("핵심 요약", message)
         self.assertIn("http://example.com", message)

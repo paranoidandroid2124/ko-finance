@@ -225,3 +225,4 @@ function badgeLabel(key: string): string {
     default:
       return key;
   }
+}

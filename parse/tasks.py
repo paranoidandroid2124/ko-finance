@@ -6,6 +6,8 @@ import logging
 import os
 import uuid
 from collections import Counter
+import hashlib
+import json
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -13,6 +15,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from celery import shared_task
 from pydantic import ValidationError
+from sqlalchemy import desc
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -26,6 +29,7 @@ from models.fact import ExtractedFact
 from models.filing import Filing, STATUS_PENDING
 from models.digest import DailyDigestLog
 from models.news import NewsObservation, NewsSignal
+from models.evidence import EvidenceSnapshot
 from models.summary import Summary
 from parse.pdf_parser import extract_chunks
 from parse.xml_parser import extract_chunks_from_xml
@@ -39,6 +43,59 @@ from services.reliability.source_reliability import score_article as score_sourc
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+
+def _snapshot_hash(payload: Dict[str, Any]) -> str:
+    normalized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _persist_evidence_snapshot(
+    db: Session,
+    *,
+    urn_id: str,
+    evidence_payload: Dict[str, Any],
+    author: Optional[str],
+    process: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    if not urn_id:
+        return None
+
+    snapshot_hash = _snapshot_hash(evidence_payload)
+    existing = (
+        db.query(EvidenceSnapshot)
+        .filter(
+            EvidenceSnapshot.urn_id == urn_id,
+            EvidenceSnapshot.snapshot_hash == snapshot_hash,
+        )
+        .first()
+    )
+    if existing:
+        return None
+
+    latest = (
+        db.query(EvidenceSnapshot)
+        .filter(EvidenceSnapshot.urn_id == urn_id)
+        .order_by(desc(EvidenceSnapshot.updated_at))
+        .first()
+    )
+
+    diff_type = "created" if latest is None else "updated"
+    snapshot = EvidenceSnapshot(
+        urn_id=urn_id,
+        snapshot_hash=snapshot_hash,
+        previous_snapshot_hash=latest.snapshot_hash if latest else None,
+        diff_type=diff_type,
+        payload=evidence_payload,
+        author=author,
+        process=process,
+    )
+    db.add(snapshot)
+    return {
+        "urn_id": urn_id,
+        "snapshot_hash": snapshot_hash,
+        "diff_type": diff_type,
+    }
 
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 
@@ -1005,3 +1062,42 @@ def run_rag_self_check(payload: Dict[str, Any]) -> Dict[str, Any]:
         summary.get("error"),
     )
     return summary
+
+
+@shared_task(name="m3.snapshot_evidence_diff")
+def snapshot_evidence_diff(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist evidence snapshots for diff tracking."""
+    db = SessionLocal()
+    stored: List[Dict[str, Any]] = []
+    evidence_items = payload.get("evidence") or []
+    author = payload.get("author")
+    process = payload.get("process") or "api.rag"
+    trace_id = payload.get("trace_id")
+
+    try:
+        for item in evidence_items:
+            if not isinstance(item, dict):
+                continue
+            urn_id = item.get("urn_id")
+            result = _persist_evidence_snapshot(
+                db,
+                urn_id=str(urn_id or ""),
+                evidence_payload=item,
+                author=author,
+                process=process,
+            )
+            if result:
+                stored.append(result)
+        db.commit()
+        logger.info(
+            "Evidence diff snapshots stored (trace=%s, count=%d).",
+            trace_id,
+            len(stored),
+        )
+        return {"stored": stored, "trace_id": trace_id}
+    except Exception as exc:  # pragma: no cover - best-effort persistence
+        db.rollback()
+        logger.warning("Failed to snapshot evidence diff (trace=%s): %s", trace_id, exc, exc_info=True)
+        return {"stored": stored, "trace_id": trace_id, "error": str(exc)}
+    finally:
+        db.close()

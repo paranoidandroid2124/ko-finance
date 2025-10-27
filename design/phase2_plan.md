@@ -76,5 +76,10 @@
 ## 9. Sign-offs
 - Design | Product | Engineering | Compliance
 
+## 10. Week 1 Foundation Outputs
+- UX, schema, logging decisions are captured in `design/phase2_w1_foundation.md`.
+- Mockup exports (dev-only) live in `docs/mockups/phase2/`; do not bundle with production builds.
+- RAG fixtures for stories/tests reside in `fixtures/evidence/`.
+
 ---
 - Notes: coordinate with legal on PDF embedding license restrictions before rollout.

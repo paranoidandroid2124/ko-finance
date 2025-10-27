@@ -46,12 +46,13 @@ def _get_with_retry(client: httpx.Client, url: str) -> httpx.Response:
     last_error: Optional[Exception] = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            response = client.get(url)
+            normalized_url = _force_https(url)
+            response = client.get(normalized_url)
             response.raise_for_status()
             return response
         except (httpx.HTTPError, httpx.RemoteProtocolError) as exc:
             last_error = exc
-            logger.warning("Request to %s failed (%d/%d): %s", url, attempt, MAX_RETRIES, exc)
+            logger.warning("Request to %s failed (%d/%d): %s", normalized_url, attempt, MAX_RETRIES, exc)
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_DELAY_SEC)
     assert last_error is not None
@@ -143,8 +144,16 @@ def parse_filing_bundle(
     return package
 
 
+def _force_https(url: str) -> str:
+    sanitized = url.strip()
+    if sanitized.startswith("http://"):
+        return "https://" + sanitized[len("http://") :]
+    return sanitized
+
+
 def fetch_viewer_bundle(viewer_url: str, save_dir: str) -> Optional[Dict[str, object]]:
     """Download a filing bundle by scraping the DART viewer page."""
+    viewer_url = _force_https(viewer_url)
     try:
         with httpx.Client(timeout=30.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"}) as client:
             response = _get_with_retry(client, viewer_url)
@@ -188,7 +197,7 @@ def fetch_viewer_bundle(viewer_url: str, save_dir: str) -> Optional[Dict[str, ob
                 if not href:
                     continue
                 full_url = urljoin("https://dart.fss.or.kr", href)
-                file_response = _get_with_retry(client, full_url)
+                file_response = _get_with_retry(client, _force_https(full_url))
                 content_type = file_response.headers.get("content-type")
                 data = file_response.content
 

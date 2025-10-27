@@ -1,6 +1,5 @@
 import { SideNav } from "./SideNav";
 import { TopBar } from "./TopBar";
-import { RightRail } from "./RightRail";
 import { ToastContainer } from "../ui/ToastContainer";
 
 type AppShellProps = {
@@ -14,9 +13,8 @@ export function AppShell({ children }: AppShellProps) {
       <SideNav />
       <div className="flex min-h-screen flex-1 flex-col">
         <TopBar />
-        <main className="flex flex-1 flex-row gap-6 px-6 pb-8 pt-6">
+        <main className="flex flex-1 flex-col px-6 pb-8 pt-6">
           <div className="flex-1 space-y-6">{children}</div>
-          <RightRail />
         </main>
       </div>
     </div>

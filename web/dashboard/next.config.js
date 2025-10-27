@@ -3,8 +3,19 @@ const API_PROXY_TARGET = process.env.API_PROXY_TARGET;
 
 const nextConfig = {
   experimental: {
-    typedRoutes: true,
-    serverActions: true
+    typedRoutes: true
+  },
+  webpack: (config) => {
+    config.resolve = config.resolve || {};
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      canvas: false
+    };
+    config.resolve.fallback = {
+      ...config.resolve.fallback,
+      canvas: false
+    };
+    return config;
   },
   async rewrites() {
     if (!API_PROXY_TARGET) {

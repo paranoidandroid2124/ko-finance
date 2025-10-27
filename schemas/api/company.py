@@ -117,3 +117,18 @@ class CompanySuggestions(BaseModel):
 
     recent_filings: List[CompanySearchResult] = Field(default_factory=list)
     trending_news: List[CompanySearchResult] = Field(default_factory=list)
+
+
+class TimelinePoint(BaseModel):
+    date: date
+    sentiment_z: Optional[float] = None
+    price_close: Optional[float] = None
+    volume: Optional[float] = None
+    event_type: Optional[str] = None
+
+
+class TimelineResponse(BaseModel):
+    window_days: int
+    total_points: int
+    downsampled_points: int
+    points: List[TimelinePoint] = Field(default_factory=list)

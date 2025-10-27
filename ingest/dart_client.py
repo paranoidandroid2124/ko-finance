@@ -191,7 +191,7 @@ class DartClient:
 
     @staticmethod
     def make_viewer_url(receipt_no: str) -> str:
-        return f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={receipt_no}"
+        return f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={receipt_no}"
 
     @staticmethod
     def make_document_url(receipt_no: str) -> str:

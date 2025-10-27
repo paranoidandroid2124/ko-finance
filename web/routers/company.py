@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, func, nulls_last, or_
@@ -24,10 +24,15 @@ from schemas.api.company import (
     NewsWindowInsight,
     SummaryBlock,
     TopicWeight,
+    TimelinePoint,
+    TimelineResponse,
 )
 from services.aggregation.news_metrics import compute_news_window_metrics
+from services.aggregation import timeline_metrics
+from core.logging import get_logger
 
 router = APIRouter(prefix="/companies", tags=["Companies"])
+logger = get_logger(__name__)
 
 METRIC_DEFINITIONS: Sequence[Dict[str, Iterable[str]]] = (
     {"code": "roe", "label": "ROE", "keywords": ("roe", "return on equity")},
@@ -37,9 +42,12 @@ METRIC_DEFINITIONS: Sequence[Dict[str, Iterable[str]]] = (
 )
 
 
-@router.get("/{identifier}/snapshot", response_model=CompanySnapshotResponse)
-def company_snapshot(identifier: str, db: Session = Depends(get_db)) -> CompanySnapshotResponse:
-    """Return consolidated snapshot for a company identified by ticker or corp_code."""
+
+
+def _resolve_company_context(
+    db: Session,
+    identifier: str,
+) -> Tuple[Filing, str, str, str]:
     normalized = identifier.strip().upper()
     latest_filing = (
         db.query(Filing)
@@ -53,6 +61,12 @@ def company_snapshot(identifier: str, db: Session = Depends(get_db)) -> CompanyS
     corp_code = latest_filing.corp_code or normalized
     ticker = latest_filing.ticker or normalized
     corp_name = latest_filing.corp_name or ticker
+    return latest_filing, corp_code, ticker, corp_name
+
+@router.get("/{identifier}/snapshot", response_model=CompanySnapshotResponse)
+def company_snapshot(identifier: str, db: Session = Depends(get_db)) -> CompanySnapshotResponse:
+    """Return consolidated snapshot for a company identified by ticker or corp_code."""
+    latest_filing, corp_code, ticker, corp_name = _resolve_company_context(db, identifier)
 
     summary_record = (
         db.query(Summary)
@@ -400,3 +414,46 @@ def _derive_highlight(filing: Filing, keyword: str) -> Optional[str]:
     if filing.report_name and normalized in filing.report_name.lower():
         return filing.report_name
     return None
+
+@router.get("/{identifier}/timeline", response_model=TimelineResponse)
+def company_timeline(
+    identifier: str,
+    window_days: int = Query(365, ge=7, le=365, description="Number of days to include in timeline"),
+    db: Session = Depends(get_db),
+) -> TimelineResponse:
+    latest_filing, _, ticker, _ = _resolve_company_context(db, identifier)
+    started_at = datetime.now(timezone.utc)
+
+    raw_points = timeline_metrics.fetch_sentiment_timeline(
+        db,
+        ticker=ticker,
+        window_days=window_days,
+    )
+    series = timeline_metrics.build_timeline_series(raw_points, max_points=min(window_days, 365))
+
+    response = TimelineResponse(
+        window_days=min(window_days, 365),
+        total_points=series["total_points"],
+        downsampled_points=series["downsampled_points"],
+        points=[
+            TimelinePoint(
+                date=point["date"],
+                sentiment_z=point.get("sentiment_z"),
+                price_close=point.get("price_close"),
+                volume=point.get("volume"),
+                event_type=point.get("event_type"),
+            )
+            for point in series["points"]
+        ],
+    )
+
+    latency_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
+    logger.info(
+        "Timeline generated for %s (window=%d, returned=%d/%d, latency_ms=%d)",
+        ticker,
+        response.window_days,
+        response.downsampled_points,
+        response.total_points,
+        latency_ms,
+    )
+    return response

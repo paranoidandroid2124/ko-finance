@@ -160,6 +160,37 @@ def _ensure_sector_tables() -> None:
         """
     )
 
+
+def _ensure_evidence_snapshots_table() -> None:
+    logger.info("Ensuring evidence_snapshots table exists.")
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS evidence_snapshots (
+            urn_id TEXT NOT NULL,
+            snapshot_hash TEXT NOT NULL,
+            previous_snapshot_hash TEXT,
+            diff_type TEXT DEFAULT 'unknown',
+            payload JSONB NOT NULL,
+            author TEXT,
+            process TEXT,
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (urn_id, snapshot_hash)
+        );
+        """
+    )
+    _execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_evidence_snapshots_urn
+            ON evidence_snapshots(urn_id);
+        """
+    )
+    _execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_evidence_snapshots_updated_at
+            ON evidence_snapshots(updated_at DESC);
+        """
+    )
+
 def _add_columns() -> None:
     logger.info("Ensuring filings table columns are up to date.")
     filings_columns = [
@@ -258,6 +289,7 @@ def _add_columns() -> None:
     _ensure_news_observations_table()
     _ensure_eval_runs_table()
     _ensure_sector_tables()
+    _ensure_evidence_snapshots_table()
 
     logger.info("Ensuring reliability columns on news tables.")
     _execute('ALTER TABLE news_signals ADD COLUMN IF NOT EXISTS "source_reliability" DOUBLE PRECISION;')
