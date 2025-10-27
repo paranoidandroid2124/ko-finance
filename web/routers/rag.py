@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -16,10 +16,202 @@ from core.logging import get_logger
 from database import get_db
 from llm import llm_service
 from llm.guardrails import SAFE_MESSAGE
-from parse.tasks import run_rag_self_check
-from schemas.api.rag import FilingFilter, RAGQueryRequest, RAGQueryResponse, RelatedFiling
+from parse.tasks import run_rag_self_check, snapshot_evidence_diff
+from schemas.api.rag import (
+    EvidenceAnchor,
+    FilingFilter,
+    RAGQueryRequest,
+    RAGQueryResponse,
+    RAGEvidence,
+    RelatedFiling,
+    SelfCheckResult,
+)
 from services import chat_service, vector_service
 from models.chat import ChatMessage, ChatSession
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_reliability(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"high", "medium", "low"}:
+            return lowered
+        return None
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+        if numeric >= 0.66:
+            return "high"
+        if numeric >= 0.33:
+            return "medium"
+        return "low"
+    return None
+
+
+def _extract_anchor(chunk: Dict[str, Any]) -> Optional[EvidenceAnchor]:
+    metadata = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
+    anchor_raw = None
+    candidate = metadata.get("anchor") or chunk.get("anchor")
+    if isinstance(candidate, dict):
+        anchor_raw = candidate
+
+    paragraph_id = (
+        (anchor_raw or {}).get("paragraph_id")
+        or metadata.get("paragraph_id")
+        or chunk.get("paragraph_id")
+    )
+
+    pdf_rect_raw = None
+    if anchor_raw and isinstance(anchor_raw.get("pdf_rect"), dict):
+        pdf_rect_raw = anchor_raw.get("pdf_rect")
+    elif isinstance(metadata.get("pdf_rect"), dict):
+        pdf_rect_raw = metadata.get("pdf_rect")
+
+    pdf_rect: Optional[Dict[str, Any]] = None
+    if isinstance(pdf_rect_raw, dict):
+        page = _safe_int(pdf_rect_raw.get("page") or chunk.get("page_number"))
+        x = _safe_float(pdf_rect_raw.get("x"))
+        y = _safe_float(pdf_rect_raw.get("y"))
+        width = _safe_float(pdf_rect_raw.get("width"))
+        height = _safe_float(pdf_rect_raw.get("height"))
+        if page:
+            pdf_rect = {
+                "page": page,
+                "x": x or 0.0,
+                "y": y or 0.0,
+                "width": width or 0.0,
+                "height": height or 0.0,
+            }
+
+    similarity = (
+        _safe_float((anchor_raw or {}).get("similarity"))
+        or _safe_float(chunk.get("similarity"))
+        or _safe_float(chunk.get("score"))
+    )
+
+    if not any([paragraph_id, pdf_rect, similarity is not None]):
+        return None
+
+    anchor_payload: Dict[str, Any] = {}
+    if paragraph_id:
+        anchor_payload["paragraph_id"] = str(paragraph_id)
+    if pdf_rect:
+        anchor_payload["pdf_rect"] = pdf_rect
+    if similarity is not None:
+        anchor_payload["similarity"] = similarity
+    if not anchor_payload:
+        return None
+    return EvidenceAnchor.model_validate(anchor_payload)
+
+
+def _normalize_self_check(value: Any) -> Optional[SelfCheckResult]:
+    if not isinstance(value, dict):
+        return None
+    score = _safe_float(value.get("score"))
+    verdict_raw = value.get("verdict")
+    verdict = verdict_raw.strip().lower() if isinstance(verdict_raw, str) else None
+    if verdict and verdict not in {"pass", "warn", "fail"}:
+        verdict = None
+    payload: Dict[str, Any] = {}
+    if score is not None:
+        payload["score"] = max(0.0, min(1.0, score))
+    if verdict:
+        payload["verdict"] = verdict
+    if isinstance(value.get("explanation"), str):
+        payload["explanation"] = value["explanation"]
+    if not payload:
+        return None
+    return SelfCheckResult.model_validate(payload)
+
+
+def _resolve_urn(chunk: Dict[str, Any], *, chunk_id: Optional[str]) -> str:
+    metadata = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
+    urn_value = chunk.get("urn_id") or metadata.get("urn_id")
+    if urn_value:
+        return str(urn_value)
+    if chunk_id:
+        return f"urn:chunk:{chunk_id}"
+    content = chunk.get("content") or metadata.get("content") or ""
+    base = str(content)[:128] if content else json.dumps(chunk, sort_keys=True)[:128]
+    deterministic = uuid.uuid5(uuid.NAMESPACE_URL, base)
+    return f"urn:chunk:{deterministic}"
+
+
+def _build_evidence_payload(chunks: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    evidence: List[Dict[str, Any]] = []
+    for chunk in chunks or []:
+        if not isinstance(chunk, dict):
+            continue
+        metadata = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
+        chunk_id_raw = chunk.get("chunk_id") or chunk.get("id") or metadata.get("chunk_id")
+        chunk_id = str(chunk_id_raw) if chunk_id_raw is not None else None
+        page_number = metadata.get("page_number") or chunk.get("page_number")
+        section = metadata.get("section") or chunk.get("section")
+        quote = metadata.get("quote") or chunk.get("quote") or chunk.get("content") or ""
+        anchor = _extract_anchor(chunk)
+        self_check = _normalize_self_check(chunk.get("self_check") or metadata.get("self_check"))
+        reliability = _normalize_reliability(
+            chunk.get("source_reliability") or metadata.get("source_reliability")
+        )
+        created_at = metadata.get("created_at") or chunk.get("created_at")
+
+        evidence_model = RAGEvidence(
+            urn_id=_resolve_urn(chunk, chunk_id=chunk_id),
+            chunk_id=chunk_id,
+            page_number=_safe_int(page_number),
+            section=section,
+            quote=str(quote) if quote is not None else "",
+            content=str(quote) if quote is not None else None,
+            anchor=anchor,
+            self_check=self_check,
+            source_reliability=reliability,
+            created_at=created_at,
+        )
+        evidence.append(
+            evidence_model.model_dump(mode="json", exclude_none=True, exclude_unset=True)
+        )
+    return evidence
+
+
+def _enqueue_evidence_snapshot(
+    evidence: List[Dict[str, Any]],
+    *,
+    author: Optional[str],
+    trace_id: str,
+    process: str = "api.rag.query",
+) -> None:
+    if not evidence:
+        return
+    try:
+        snapshot_evidence_diff.delay(
+            {
+                "trace_id": trace_id,
+                "author": author,
+                "process": process,
+                "evidence": evidence,
+            }
+        )
+    except Exception as exc:  # pragma: no cover - fire-and-forget
+        logger.warning("Failed to enqueue evidence snapshot (trace_id=%s): %s", trace_id, exc, exc_info=True)
+
 
 logger = get_logger(__name__)
 
@@ -152,6 +344,7 @@ def _no_context_response(
         "answer_preview": chat_service.trim_preview(fallback_text),
         "selected_filing_id": filing_id,
     }
+    meta_payload["evidence_version"] = "v2"
     chat_service.update_message_state(
         db,
         message_id=assistant_message.id,
@@ -228,6 +421,7 @@ def _intent_fallback_response(
         "selected_filing_id": None,
         "related_filings": [],
     }
+    meta_payload["evidence_version"] = "v2"
 
     chat_service.update_message_state(
         db,
@@ -331,6 +525,9 @@ def _stateless_rag_response(
     meta_payload.setdefault("selected_filing_id", selected_filing_id)
     meta_payload.setdefault("related_filings", [item.model_dump() for item in related_filings])
 
+    evidence_context = _build_evidence_payload(payload.get("context") or context_chunks)
+    meta_payload.setdefault("evidence_version", "v2")
+
     response = RAGQueryResponse(
         question=question,
         filing_id=selected_filing_id,
@@ -339,7 +536,7 @@ def _stateless_rag_response(
         user_message_id=None,
         assistant_message_id=None,
         answer=payload.get("answer", ""),
-        context=list(payload.get("context", context_chunks)),
+        context=evidence_context,
         citations=dict(payload.get("citations", {})),
         warnings=list(payload.get("warnings", [])),
         highlights=list(payload.get("highlights", [])),
@@ -367,6 +564,13 @@ def _stateless_rag_response(
             )
         except Exception as exc:  # pragma: no cover - background task failure
             logger.warning("Failed to enqueue stateless RAG self-check (trace_id=%s): %s", trace_id, exc)
+
+    if evidence_context:
+        _enqueue_evidence_snapshot(
+            evidence_context,
+            author=None,
+            trace_id=trace_id,
+        )
 
     return response
 
@@ -620,13 +824,13 @@ def query_rag(
             db.commit()
             raise HTTPException(status_code=500, detail=f"LLM answer failed: {error}")
 
-        context: List[Dict[str, object]] = list(result.get("context") or context_chunks)
+        context = _build_evidence_payload(result.get("context") or context_chunks)
         citations: Dict[str, List[str]] = dict(result.get("citations") or {})
         warnings: List[str] = list(result.get("warnings") or [])
         highlights: List[Dict[str, object]] = list(result.get("highlights") or [])
 
         retrieval_ids = [chunk.get("id") for chunk in context_chunks if isinstance(chunk.get("id"), str)]
-        answer_text = result.get("answer", "??? ???? ?????.")
+        answer_text = result.get("answer", "지금은 답변을 준비할 수 없습니다.")
         state_value = "error" if error else "ready"
         conversation_summary = None
         recent_turn_count = 0
@@ -662,6 +866,7 @@ def query_rag(
             "intent_reason": intent_reason,
             "intent_model": intent_result.get("model_used"),
         }
+        meta_payload["evidence_version"] = "v2"
         chat_service.update_message_state(
             db,
             message_id=assistant_message.id,
@@ -710,6 +915,18 @@ def query_rag(
                 logger.warning(
                     "Failed to enqueue RAG self-check (trace_id=%s): %s", trace_id, exc, exc_info=True
                 )
+
+        snapshot_author = None
+        if user_id:
+            snapshot_author = str(user_id)
+        elif session.user_id:
+            snapshot_author = str(session.user_id)
+        if context:
+            _enqueue_evidence_snapshot(
+                context,
+                author=snapshot_author,
+                trace_id=trace_id,
+            )
 
         db.commit()
         if needs_summary:
@@ -921,8 +1138,8 @@ def query_rag_stream(
                 if final_payload is None:
                     final_payload = {}
 
-                answer_text = final_payload.get("answer") or "".join(streamed_tokens) or "??? ???? ?????."
-                context: List[Dict[str, object]] = list(final_payload.get("context") or context_chunks)
+                answer_text = final_payload.get("answer") or "".join(streamed_tokens) or "지금은 답변을 준비할 수 없습니다."
+                context = _build_evidence_payload(final_payload.get("context") or context_chunks)
                 citations: Dict[str, List[str]] = dict(final_payload.get("citations") or {})
                 warnings: List[str] = list(final_payload.get("warnings") or [])
                 highlights: List[Dict[str, object]] = list(final_payload.get("highlights") or [])
@@ -956,6 +1173,7 @@ def query_rag_stream(
                     "selected_filing_id": selected_filing_id,
                     "related_filings": related_meta,
                 }
+                meta_payload["evidence_version"] = "v2"
 
                 state_value = "error" if error else "ready"
                 chat_service.update_message_state(
@@ -1007,6 +1225,18 @@ def query_rag_stream(
                         logger.warning(
                             "Failed to enqueue RAG self-check (trace_id=%s): %s", trace_id, exc, exc_info=True
                         )
+
+                snapshot_author = None
+                if user_id:
+                    snapshot_author = str(user_id)
+                elif session.user_id:
+                    snapshot_author = str(session.user_id)
+                if context:
+                    _enqueue_evidence_snapshot(
+                        context,
+                        author=snapshot_author,
+                        trace_id=trace_id,
+                    )
 
                 db.commit()
                 if needs_summary:

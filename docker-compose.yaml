@@ -161,6 +161,26 @@ services:
     networks:
       - kfinance_network
 
+  ingest-once:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint:
+      - sh
+      - -c
+      - >
+        python -m scripts.init_db &&
+        python -m scripts.seed_bootstrap &&
+        python -m ingest.dart_seed --recent 50
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+      - qdrant
+    networks:
+      - kfinance_network
+
 networks:
   kfinance_network:
     driver: bridge

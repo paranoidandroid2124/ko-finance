@@ -6,8 +6,10 @@ import logging
 import os
 import time
 import uuid
+import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
 import litellm
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient, models
@@ -34,6 +36,98 @@ class VectorSearchResult:
     filing_id: Optional[str]
     chunks: List[Dict[str, Any]] = field(default_factory=list)
     related_filings: List[Dict[str, Any]] = field(default_factory=list)
+
+
+def _to_paragraph_id(chunk: Dict[str, Any], metadata: Dict[str, Any]) -> Optional[str]:
+    paragraph_id = metadata.get("paragraph_id") or chunk.get("paragraph_id")
+    if paragraph_id:
+        return str(paragraph_id)
+    chunk_id = chunk.get("chunk_id") or chunk.get("id")
+    if chunk_id:
+        return str(chunk_id)
+    return None
+
+
+def _normalize_reliability(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"high", "medium", "low"}:
+            return lowered
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if numeric >= 0.66:
+        return "high"
+    if numeric >= 0.33:
+        return "medium"
+    return "low"
+
+
+def _normalize_anchor(chunk: Dict[str, Any], metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    anchor = metadata.get("anchor") or chunk.get("anchor")
+    if not isinstance(anchor, dict):
+        anchor = {}
+
+    paragraph_id = _to_paragraph_id(chunk, metadata)
+    if paragraph_id and "paragraph_id" not in anchor:
+        anchor["paragraph_id"] = paragraph_id
+
+    pdf_rect = anchor.get("pdf_rect") or metadata.get("pdf_rect")
+    if isinstance(pdf_rect, dict):
+        anchor["pdf_rect"] = {
+            "page": pdf_rect.get("page") or chunk.get("page_number"),
+            "x": pdf_rect.get("x") or 0.0,
+            "y": pdf_rect.get("y") or 0.0,
+            "width": pdf_rect.get("width") or 0.0,
+            "height": pdf_rect.get("height") or 0.0,
+        }
+
+    similarity = anchor.get("similarity") or chunk.get("similarity") or chunk.get("score")
+    if similarity is not None:
+        try:
+            anchor["similarity"] = float(similarity)
+        except (TypeError, ValueError):
+            anchor.pop("similarity", None)
+
+    return anchor or None
+
+
+def _normalize_chunk_payload(raw_payload: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(raw_payload)
+    metadata = payload.pop("metadata", {}) or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    chunk_id = payload.get("chunk_id") or payload.get("id") or metadata.get("chunk_id")
+    if chunk_id:
+        payload["chunk_id"] = str(chunk_id)
+        payload.setdefault("id", payload["chunk_id"])
+
+    quote = metadata.get("quote") or payload.get("quote")
+    if not quote:
+        quote = metadata.get("content") or payload.get("content") or ""
+    payload["quote"] = quote
+
+    for key in ("section", "page_number", "source_reliability", "created_at"):
+        if payload.get(key) is None and metadata.get(key) is not None:
+            payload[key] = metadata[key]
+
+    anchor = _normalize_anchor(payload, metadata)
+    if anchor:
+        payload["anchor"] = anchor
+
+    reliability = _normalize_reliability(payload.get("source_reliability"))
+    if reliability:
+        payload["source_reliability"] = reliability
+
+    if metadata:
+        payload["metadata"] = metadata
+
+    return payload
 
 
 def _create_client() -> QdrantClient:
@@ -201,13 +295,14 @@ def query_vector_store(
 
     grouped: Dict[str, List[Dict[str, Any]]] = {}
     for point in search_result:
-        payload = dict(point.payload or {})
-        payload["score"] = float(point.score or 0.0)
-        filing_key = str(payload.get("filing_id") or "")
+        raw_payload = dict(point.payload or {})
+        normalized = _normalize_chunk_payload(raw_payload)
+        normalized["score"] = float(point.score or 0.0)
+        filing_key = str(normalized.get("filing_id") or "")
         if not filing_key:
             continue
-        payload.setdefault("id", payload.get("chunk_id"))
-        grouped.setdefault(filing_key, []).append(payload)
+        normalized.setdefault("id", normalized.get("chunk_id"))
+        grouped.setdefault(filing_key, []).append(normalized)
 
     if filing_id and filing_id not in grouped:
         grouped[filing_id] = []

@@ -1,49 +1,53 @@
-# Phase 1 Data Requirements
+# Phase 1 Data Requirements – Search & Snapshot
 
-> Tracks backend/API changes required to support Phase 1 UI upgrades.  
-> Updated: 2025-10-25
+## 1. Overview
+- **Scope**: Phase 1 covers the global search hub, company snapshot shell, and news insight cards.
+- **Goal**: Document the data fields that must exist to power the UI and track their delivery state.
+- **Status**: ✅ search aggregation fields wired (filings/news/tables/charts). ✅ placeholders documented. 🔄 QA/Storybook polishing in progress.
 
-## 1. Company Snapshot Endpoint (`GET /api/v1/companies/{identifier}/snapshot`)
-| Field | Status | Notes |
-| --- | --- | --- |
-| ~~`market_returns_1d`~~ | Removed | 시세 연동 범위에서 제외. |
-| ~~`market_returns_5d`~~ | Removed | 시세 연동 범위에서 제외. |
-| ~~`market_returns_20d`~~ | Removed | 시세 연동 범위에서 제외. |
-| ~~`sector_return_delta`~~ | Removed | 시세 연동 범위에서 제외. |
-| ~~`volatility_20d`~~ | Removed | 시세 연동 범위에서 제외. |
-| `sector_code` | Partial | `useCompanySnapshot` exposes `ticker` / `corpCode` only; need taxonomy join. |
+## 2. API Endpoints & Fields
 
-- Quality rules: return `null` if insufficient historical prices; populate `sector_code` using canonical taxonomy.
+### 2.1 `GET /api/v1/search`
+| Field | Source | Notes | Status |
+| --- | --- | --- | --- |
+| `results[].type` | aggregation service | `filing`, `news`, `table`, `chart` | ✅ |
+| `results[].evidenceCounts.filings` | Filing corpus | grouped by corp/ticker | ✅ |
+| `results[].evidenceCounts.news` | NewsSignal ticker counts | requires ticker tagging | ✅ |
+| `results[].evidenceCounts.tables` | CorpMetric aggregates | metric count per corp | ✅ |
+| `results[].evidenceCounts.charts` | NewsWindowAggregate | article_count per window | ✅ |
+| `results[].sourceReliability` | weighted ticker reliability | falls back to NewsSignal average | ✅ |
+| `results[].latestIngestedAt` | filed_at / observed_at / computed_for | relative time label | ✅ |
+| `totals.{type}` | aggregation service | used for tab counts & pagination | ✅ |
 
-## 2. Search Aggregation Endpoint (`GET /api/v1/search`)
-| Field | Status | Notes |
-| --- | --- | --- |
-| `results[].evidence_counts` | Missing | Search components do not exist yet; backend endpoint also absent. |
-| `results[].latest_ingested_at` | Missing | Requires ingestion metadata. |
-| `results[].source_reliability` | Missing | Search aggregation endpoint still TBD. |
-| `results[].event_returns` | Missing | Need joined market data. |
+### 2.2 Company Snapshot (Phase 1 placeholder strategy)
+| Field | Source | Notes | Status |
+| --- | --- | --- | --- |
+| `market_returns_{1d,5d,20d}` | De-scoped | Paid market data excluded; UI shows placeholder copy | ❌ |
+| `sector_return_delta` | De-scoped | Same as above | ❌ |
+| `volatility_20d` | De-scoped | Same as above | ❌ |
+| `news_signals[].source_reliability` | NewsWindowAggregate | available for ticker scope | ✅ |
 
-- TODO: confirm endpoint path and authentication model.
+### 2.3 News Insight Cards
+| Field | Source | Notes | Status |
+| --- | --- | --- | --- |
+| `avg_sentiment` | NewsWindowAggregate | ticker scope | ✅ |
+| `domain_diversity` | NewsWindowAggregate | ensure pipeline keeps field | ✅ |
+| `top_topics` | NewsWindowAggregate.top_topics | array of topic/count | ✅ |
+| `latest_ingested_at` | NewsWindowAggregate.computed_for | freshness label | ✅ |
 
-## 3. News Window Insights (`GET /api/v1/news/windows`)
-| Field | Status | Notes |
-| --- | --- | --- |
-| `items[].source_reliability` | Heuristic | Populated via `services.reliability.source_reliability`. |
-  - Overrides can be applied via `SOURCE_RELIABILITY_OVERRIDE_PATH` or `SOURCE_RELIABILITY_OVERRIDES_JSON`.
-| `items[].deduplication_cluster_id` | Missing | No dedupe metadata in current responses. |
-| `items[].domain_diversity` | Present | Already mapped via `useCompanySnapshot`. |
-| `items[].top_topics` | Present | Ensure casing normalization (currently lower-case). |
+## 3. Data Quality Checklist
+- [x] Search totals match DB counts (spot check per ticker).
+- [x] Source reliability falls back gracefully when no override exists.
+- [ ] KPI market return fields present *(excluded in Phase 1 – revisit if free source identified)*.
+- [ ] Sector delta field populated *(excluded in Phase 1 – same condition)*.
+- [x] Table metrics hide badge when no CorpMetric records.
+- [x] Chart entries handle null corp_name and scope appropriately.
 
-## 4. Derived Metrics Backfill Tasks
-- (Removed) Ensure Celery task computing returns runs nightly and writes to snapshot cache.
-- Add monitoring for missing market data (fallback to `null` and log warning).
-- Provide fixture dataset for frontend development located at `tests/fixtures/phase1`.
+## 4. Dependencies & Actions
+- Paid market data is out of scope for Phase 1. Re-open items once a free/open feed is confirmed.
+- Maintain news ticker tagging quality → affects chart/tab counts and reliability averages.
+- Monitor `/api/v1/search` P95 latency after table/chart joins; add caching if >500ms.
 
-## 5. Open Questions / Follow-ups
-- Do we expose raw price series for sparkline (Phase 2 dependency) or keep aggregated metrics only?
-- Reliability score source of truth — news fetcher vs downstream model?
-- Authentication/plan gating: does search endpoint return locked actions metadata?
-
----
-- Owner: TBD  
-- Next review: align with backend team before 2025-11-06 kickoff.
+## 5. Revision History
+- **2025-10-27**: Initial draft (feomax).
+- **2025-10-27**: Updated to mark market/sector KPI as de-scoped (feomax).

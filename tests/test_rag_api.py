@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 import types
 
 sys.modules.setdefault("fitz", types.SimpleNamespace())  # type: ignore
@@ -28,7 +28,28 @@ def test_rag_query_guardrail(monkeypatch):
         "classify_query_intent",
         lambda question: {"decision": "pass", "reason": "", "model_used": "intent-test"},
     )
-    context = [{"id": "c1", "type": "text", "content": "dummy"}]
+    context = [
+        {
+            "id": "c1",
+            "chunk_id": "chunk-1",
+            "type": "text",
+            "content": "Evidence quote",
+            "page_number": 5,
+            "section": "Overview",
+            "metadata": {
+                "paragraph_id": "para-500",
+                "anchor": {
+                    "paragraph_id": "para-500",
+                    "pdf_rect": {"page": 5, "x": 120, "y": 340, "width": 380, "height": 64},
+                    "similarity": 0.86,
+                },
+                "source_reliability": "high",
+                "created_at": "2025-11-20T04:12:45Z",
+            },
+            "self_check": {"score": 0.78, "verdict": "pass", "explanation": "Matches original filing"},
+            "score": 0.86,
+        }
+    ]
     monkeypatch.setattr(
         vector_service,
         "query_vector_store",
@@ -49,21 +70,31 @@ def test_rag_query_guardrail(monkeypatch):
 
     monkeypatch.setattr(llm_service, "answer_with_rag", fake_answer)
     monkeypatch.setattr(rag.run_rag_self_check, "delay", lambda payload: payload)
+    monkeypatch.setattr(rag.snapshot_evidence_diff, "delay", lambda payload: payload)
 
     response = client.post(
         "/api/v1/rag/query",
-        json={"question": "샘플 질문", "filing_id": "abc"},
+        json={"question": "sample question", "filing_id": "abc"},
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["answer"].startswith("투자 자문이나 매수·매도 권고는 제공되지 않습니다")
     assert payload["error"].startswith("guardrail_violation")
     assert payload["original_answer"] == "Buy this stock now (p.1)"
     assert payload["model_used"] == "test-model"
     assert payload["warnings"] == ["guardrail_violation:buy\\s+this\\s+stock"]
-
-
+    assert payload["meta"]["evidence_version"] == "v2"
+    assert payload["context"]
+    evidence = payload["context"][0]
+    assert evidence["urn_id"].startswith("urn:chunk:")
+    assert evidence["chunk_id"] == "chunk-1"
+    assert evidence["quote"] == "Evidence quote"
+    assert evidence["content"] == "Evidence quote"
+    assert evidence["page_number"] == 5
+    assert evidence["section"] == "Overview"
+    assert evidence["self_check"]["verdict"] == "pass"
+    assert evidence["source_reliability"] == "high"
+    assert evidence["anchor"]["pdf_rect"]["page"] == 5
 
 def test_rag_query_no_context(monkeypatch):
     monkeypatch.setattr(
@@ -77,17 +108,18 @@ def test_rag_query_no_context(monkeypatch):
         lambda **_: VectorSearchResult(filing_id="abc", chunks=[], related_filings=[]),
     )
     monkeypatch.setattr(rag.run_rag_self_check, "delay", lambda payload: payload)
+    monkeypatch.setattr(rag.snapshot_evidence_diff, "delay", lambda payload: payload)
 
     response = client.post(
         "/api/v1/rag/query",
-        json={"question": "샘플 질문", "filing_id": "abc"},
+        json={"question": "sample question", "filing_id": "abc"},
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["warnings"] == ["no_context"]
     assert payload["context"] == []
-    assert payload["answer"] == "관련 근거 문서를 찾지 못했습니다. 다른 질문을 시도해 주세요."
+    assert payload["answer"] == rag.NO_CONTEXT_ANSWER
 
 
 
@@ -104,6 +136,7 @@ def test_rag_query_intent_semipass(monkeypatch):
     monkeypatch.setattr(vector_service, "query_vector_store", fail_query)
     monkeypatch.setattr(llm_service, "answer_with_rag", fail_query)
     monkeypatch.setattr(rag.run_rag_self_check, "delay", lambda payload: payload)
+    monkeypatch.setattr(rag.snapshot_evidence_diff, "delay", lambda payload: payload)
 
     dummy_session = SimpleNamespace(
         id=str(uuid.uuid4()),
@@ -146,10 +179,10 @@ def test_rag_query_intent_semipass(monkeypatch):
 
     response = client.post(
         "/api/v1/rag/query",
-        json={"question": "너는 누구니?"},
+        json={"question": "ë„ˆëŠ” ëˆ„êµ¬ë‹ˆ?"},
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["warnings"] == ["intent_filter:semi_pass"]
-    assert "공시·금융" in payload["answer"]
+    assert payload["answer"] == rag.INTENT_GENERAL_MESSAGE

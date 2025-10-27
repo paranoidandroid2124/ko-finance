@@ -16,13 +16,13 @@ class NewsSignalResponse(BaseModel):
     ticker: Optional[str] = None
     source: str
     headline: str
-   url: str
-   published_at: datetime
-   sentiment: Optional[float] = None
+    url: str
+    published_at: datetime
+    sentiment: Optional[float] = None
     source_reliability: Optional[float] = Field(
         None, description="Heuristic reliability score (0~1)"
     )
-   topics: List[str] = Field(default_factory=list)
+    topics: List[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 

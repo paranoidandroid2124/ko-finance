@@ -1,132 +1,94 @@
 import type { Meta, StoryObj } from "@storybook/react";
-import { useState } from "react";
+import React from "react";
 
-const transitions = [
-  {
-    name: "motion-fast",
-    description: "Quick hover/focus transitions",
-    className: "transition-motion-fast hover:-translate-y-1"
-  },
-  {
-    name: "motion-medium",
-    description: "Card entrance, skeleton shimmer",
-    className: "transition-motion-medium hover:-translate-y-1.5"
-  },
-  {
-    name: "motion-slow",
-    description: "Drawer / panel slides",
-    className: "transition-motion-slow hover:-translate-y-2"
-  }
+const MOTION_TOKENS = [
+  { name: "motion-fast", description: "120ms ease-out (button hover, locks)" },
+  { name: "motion-medium", description: "220ms ease-in-out (card hover, tab transitions)" },
+  { name: "motion-slow", description: "320ms ease-in-out (modal, panel)" },
+  { name: "motion-tactile", description: "keyframe lock shake, reduced motion aware" },
 ];
 
-const animations = [
-  {
-    name: "motion-shimmer",
-    description: "Skeleton loading effect",
-    className: "animate-motion-shimmer"
-  },
-  {
-    name: "lock-shake",
-    description: "Locked action feedback",
-    className: "animate-lock-shake"
-  }
+const COLOR_SWATCHES = [
+  { token: "bg-primary", label: "Primary / Brand" },
+  { token: "bg-success", label: "Success State" },
+  { token: "bg-warning", label: "Warning State" },
+  { token: "bg-error", label: "Error State" },
 ];
 
-function TransitionSample() {
-  const [active, setActive] = useState<string | null>(null);
-
-  return (
-    <div className="grid gap-4 md:grid-cols-3">
-      {transitions.map((item) => (
-        <button
-          key={item.name}
-          type="button"
-          onMouseEnter={() => setActive(item.name)}
-          onFocus={() => setActive(item.name)}
-          onBlur={() => setActive(null)}
-          onMouseLeave={() => setActive(null)}
-          className={`rounded-xl border border-border-light bg-white p-4 text-left shadow-card ${
-            item.className
-          }`}
-        >
-          <p className="text-sm font-semibold text-text-primaryLight">{item.name}</p>
-          <p className="mt-2 text-xs text-text-secondaryLight">{item.description}</p>
-          <p className="mt-4 text-[11px] uppercase tracking-wide text-primary">
-            {active === item.name ? "Active" : "Hover or focus"}
-          </p>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function AnimationSample() {
-  return (
-    <div className="grid gap-4 md:grid-cols-2">
-      <div className="rounded-xl border border-dashed border-border-light bg-background-light/70 p-4">
-        <p className="text-sm font-semibold text-text-primaryLight">Shimmer</p>
-        <div className="mt-3 h-4 w-full overflow-hidden rounded">
-          <div className="h-full w-1/2 rounded motion-shimmer animate-motion-shimmer bg-background-cardLight" />
-        </div>
-        <p className="mt-2 text-xs text-text-secondaryLight">
-          Apply <code>animate-motion-shimmer</code> to skeleton blocks.
-        </p>
-      </div>
-      <div className="rounded-xl border border-dashed border-border-light bg-background-light/70 p-4">
-        <p className="text-sm font-semibold text-text-primaryLight">Lock Shake</p>
-        <button
-          type="button"
-          className="mt-3 inline-flex items-center gap-2 rounded-lg border border-border-light px-3 py-2 text-sm font-semibold text-text-secondaryLight transition-motion-tactile hover:border-primary hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          onClick={(event) => {
-            event.currentTarget.classList.remove("animate-lock-shake");
-            // eslint-disable-next-line no-void
-            void event.currentTarget.offsetWidth; // restart animation
-            event.currentTarget.classList.add("animate-lock-shake");
-          }}
-        >
-          Upgrade Required
-        </button>
-        <p className="mt-2 text-xs text-text-secondaryLight">
-          Trigger <code>animate-lock-shake</code> on locked actions to emphasise gating.
-        </p>
-      </div>
-    </div>
-  );
-}
+const TYPOGRAPHY = [
+  { token: "text-text-primaryLight", label: "Primary Light" },
+  { token: "text-text-secondaryLight", label: "Secondary Light" },
+  { token: "dark:text-text-primaryDark", label: "Primary Dark" },
+  { token: "dark:text-text-secondaryDark", label: "Secondary Dark" },
+];
 
 const meta: Meta = {
-  title: "Design/TokenPreview",
+  title: "Design Tokens/Motion & Theme Preview",
   parameters: {
-    layout: "padded"
-  }
+    layout: "fullscreen",
+  },
 };
 
 export default meta;
 
 type Story = StoryObj;
 
-export const MotionTokens: Story = {
-  render: () => (
-    <div className="space-y-10">
-      <section>
-        <h2 className="text-lg font-semibold text-text-primaryLight">Transition Tokens</h2>
-        <p className="mt-2 text-sm text-text-secondaryLight">
-          Utility helpers that wrap duration and easing pairs defined in <code>motion.css</code>.
-        </p>
-        <div className="mt-6">
-          <TransitionSample />
-        </div>
-      </section>
+const PreviewCard = ({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) => (
+  <section className="space-y-3 rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+    <header>
+      <h3 className="text-base font-semibold text-text-primaryLight dark:text-text-primaryDark">{title}</h3>
+      {description ? (
+        <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">{description}</p>
+      ) : null}
+    </header>
+    <div className="grid gap-3">{children}</div>
+  </section>
+);
 
-      <section>
-        <h2 className="text-lg font-semibold text-text-primaryLight">Animation Tokens</h2>
-        <p className="mt-2 text-sm text-text-secondaryLight">
-          Reusable animations for skeletons and lock interactions.
-        </p>
-        <div className="mt-6">
-          <AnimationSample />
+export const Overview: Story = {
+  render: () => (
+    <div className="space-y-6 bg-background-light p-6 text-text-primaryLight dark:bg-background-dark dark:text-text-primaryDark">
+      <PreviewCard title="Motion Tokens" description="Utility classes used throughout Phase 1 interactions.">
+        {MOTION_TOKENS.map((token) => (
+          <div key={token.name} className="flex items-center justify-between gap-4 rounded-xl border border-dashed border-border-light p-4 dark:border-border-dark">
+            <div>
+              <p className="font-semibold">{token.name}</p>
+              <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">{token.description}</p>
+            </div>
+            <div className={`h-10 w-10 rounded-full bg-primary/80 ${token.name === "motion-tactile" ? "animate-lock-shake" : `transition-${token.name}`} `} />
+          </div>
+        ))}
+      </PreviewCard>
+
+      <PreviewCard title="Color Theme" description="Brand and feedback palette pairings.">
+        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+          {COLOR_SWATCHES.map((item) => (
+            <div
+              key={item.token}
+              className={`flex h-24 flex-col justify-between rounded-xl border border-border-light p-3 text-sm text-white shadow-card dark:border-border-dark ${item.token}`}
+            >
+              <span className="font-semibold">{item.token}</span>
+              <span>{item.label}</span>
+            </div>
+          ))}
         </div>
-      </section>
+      </PreviewCard>
+
+      <PreviewCard title="Typography" description="Primary text tokens in light/dark modes.">
+        {TYPOGRAPHY.map((item) => (
+          <p key={item.token} className={`rounded-lg border border-border-light bg-background-light p-3 text-base dark:border-border-dark dark:bg-background-dark ${item.token}`}>
+            {item.label} — token `{item.token}`
+          </p>
+        ))}
+      </PreviewCard>
     </div>
-  )
+  ),
 };
