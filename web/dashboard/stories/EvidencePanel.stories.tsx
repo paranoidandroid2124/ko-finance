@@ -4,36 +4,54 @@ import { EvidencePanel, type EvidencePanelItem } from "@/components/evidence";
 const SAMPLE_ITEMS: EvidencePanelItem[] = [
   {
     urnId: "urn:chunk:fin-1",
-    section: "재무 하이라이트",
+    section: "Financial Highlights",
     pageNumber: 12,
     quote:
-      "3분기 영업이익은 전년 대비 28% 증가했으며, 해외 매출 비중이 55%로 확대되었습니다.",
+      "Q3 revenue climbed 28% year over year and export share expanded to 55%.",
     anchor: { similarity: 0.84 },
     selfCheck: { verdict: "pass", score: 0.82 },
     sourceReliability: "high",
     chunkId: "chunk-401",
+    diffType: "updated",
+    previousQuote: "Revenue grew 20% last quarter with exports accounting for half of sales.",
+    previousSection: "Financial Highlights",
+    previousPageNumber: 10,
+    diffChangedFields: ["quote", "page_number"],
   },
   {
     urnId: "urn:chunk:fin-2",
-    section: "리스크 요인",
+    section: "Risk Factors",
     pageNumber: 17,
     quote:
-      "원자재 가격 상승에 따라 4분기 마진은 1.4%p 하락이 예상되며, 환율 변동성이 확대되었습니다.",
+      "Higher input prices are expected to compress Q4 margins by 1.4ppt while FX volatility remains elevated.",
     anchor: { similarity: 0.73 },
-    selfCheck: { verdict: "warn", score: 0.58, explanation: "환율 영향 수치가 미확인" },
+    selfCheck: { verdict: "warn", score: 0.58, explanation: "FX impact still pending validation" },
     sourceReliability: "medium",
     chunkId: "chunk-429",
+    diffType: "created",
+    diffChangedFields: ["quote", "section"],
   },
   {
     urnId: "urn:chunk:locked",
-    section: "PDF 주석",
+    section: "PDF Annotation",
     pageNumber: 22,
-    quote: "Pro 이상 플랜에서만 하이라이트를 확인할 수 있는 문단입니다.",
+    quote: "Only Pro plans and above can open this inline highlight.",
     anchor: null,
     selfCheck: null,
     sourceReliability: "high",
     chunkId: "chunk-477",
     locked: true,
+    diffType: "unchanged",
+  },
+];
+
+const REMOVED_ITEMS: EvidencePanelItem[] = [
+  {
+    urnId: "urn:chunk:removed",
+    section: "Removed reference",
+    quote: "This citation existed in the previous snapshot but was removed in the latest response.",
+    pageNumber: 9,
+    diffType: "removed",
   },
 ];
 
@@ -58,6 +76,7 @@ const meta: Meta<typeof EvidencePanel> = {
     pdfDownloadUrl: INLINE_PDF_SAMPLE,
     diffEnabled: true,
     diffActive: false,
+    removedItems: REMOVED_ITEMS,
   },
 };
 
@@ -66,6 +85,13 @@ export default meta;
 type Story = StoryObj<typeof EvidencePanel>;
 
 export const Ready: Story = {};
+
+export const DiffActive: Story = {
+  args: {
+    diffActive: true,
+    removedItems: REMOVED_ITEMS,
+  },
+};
 
 export const Loading: Story = {
   args: {
@@ -98,3 +124,6 @@ export const FreePlanLocked: Story = {
     diffEnabled: false,
   },
 };
+
+
+

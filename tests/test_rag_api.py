@@ -21,6 +21,31 @@ app.include_router(rag.router, prefix="/api/v1")
 client = TestClient(app)
 
 
+def fake_diff_metadata(_db, evidence):
+    for item in evidence:
+        if isinstance(item, dict):
+            item.setdefault("diff_type", "created")
+            item.pop("previous_quote", None)
+            item.pop("previousQuote", None)
+            item.pop("previous_section", None)
+            item.pop("previousSection", None)
+            item.pop("previous_page_number", None)
+            item.pop("previousPageNumber", None)
+            item.pop("previous_anchor", None)
+            item.pop("previousAnchor", None)
+            item.pop("previous_source_reliability", None)
+            item.pop("previousSourceReliability", None)
+            item.pop("previous_self_check", None)
+            item.pop("previousSelfCheck", None)
+            item.pop("diff_changed_fields", None)
+            item.pop("diffChangedFields", None)
+    return {"enabled": bool(evidence), "removed": []}
+
+
+class DummyTask:
+    def delay(self, payload):
+        return payload
+
 
 def test_rag_query_guardrail(monkeypatch):
     monkeypatch.setattr(
@@ -69,8 +94,10 @@ def test_rag_query_guardrail(monkeypatch):
         }
 
     monkeypatch.setattr(llm_service, "answer_with_rag", fake_answer)
-    monkeypatch.setattr(rag.run_rag_self_check, "delay", lambda payload: payload)
-    monkeypatch.setattr(rag.snapshot_evidence_diff, "delay", lambda payload: payload)
+    monkeypatch.setattr(rag, "run_rag_self_check", DummyTask())
+    monkeypatch.setattr(rag, "snapshot_evidence_diff", DummyTask())
+    monkeypatch.setattr(rag, "attach_diff_metadata", fake_diff_metadata)
+    monkeypatch.setattr(rag, "_enqueue_evidence_snapshot", lambda *args, **kwargs: None)
 
     response = client.post(
         "/api/v1/rag/query",
@@ -95,6 +122,9 @@ def test_rag_query_guardrail(monkeypatch):
     assert evidence["self_check"]["verdict"] == "pass"
     assert evidence["source_reliability"] == "high"
     assert evidence["anchor"]["pdf_rect"]["page"] == 5
+    assert evidence["diff_type"] == "created"
+    assert not evidence.get("previous_quote")
+    assert payload["meta"]["evidence_diff"] == {"enabled": True, "removed": []}
 
 def test_rag_query_no_context(monkeypatch):
     monkeypatch.setattr(
@@ -107,8 +137,10 @@ def test_rag_query_no_context(monkeypatch):
         "query_vector_store",
         lambda **_: VectorSearchResult(filing_id="abc", chunks=[], related_filings=[]),
     )
-    monkeypatch.setattr(rag.run_rag_self_check, "delay", lambda payload: payload)
-    monkeypatch.setattr(rag.snapshot_evidence_diff, "delay", lambda payload: payload)
+    monkeypatch.setattr(rag, "run_rag_self_check", DummyTask())
+    monkeypatch.setattr(rag, "snapshot_evidence_diff", DummyTask())
+    monkeypatch.setattr(rag, "attach_diff_metadata", fake_diff_metadata)
+    monkeypatch.setattr(rag, "_enqueue_evidence_snapshot", lambda *args, **kwargs: None)
 
     response = client.post(
         "/api/v1/rag/query",
@@ -120,6 +152,7 @@ def test_rag_query_no_context(monkeypatch):
     assert payload["warnings"] == ["no_context"]
     assert payload["context"] == []
     assert payload["answer"] == rag.NO_CONTEXT_ANSWER
+    assert payload["meta"]["evidence_diff"] == {"enabled": False, "removed": []}
 
 
 
@@ -135,8 +168,10 @@ def test_rag_query_intent_semipass(monkeypatch):
 
     monkeypatch.setattr(vector_service, "query_vector_store", fail_query)
     monkeypatch.setattr(llm_service, "answer_with_rag", fail_query)
-    monkeypatch.setattr(rag.run_rag_self_check, "delay", lambda payload: payload)
-    monkeypatch.setattr(rag.snapshot_evidence_diff, "delay", lambda payload: payload)
+    monkeypatch.setattr(rag, "run_rag_self_check", DummyTask())
+    monkeypatch.setattr(rag, "snapshot_evidence_diff", DummyTask())
+    monkeypatch.setattr(rag, "attach_diff_metadata", fake_diff_metadata)
+    monkeypatch.setattr(rag, "_enqueue_evidence_snapshot", lambda *args, **kwargs: None)
 
     dummy_session = SimpleNamespace(
         id=str(uuid.uuid4()),
@@ -186,3 +221,4 @@ def test_rag_query_intent_semipass(monkeypatch):
     payload = response.json()
     assert payload["warnings"] == ["intent_filter:semi_pass"]
     assert payload["answer"] == rag.INTENT_GENERAL_MESSAGE
+    assert payload["meta"]["evidence_diff"] == {"enabled": False, "removed": []}

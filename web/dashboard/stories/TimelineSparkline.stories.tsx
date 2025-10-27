@@ -10,6 +10,12 @@ const BASE_POINTS: TimelineSparklinePoint[] = Array.from({ length: 14 }).map((_,
     priceClose: 72000 + index * 420 - Math.pow(index - 7, 2) * 80,
     volume: 250000 + Math.max(0, 8 - Math.abs(index - 6)) * 35000,
     eventType: index === 6 ? "실적 발표" : undefined,
+    evidenceUrnIds:
+      index === 6
+        ? ["urn:evidence:diff", "urn:evidence:risk"]
+        : index === 9
+        ? ["urn:evidence:timeline"]
+        : undefined,
   };
 });
 
@@ -51,6 +57,21 @@ export const EmptyState: Story = {
   args: {
     points: [],
     planTier: "pro",
+  },
+};
+
+export const EvidenceLinked: Story = {
+  args: {
+    points: BASE_POINTS,
+    highlightDate: BASE_POINTS[9]?.date,
+  },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "evidenceUrnIds가 포함된 포인트는 EvidenceWorkspace 연동 시 하이라이트 및 텔레메트리를 검증할 때 사용됩니다.",
+      },
+    },
   },
 };
 

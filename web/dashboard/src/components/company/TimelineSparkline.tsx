@@ -1,8 +1,10 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import type { EChartsType } from "echarts";
 import type { PlanTier } from "@/components/evidence";
+import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -28,9 +30,9 @@ export type TimelineSparklineProps = {
 };
 
 const PLAN_DESCRIPTION: Record<PlanTier, string> = {
-  free: "가격·거래량 축은 Pro 이상에서 활성화됩니다.",
-  pro: "감성·가격 추세를 함께 검토할 수 있습니다.",
-  enterprise: "감성·가격·거래량을 모두 표시합니다.",
+  free: "핵심 감성 흐름을 먼저 함께 나눠드려요. 더 살펴보고 싶을 땐 언제든 말씀 주세요.",
+  pro: "감성과 가격을 나란히 살피며 오늘의 변화를 차분히 안내해 드릴게요.",
+  enterprise: "감성·가격·거래량까지 한눈에 담아 조직의 걸음을 함께 챙겨드리고 있습니다.",
 };
 
 function formatDateLabel(isoDate: string) {
@@ -56,12 +58,50 @@ export function TimelineSparkline({
   onRequestUpgrade,
 }: TimelineSparklineProps) {
   const hasData = points.length > 0;
+  const prefersReducedMotion = usePrefersReducedMotion();
+  const chartInstanceRef = useRef<EChartsType | null>(null);
   const highlightIndex = useMemo(() => {
     if (!highlightDate) {
       return -1;
     }
     return points.findIndex((point) => point.date === highlightDate);
   }, [points, highlightDate]);
+
+  useEffect(() => {
+    const chartInstance = chartInstanceRef.current;
+    if (!chartInstance || !hasData || locked) {
+      return;
+    }
+
+    const lineSeriesIndexes = [0, 1];
+
+    if (highlightIndex >= 0) {
+      lineSeriesIndexes.forEach((seriesIndex) => {
+        chartInstance.dispatchAction({
+          type: "highlight",
+          seriesIndex,
+          dataIndex: highlightIndex,
+        });
+      });
+      chartInstance.dispatchAction({
+        type: "showTip",
+        seriesIndex: 0,
+        dataIndex: highlightIndex,
+      });
+    } else {
+      chartInstance.dispatchAction({ type: "hideTip" });
+      lineSeriesIndexes.forEach((seriesIndex) => {
+        chartInstance.dispatchAction({
+          type: "downplay",
+          seriesIndex,
+        });
+      });
+    }
+  }, [highlightIndex, hasData, locked]);
+
+  const handleChartReady = useCallback((instance: EChartsType) => {
+    chartInstanceRef.current = instance;
+  }, []);
 
   const option = useMemo(() => {
     if (!hasData || locked) {
@@ -76,9 +116,24 @@ export function TimelineSparkline({
       typeof point.priceClose === "number" ? Number(point.priceClose.toFixed(2)) : null,
     );
     const volumes = points.map((point) => (typeof point.volume === "number" ? Math.round(point.volume) : null));
+    const highlightCategory = highlightIndex >= 0 ? categories[highlightIndex] : undefined;
+    const lineHighlight =
+      highlightCategory !== undefined
+        ? {
+            symbol: "none" as const,
+            lineStyle: { color: "rgba(56, 189, 248, 0.7)", width: 1.5, type: "dashed" as const },
+            data: [{ xAxis: highlightCategory }],
+            silent: true,
+          }
+        : undefined;
 
     return {
       backgroundColor: "transparent",
+      animation: !prefersReducedMotion,
+      animationDuration: prefersReducedMotion ? 0 : 200,
+      animationDurationUpdate: prefersReducedMotion ? 0 : 320,
+      animationEasing: "cubicOut",
+      animationEasingUpdate: "cubicOut",
       grid: {
         top: 32,
         left: 16,
@@ -87,7 +142,7 @@ export function TimelineSparkline({
         containLabel: true,
       },
       legend: {
-        data: ["감성 지수", "가격", ...(showVolume ? ["거래량"] : [])],
+        data: ["감성 온도", "가격", ...(showVolume ? ["거래량"] : [])],
         textStyle: { color: "#94a3b8", fontSize: 11 },
       },
       tooltip: {
@@ -109,10 +164,10 @@ export function TimelineSparkline({
 
           const rows = params.map((item) => {
             if (item.value === null || item.value === undefined) {
-              return `${item.seriesName}: 데이터 없음`;
+              return `${item.seriesName}: 데이터 준비 중`;
             }
             const formatted =
-              item.seriesName === "감성 지수"
+              item.seriesName === "감성 온도"
                 ? item.value.toFixed(2)
                 : item.seriesName === "거래량"
                 ? item.value.toLocaleString()
@@ -121,10 +176,10 @@ export function TimelineSparkline({
           });
 
           if (source?.eventType) {
-            rows.push(`이벤트: ${source.eventType}`);
+            rows.push(`기록된 소식: ${source.eventType}`);
           }
           if (source?.evidenceUrnIds && source.evidenceUrnIds.length) {
-            rows.push(`관련 근거: ${source.evidenceUrnIds.length}개`);
+            rows.push(`함께 읽을 문장: ${source.evidenceUrnIds.length}개`);
           }
 
           return [`<strong>${dateLabel}</strong>`, ...rows].join("<br/>");
@@ -145,11 +200,18 @@ export function TimelineSparkline({
         axisLine: { lineStyle: { color: "rgba(148,163,184,0.3)" } },
         axisLabel: { color: "#94a3b8", fontSize: 10 },
         axisTick: { show: false },
+        axisPointer:
+          highlightCategory !== undefined
+            ? {
+                value: highlightCategory,
+                lineStyle: { color: "rgba(56, 189, 248, 0.7)", width: 1.4, type: "dashed" },
+              }
+            : undefined,
       },
       yAxis: [
         {
           type: "value",
-          name: "감성",
+          name: "감성 온도",
           position: "left",
           alignTicks: true,
           axisLine: { show: false },
@@ -180,7 +242,7 @@ export function TimelineSparkline({
       ],
       series: [
         {
-          name: "감성 지수",
+          name: "감성 온도",
           type: "line",
           smooth: true,
           data: sentiment,
@@ -201,6 +263,7 @@ export function TimelineSparkline({
             },
           },
           symbol: "none",
+          markLine: lineHighlight,
         },
         {
           name: "가격",
@@ -211,6 +274,7 @@ export function TimelineSparkline({
           connectNulls: true,
           lineStyle: { width: 2, color: "#F97316" },
           symbol: "none",
+          markLine: lineHighlight,
         },
         ...(showVolume
           ? [
@@ -246,7 +310,7 @@ export function TimelineSparkline({
           ]
         : undefined,
     };
-  }, [hasData, locked, points, planTier, showVolume, highlightIndex]);
+  }, [hasData, locked, points, planTier, showVolume, highlightIndex, prefersReducedMotion]);
 
   const handleMouseOver = useMemo(
     () => ({
@@ -277,7 +341,7 @@ export function TimelineSparkline({
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">
-            타임라인 감성·가격 추이
+            감성·가격 추이 살펴보기
           </h3>
           <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">{PLAN_DESCRIPTION[planTier]}</p>
         </div>
@@ -290,10 +354,10 @@ export function TimelineSparkline({
         {locked ? (
           <div className="flex h-[240px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border-light/80 bg-white/70 text-center text-sm text-text-secondaryLight dark:border-border-dark/70 dark:bg-white/10 dark:text-text-secondaryDark">
             <p className="text-base font-semibold text-text-primaryLight dark:text-text-primaryDark">
-              상위 플랜 전용 타임라인
+              Pro 동료들과 먼저 나누는 타임라인
             </p>
             <p className="text-xs leading-5">
-              감성 지수와 가격 스파크라인은 Pro 이상에서 사용할 수 있어요. 업그레이드하고 시장 반응을 한눈에 확인해 보세요.
+              감성 온도와 가격 지표는 Pro 이상에서 함께 열어드리고 있어요. 필요하시면 언제든 연락 주세요, 바로 안내해 드릴게요.
             </p>
             {onRequestUpgrade ? (
               <button
@@ -301,13 +365,13 @@ export function TimelineSparkline({
                 className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white transition-motion-fast hover:bg-primary-hover"
                 onClick={onRequestUpgrade}
               >
-                업그레이드 문의
+                함께 이야기 나누기
               </button>
             ) : null}
           </div>
         ) : !hasData ? (
           <div className="flex h-[240px] items-center justify-center rounded-lg border border-dashed border-border-light text-xs text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
-            표시할 타임라인 데이터가 없습니다.
+            아직 보여드릴 타임라인이 없어요. 잠시 뒤 다시 살펴볼까요?
           </div>
         ) : option ? (
           <ReactECharts
@@ -316,11 +380,12 @@ export function TimelineSparkline({
             notMerge
             lazyUpdate
             onEvents={handleMouseOver}
+            onChartReady={handleChartReady}
             theme="light"
           />
         ) : (
           <div className="flex h-[240px] items-center justify-center rounded-lg border border-border-light text-xs text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
-            차트를 불러오지 못했습니다.
+            차트를 잠시 불러오지 못했어요. 새로고침 후 다시 도와드릴게요.
           </div>
         )}
       </div>

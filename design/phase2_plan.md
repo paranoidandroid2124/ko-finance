@@ -1,6 +1,7 @@
 ﻿# Phase 2 Plan — Evidence Panel & RAG Integration
 
 > Timebox: 2025-11-20 → 2025-12-04 · Owner: TBD · Status: Draft
+> Status update (2025-11-27): Phase 2 deliverables shipped — scope closed and handed off to Phase 3.
 
 ## 1. Scope & Goals
 - Rebuild the evidence panel with paragraph highlights, PDF inline viewing, and update tracking.
@@ -9,14 +10,14 @@
 - Out-of-scope: Alert engine, plan upgrade billing, enterprise API export.
 
 ## 2. Deliverables
-| Deliverable | Type | Target Path | Notes |
+| Deliverable | Type | Target Path | Status / Notes |
 | --- | --- | --- | --- |
-| EvidencePanel v2 | Component | web/dashboard/src/components/evidence/EvidencePanel.tsx | Paragraph highlights, PDF iframe, diff badges |
-| TimelineSparkline | Component | web/dashboard/src/components/company/TimelineSparkline.tsx | Dual-axis sentiment + price sparkline |
-| RAG response schema update | API/Schema | schemas/api/rag.py, web/routers/rag.py | Include self_check, nchor, source_reliability |
-| Backend evidence enrichment | Service | services/vector_service.py, services/chat_service.py | Provide paragraph IDs, anchor context |
-| Storybook interaction demos | Documentation | stories/EvidencePanel.stories.tsx | With motion tokens + reduced motion toggles |
-| QA scenario matrix | Doc | design/qa_phase2_matrix.md | Mapping of edge cases (missing anchors, large PDFs) |
+| EvidencePanel v2 | Component | web/dashboard/src/components/evidence/EvidencePanel.tsx | ✅ Diff UI, badges, removed evidence banner merged (2025-11-27). |
+| TimelineSparkline | Component | web/dashboard/src/components/company/TimelineSparkline.tsx | ✅ Completed — highlight sync, hover telemetry, reduce-motion handling delivered. |
+| RAG response schema update | API/Schema | schemas/api/rag.py, web/routers/rag.py | ✅ Includes diff metadata, previous anchors, `meta.evidence_diff`. |
+| Backend evidence enrichment | Service | services/vector_service.py, services/chat_service.py | ✅ Snapshot capture / Celery pipeline live; retention moved to Phase 3. |
+| Storybook interaction demos | Documentation | web/dashboard/stories/EvidencePanel.stories.tsx | ✅ Diff On/Off stories with removed evidence samples; timeline EvidenceLinked story covers hover sync. |
+| QA scenario matrix | Doc | design/qa_phase2_matrix.md | ✅ Finalized with telemetry scenarios; additional PDF performance runs not scheduled. |
 
 ## 3. Workstreams
 ### 3.1 Design / UX
@@ -26,13 +27,14 @@
 
 ### 3.2 Frontend Implementation
 - Build reusable highlight component leveraging IntersectionObserver for scroll sync.
-- Implement timeline & chart linking (React state + d3/ECharts configuration) with debounce for performance.
+- Implemented timeline & chart linking (EvidenceWorkspace store sync, ECharts highlight markLine).
 - Integrate Framer Motion for panel transitions and lock tooltips.
 
 ### 3.3 Backend / Data
-- Update RAG pipeline to return paragraph anchors (page_number, section, quote) and reliability scores.
-- Store evidence snapshots for diffing (Postgres table versioning or MinIO object).
-- Extend Celery tasks to compute market impact metrics consumed by timeline sparkline.
+- Update RAG pipeline to return paragraph anchors (page_number, section, quote) and reliability scores. ✅
+- Store evidence snapshots for diffing (Postgres table versioning or MinIO object). ✅ (snapshot writer & diff metadata deployed)
+- Extend Celery tasks to compute market impact metrics consumed by timeline sparkline. ⏳ (blocked on timeline story)
+- Define retention/archival rules for evidence snapshots → escalated to Phase 3 plan.
 
 ### 3.4 QA & Docs
 - Automated tests for RAG response schema (pytest) and evidence retrieval.
@@ -57,6 +59,7 @@
 - Large PDFs impacting performance → Mitigation: lazy load PDF, fallback download link.
 - Anchor mismatch between RAG chunks and PDF → Mitigation: validation job comparing anchors, fallback to highlight disabled state.
 - Chart performance with large datasets → Mitigation: virtualize data, cap to 365 days, implement down-sampling.
+- Evidence snapshot growth → Mitigation: implement Phase 3 retention pipeline (pruning + GCS archive) before GA.
 
 ## 7. Milestones & Checkpoints
 | Milestone | Expected Date | Owner | Status |
@@ -82,4 +85,4 @@
 - RAG fixtures for stories/tests reside in `fixtures/evidence/`.
 
 ---
-- Notes: coordinate with legal on PDF embedding license restrictions before rollout.
+- Notes: coordinate with legal on PDF embedding license restrictions before rollout. Evidence snapshot retention (policy + automation) deferred to Phase 3.
