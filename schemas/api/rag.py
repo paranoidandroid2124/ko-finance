@@ -95,6 +95,39 @@ class RAGEvidence(BaseModel):
         description="Reliability tier for the underlying source.",
     )
     created_at: Optional[str] = Field(default=None, description="ISO timestamp for diff snapshot ordering.")
+    diff_type: Optional[Literal["created", "updated", "unchanged", "removed"]] = Field(
+        default=None,
+        description="Diff classification compared to previously stored snapshot.",
+    )
+    previous_quote: Optional[str] = Field(
+        default=None,
+        description="Quote value from the previous snapshot, if any.",
+    )
+    previous_section: Optional[str] = Field(
+        default=None,
+        description="Section label from the previous snapshot.",
+    )
+    previous_page_number: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Page number from the previous snapshot.",
+    )
+    previous_anchor: Optional[EvidenceAnchor] = Field(
+        default=None,
+        description="Anchor metadata from the previous snapshot.",
+    )
+    previous_source_reliability: Optional[Literal["high", "medium", "low"]] = Field(
+        default=None,
+        description="Reliability tier from the previous snapshot.",
+    )
+    previous_self_check: Optional[SelfCheckResult] = Field(
+        default=None,
+        description="Self-check verdict attached to the previous snapshot.",
+    )
+    diff_changed_fields: Optional[List[str]] = Field(
+        default=None,
+        description="Fields that changed compared to the previous snapshot.",
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

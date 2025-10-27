@@ -36,6 +36,14 @@ export type EvidenceItem = {
   chunkId?: string | null;
   locked?: boolean;
   lockedMessage?: string | null;
+  diffType?: "created" | "updated" | "unchanged" | "removed" | null;
+  diffChangedFields?: string[] | null;
+  previousQuote?: string | null;
+  previousSection?: string | null;
+  previousPageNumber?: number | null;
+  previousAnchor?: EvidenceAnchor | null;
+  previousSourceReliability?: "high" | "medium" | "low" | null;
+  previousSelfCheck?: EvidenceSelfCheck | null;
 };
 
 export type EvidencePanelStatus = "loading" | "ready" | "empty" | "anchor-mismatch";
@@ -50,7 +58,9 @@ export type EvidencePanelProps = {
   pdfDownloadUrl?: string | null;
   diffEnabled?: boolean;
   diffActive?: boolean;
+  removedItems?: EvidenceItem[];
   onSelectEvidence?: (urnId: string) => void;
+  onHoverEvidence?: (urnId: string | undefined) => void;
   onRequestOpenPdf?: (urnId: string) => void;
   onRequestUpgrade?: () => void;
   onToggleDiff?: (nextValue: boolean) => void;
@@ -69,17 +79,17 @@ const RELIABILITY_TONE: Record<
   high: {
     badge:
       "border-emerald-400 bg-emerald-500/10 text-emerald-600 dark:border-emerald-300/40 dark:bg-emerald-500/10 dark:text-emerald-200",
-    label: "신뢰도 높음",
+    label: "신뢰도 높아요",
   },
   medium: {
     badge:
       "border-amber-400 bg-amber-500/10 text-amber-600 dark:border-amber-300/40 dark:bg-amber-500/10 dark:text-amber-100",
-    label: "신뢰도 보통",
+    label: "신뢰도 보통이에요",
   },
   low: {
     badge:
       "border-destructive/60 bg-destructive/10 text-destructive dark:border-destructive/60 dark:bg-destructive/15 dark:text-destructive",
-    label: "신뢰도 낮음",
+    label: "신뢰도 낮은 편이에요",
   },
 };
 
@@ -90,25 +100,71 @@ const VERDICT_TONE: Record<
   pass: {
     badge:
       "border-emerald-400 bg-emerald-500/10 text-emerald-600 dark:border-emerald-300/40 dark:bg-emerald-500/10 dark:text-emerald-200",
-    label: "Self-check 통과",
+    label: "셀프 체크 통과",
   },
   warn: {
     badge:
       "border-amber-400 bg-amber-500/10 text-amber-600 dark:border-amber-300/40 dark:bg-amber-500/10 dark:text-amber-100",
-    label: "Self-check 주의",
+    label: "셀프 체크 주의",
   },
   fail: {
     badge:
       "border-destructive/60 bg-destructive/10 text-destructive dark:border-destructive/60 dark:bg-destructive/15 dark:text-destructive",
-    label: "Self-check 실패",
+    label: "셀프 체크 다시 보기",
   },
+};
+
+const DIFF_TONE: Record<
+  NonNullable<Exclude<EvidenceItem["diffType"], null | undefined>>,
+  { badge: string; label: string; card: string; quote: string }
+> = {
+  created: {
+    badge:
+      "border-emerald-400 bg-emerald-500/10 text-emerald-600 dark:border-emerald-300/40 dark:bg-emerald-500/10 dark:text-emerald-200",
+    label: "새로 담겼어요",
+    card: "border-emerald-400/50 bg-emerald-50/40 dark:border-emerald-300/40 dark:bg-emerald-500/10",
+    quote: "border-emerald-300/60 bg-emerald-500/10 text-emerald-700 dark:border-emerald-300/40 dark:text-emerald-200",
+  },
+  updated: {
+    badge:
+      "border-sky-400 bg-sky-500/10 text-sky-700 dark:border-sky-300/40 dark:bg-sky-500/10 dark:text-sky-200",
+    label: "내용이 바뀌었어요",
+    card: "border-sky-400/60 bg-sky-50/30 dark:border-sky-300/40 dark:bg-sky-500/10",
+    quote: "border-sky-300/60 bg-sky-500/10 text-sky-700 dark:border-sky-300/40 dark:text-sky-200",
+  },
+  unchanged: {
+    badge:
+      "border-border-light bg-background-cardLight text-text-tertiaryLight dark:border-border-dark dark:bg-white/5 dark:text-text-tertiaryDark",
+    label: "변화 없어요",
+    card: "opacity-90",
+    quote: "text-text-secondaryLight dark:text-text-secondaryDark",
+  },
+  removed: {
+    badge:
+      "border-destructive/60 bg-destructive/10 text-destructive dark:border-destructive/60 dark:bg-destructive/15 dark:text-destructive",
+    label: "이젠 빠졌어요",
+    card: "border-destructive/60 bg-destructive/5 dark:border-destructive/70 dark:bg-destructive/20",
+    quote: "border-destructive/60 bg-destructive/10 text-destructive dark:text-destructive",
+  },
+};
+
+const DIFF_FIELD_LABELS: Record<string, string> = {
+  quote: "문장",
+  section: "섹션",
+  page_number: "페이지",
+  pageNumber: "페이지",
+  anchor: "하이라이트 위치",
+  source_reliability: "출처 신뢰도",
+  sourceReliability: "출처 신뢰도",
+  self_check: "셀프 체크",
+  selfCheck: "셀프 체크",
 };
 
 function formatSimilarity(anchor?: EvidenceAnchor | null) {
   if (!anchor || anchor.similarity === null || anchor.similarity === undefined) {
     return null;
   }
-  return `${Math.round(anchor.similarity * 100)}% 매칭`;
+  return `${Math.round(anchor.similarity * 100)}% 일치`;
 }
 
 const SKELETON_ROWS = Array.from({ length: 4 });
@@ -123,7 +179,9 @@ export function EvidencePanel({
   pdfDownloadUrl,
   diffEnabled,
   diffActive,
+  removedItems,
   onSelectEvidence,
+  onHoverEvidence,
   onRequestOpenPdf,
   onRequestUpgrade,
   onToggleDiff,
@@ -173,11 +231,12 @@ export function EvidencePanel({
   const handleSelect = useCallback(
     (urnId: string) => {
       onSelectEvidence?.(urnId);
+      onHoverEvidence?.(undefined);
       if (!isControlled) {
         setInternalSelection(urnId);
       }
     },
-    [isControlled, onSelectEvidence],
+    [isControlled, onSelectEvidence, onHoverEvidence],
   );
 
   const bindObserver = useCallback(
@@ -215,11 +274,11 @@ export function EvidencePanel({
       <div className="flex flex-col gap-3 rounded-lg border border-dashed border-border-light/80 bg-white/80 p-4 text-xs text-text-secondaryLight dark:border-border-dark/70 dark:bg-white/10 dark:text-text-secondaryDark">
         <div>
           <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">
-            상위 플랜 전용 근거
+            Pro 동료들과 먼저 살펴보는 근거
           </p>
           <p className="mt-1 text-text-secondaryLight dark:text-text-secondaryDark">
             {activeItem.lockedMessage ??
-              "Pro 이상 요금제에서 근거 하이라이트와 PDF 미리보기를 이용할 수 있어요."}
+              "Pro 이상 플랜에서 하이라이트와 PDF 미리보기를 함께 열어드리고 있어요. 필요하시면 언제든 연결해 드릴게요."}
           </p>
         </div>
         <button
@@ -227,7 +286,7 @@ export function EvidencePanel({
           className="inline-flex w-fit items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white transition-motion-fast hover:bg-primary-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           onClick={onRequestUpgrade}
         >
-          업그레이드 안내 받기
+          팀과 상담하기
         </button>
       </div>
     );
@@ -243,20 +302,20 @@ export function EvidencePanel({
           target="_blank"
           rel="noopener noreferrer"
         >
-          PDF 새 창에서 열기
+          원문 새 창에서 보기
         </a>
       );
 
     if (!inlineAllowed) {
       return (
         <div className="flex h-full flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border-light/70 bg-background-cardLight/60 p-4 text-center text-sm text-text-secondaryLight dark:border-border-dark/60 dark:bg-background-cardDark/50 dark:text-text-secondaryDark">
-          <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">PDF 미리보기 미지원</p>
+          <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">PDF 미리보기를 잠시 열 수 없어요</p>
           <p className="text-xs leading-5">
             {activeItem?.locked
-              ? "상위 플랜에서 해당 근거의 PDF 하이라이트를 확인할 수 있어요."
+              ? "이 문서는 Pro 이상 플랜에서 하이라이트와 함께 열어드리고 있어요. 필요하시면 저희가 바로 도와드릴게요."
               : pdfUrl
-              ? "이 뷰에서는 PDF.js 미리보기가 비활성화되어 있습니다. 새 창에서 원문을 열어 확인해 주세요."
-              : "연결된 PDF 리소스를 찾지 못했습니다. 다운로드 링크를 통해 문서를 확인해 주세요."}
+              ? "지금은 PDF 미리보기가 동작하지 않아요. 원문 새 창을 열어 먼저 확인해 주세요."
+              : "연결된 PDF를 찾지 못했어요. 아래 링크로 바로 살펴보실 수 있어요."}
           </p>
           {downloadLink}
         </div>
@@ -276,7 +335,7 @@ export function EvidencePanel({
         />
         {pdfStatus === "error" ? (
           <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-3 text-xs text-destructive dark:border-destructive/50 dark:bg-destructive/10">
-            <p className="font-semibold">PDF 뷰어를 불러오지 못했습니다.</p>
+            <p className="font-semibold">PDF 뷰어를 열지 못했어요.</p>
             {pdfErrorMessage ? (
               <p className="mt-1 text-[11px] text-destructive/80 dark:text-destructive/70">{pdfErrorMessage}</p>
             ) : null}
@@ -289,9 +348,9 @@ export function EvidencePanel({
           >
             <span>
               {pdfStatus === "loading"
-                ? "PDF.js로 문서를 불러오는 중입니다…"
+                ? "PDF.js로 문서를 불러오는 중이에요…"
                 : pdfStatus === "ready"
-                ? "하이라이트 영역을 클릭해 문단과 PDF를 동시에 검토할 수 있습니다."
+                ? "하이라이트 영역을 누르면 문장과 PDF를 함께 살펴볼 수 있어요."
                 : null}
             </span>
             {downloadLink}
@@ -307,7 +366,39 @@ export function EvidencePanel({
     }
     return (
       <div className="rounded-lg border border-amber-300/60 bg-amber-200/30 px-3 py-2 text-xs text-amber-800 dark:border-amber-300/50 dark:bg-amber-500/10 dark:text-amber-100">
-        하이라이트 좌표를 찾지 못했습니다. PDF 뷰어에서 직접 검색하거나 다운로드 링크를 이용해 주세요.
+        하이라이트 위치를 찾지 못했어요. 원문 열기 버튼으로 바로 확인하시거나, 필요하면 저희가 더 도와드릴게요.
+      </div>
+    );
+  };
+
+  const renderRemovedSection = () => {
+    if (!diffActive || !removedItems || removedItems.length === 0) {
+      return null;
+    }
+    return (
+      <div className="rounded-lg border border-dashed border-border-light/70 bg-white/60 px-3 py-3 text-xs text-text-secondaryLight dark:border-border-dark/60 dark:bg-white/10 dark:text-text-secondaryDark">
+        <p className="font-semibold text-text-secondaryLight dark:text-text-secondaryDark">
+          이전 버전에서 빠진 문장 {removedItems.length}개
+        </p>
+        <ul className="mt-2 space-y-1">
+          {removedItems.map((entry) => (
+            <li key={`removed-${entry.urnId}`} className="leading-5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-text-secondaryLight dark:text-text-secondaryDark">
+                  {entry.section ?? "문장"}
+                </span>
+                {entry.pageNumber ? (
+                  <span className="text-[10px] uppercase text-text-tertiaryLight dark:text-text-tertiaryDark">
+                    p.{entry.pageNumber}
+                  </span>
+                ) : null}
+              </div>
+              {entry.quote ? (
+                <p className="mt-1 text-[11px] text-text-ter티aryLight dark:text-text-tertiaryDark">{entry.quote}</p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
       </div>
     );
   };
@@ -332,87 +423,143 @@ export function EvidencePanel({
 
     if (status === "empty" || items.length === 0) {
       return (
-        <div className="rounded-lg border border-dashed border-border-light px-4 py-6 text-center text-xs text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
-          아직 표시할 근거가 없습니다. 질문을 보낸 뒤 다시 확인해 주세요.
-        </div>
+        <>
+          <div className="rounded-lg border border-dashed border-border-light px-4 py-6 text-center text-xs text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
+            아직 보여드릴 근거가 없어요. 조금 뒤 다시 확인하시거나 새 질문을 남겨 주세요.
+          </div>
+          {renderRemovedSection()}
+        </>
       );
     }
 
     return (
-      <ul className="space-y-2">
-        {items.map((item) => {
-          const isActive = item.urnId === activeUrn;
-          const reliabilityTone = item.sourceReliability ? RELIABILITY_TONE[item.sourceReliability] : null;
-          const verdictTone = item.selfCheck?.verdict ? VERDICT_TONE[item.selfCheck.verdict] : null;
+      <>
+        <ul className="space-y-2">
+          {items.map((item) => {
+            const isActive = item.urnId === activeUrn;
+            const reliabilityTone = item.sourceReliability ? RELIABILITY_TONE[item.sourceReliability] : null;
+            const verdictTone = item.selfCheck?.verdict ? VERDICT_TONE[item.selfCheck.verdict] : null;
+            const diffKey = item.diffType as NonNullable<EvidenceItem["diffType"]> | undefined;
+            const diffTone = diffActive && diffKey ? DIFF_TONE[diffKey] ?? null : null;
+            const changedFields = Array.isArray(item.diffChangedFields) ? item.diffChangedFields : [];
+            const changedSummary =
+              diffActive && changedFields.length
+                ? changedFields.map((field) => DIFF_FIELD_LABELS[field] ?? field).join(", ")
+                : null;
+            const itemClass = `group relative rounded-lg border px-3 py-3 transition-motion-medium ${
+              isActive
+                ? "border-primary bg-primary/5 text-text-primaryLight shadow-card dark:border-primary.dark dark:bg-primary/10 dark:text-text-primaryDark"
+                : "border-border-light bg-white text-text-secondaryLight shadow-sm hover:border-primary/50 dark:border-border-dark dark:bg-white/5 dark:text-text-secondaryDark"
+            }${diffTone ? ` ${diffTone.card}` : ""}`;
+            const quoteClass =
+              diffActive && diffTone
+                ? `mt-2 whitespace-pre-line rounded-md border border-border-light/60 px-3 py-2 text-sm leading-6 ${diffTone.quote}`
+                : "mt-2 whitespace-pre-line text-sm leading-6 text-text-secondaryLight dark:text-text-secondaryDark";
 
-          return (
-            <li
-              key={item.urnId}
-              ref={bindObserver(item.urnId)}
-              className={`group relative rounded-lg border px-3 py-3 transition-motion-medium ${
-                isActive
-                  ? "border-primary bg-primary/5 text-text-primaryLight shadow-card dark:border-primary.dark dark:bg-primary/10 dark:text-text-primaryDark"
-                  : "border-border-light bg-white text-text-secondaryLight shadow-sm hover:border-primary/50 dark:border-border-dark dark:bg-white/5 dark:text-text-secondaryDark"
-              }`}
-            >
-              {item.locked ? (
-                <div className="pointer-events-none absolute inset-0 rounded-lg border border-dashed border-border-light/90 bg-white/70 backdrop-blur-[2px] dark:border-border-dark/80 dark:bg-white/10" />
-              ) : null}
-              <button
-                type="button"
-                className="relative z-10 w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-                onClick={() => handleSelect(item.urnId)}
-              >
-                <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-primary">
-                  <span>{item.section ?? "문단"}</span>
-                  {item.pageNumber ? <span>p.{item.pageNumber}</span> : null}
+            return (
+              <li key={item.urnId} ref={bindObserver(item.urnId)} className={itemClass}>
+                {item.locked ? (
+                  <div className="pointer-events-none absolute inset-0 rounded-lg border border-dashed border-border-light/90 bg-white/70 backdrop-blur-[2px] dark:border-border-dark/80 dark:bg-white/10" />
+                ) : null}
+                <button
+                  type="button"
+                  className="relative z-10 w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                  onClick={() => handleSelect(item.urnId)}
+                  onMouseEnter={() => onHoverEvidence?.(item.urnId)}
+                  onFocus={() => onHoverEvidence?.(item.urnId)}
+                  onMouseLeave={() => onHoverEvidence?.(undefined)}
+                  onBlur={() => onHoverEvidence?.(undefined)}
+                >
+                  <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-primary">
+                    <span>{item.section ?? "문장"}</span>
+                    {item.pageNumber ? <span>p.{item.pageNumber}</span> : null}
+                  </div>
+                  <p className={quoteClass}>{item.quote}</p>
+                </button>
+
+                {diffActive && item.diffType === "updated" && item.previousQuote ? (
+                  <div className="relative z-10 mt-2 rounded-md border border-dashed border-border-light/70 bg-white/60 p-2 text-[11px] text-text-tertiaryLight dark:border-border-dark/60 dark:bg-white/10 dark:text-text-tertiaryDark">
+                    <span className="font-semibold text-text-secondaryLight dark:text-text-secondaryDark">
+                      이전 문장
+                    </span>
+                    <p className="mt-1 whitespace-pre-line line-through decoration-destructive/70 decoration-1">
+                      {item.previousQuote}
+                    </p>
+                    {(item.previousSection && item.previousSection !== item.section) ||
+                    (item.previousPageNumber && item.previousPageNumber !== item.pageNumber) ? (
+                      <p className="mt-1 text-[10px] uppercase text-text-tertiaryLight dark:text-text-ter티aryDark">
+                        위치: {item.previousSection ?? "—"} /{" "}
+                        {item.previousPageNumber ? `p.${item.previousPageNumber}` : "페이지 정보 없음"}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {diffActive && item.diffType === "created" ? (
+                  <p className="relative z-10 mt-2 text-[11px] font-semibold text-emerald-600 dark:text-emerald-300">
+                    이번에 새로 담긴 문장이에요.
+                  </p>
+                ) : null}
+                {diffActive && item.diffType === "unchanged" ? (
+                  <p className="relative z-10 mt-2 text-[11px] text-text-tertiaryLight dark:text-text-tertiaryDark">
+                    이전 스냅샷과 같아요.
+                  </p>
+                ) : null}
+
+                <div className="relative z-10 mt-3 flex flex-wrap items-center gap-2 text-[11px]">
+                  {diffActive && diffTone ? (
+                    <span className={`inline-flex items-center rounded-md border px-2 py-0.5 font-semibold ${diffTone.badge}`}>
+                      {diffTone.label}
+                    </span>
+                  ) : null}
+                  {verdictTone ? (
+                    <span className={`inline-flex items-center rounded-md border px-2 py-0.5 font-semibold ${verdictTone.badge}`}>
+                      {verdictTone.label}
+                    </span>
+                  ) : null}
+                  {reliabilityTone ? (
+                    <span className={`inline-flex items-center rounded-md border px-2 py-0.5 font-semibold ${reliabilityTone.badge}`}>
+                      {reliabilityTone.label}
+                    </span>
+                  ) : null}
+                  {formatSimilarity(item.anchor) ? (
+                    <span className="rounded-md border border-border-light px-2 py-0.5 font-semibold text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
+                      {formatSimilarity(item.anchor)}
+                    </span>
+                  ) : null}
+                  {item.chunkId ? (
+                    <span className="rounded-md border border-border-light px-2 py-0.5 text-[10px] text-text-tertiaryLight dark:border-border-dark dark:text-text-tertiaryDark">
+                      #{item.chunkId}
+                    </span>
+                  ) : null}
                 </div>
-                <p className="mt-2 whitespace-pre-line text-sm leading-6 text-text-secondaryLight dark:text-text-secondaryDark">
-                  {item.quote}
-                </p>
-              </button>
 
-              <div className="relative z-10 mt-3 flex flex-wrap items-center gap-2 text-[11px]">
-                {verdictTone ? (
-                  <span className={`inline-flex items-center rounded-md border px-2 py-0.5 font-semibold ${verdictTone.badge}`}>
-                    {verdictTone.label}
-                  </span>
+                {diffActive && changedSummary ? (
+                  <p className="relative z-10 mt-2 text-[11px] text-text-tertiaryLight dark:text-text-tertiaryDark">
+                    달라진 부분: {changedSummary}
+                  </p>
                 ) : null}
-                {reliabilityTone ? (
-                  <span className={`inline-flex items-center rounded-md border px-2 py-0.5 font-semibold ${reliabilityTone.badge}`}>
-                    {reliabilityTone.label}
-                  </span>
-                ) : null}
-                {formatSimilarity(item.anchor) ? (
-                  <span className="rounded-md border border-border-light px-2 py-0.5 font-semibold text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
-                    {formatSimilarity(item.anchor)}
-                  </span>
-                ) : null}
-                {item.chunkId ? (
-                  <span className="rounded-md border border-border-light px-2 py-0.5 text-[10px] text-text-tertiaryLight dark:border-border-dark dark:text-text-tertiaryDark">
-                    #{item.chunkId}
-                  </span>
-                ) : null}
-              </div>
 
-              {item.locked && onRequestUpgrade ? (
-                <div className="relative z-10 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed border-border-light/70 bg-white/60 px-3 py-2 text-[11px] dark:border-border-dark/60 dark:bg-white/10">
-                  <span className="text-text-secondaryLight dark:text-text-secondaryDark">
-                    상위 플랜에서 하이라이트를 확인할 수 있어요.
-                  </span>
-                  <button
-                    type="button"
-                    className="rounded-md border border-primary/60 px-2 py-1 text-[11px] font-semibold text-primary transition-motion-fast hover:bg-primary/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-                    onClick={onRequestUpgrade}
-                  >
-                    업그레이드
-                  </button>
-                </div>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
+                {item.locked && onRequestUpgrade ? (
+                  <div className="relative z-10 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed border-border-light/70 bg-white/60 px-3 py-2 text-[11px] dark:border-border-dark/60 dark:bg-white/10">
+                    <span className="text-text-secondaryLight dark:text-text-secondaryDark">
+                      이 하이라이트는 Pro 이상 플랜에서 확인하실 수 있어요.
+                    </span>
+                    <button
+                      type="button"
+                      className="rounded-md border border-primary/60 px-2 py-1 text-[11px] font-semibold text-primary transition-motion-fast hover:bg-primary/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                      onClick={onRequestUpgrade}
+                    >
+                      팀과 상담하기
+                    </button>
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+        {renderRemovedSection()}
+      </>
     );
   };
 
@@ -420,15 +567,15 @@ export function EvidencePanel({
     <section className="grid h-full gap-4 rounded-xl border border-border-light bg-white/80 p-4 shadow-card transition-colors transition-motion-medium dark:border-border-dark dark:bg-background-cardDark/80">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase text-primary">Evidence Panel</p>
+          <p className="text-[11px] font-semibold uppercase text-primary">근거 노트</p>
           <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
             {status === "loading"
-              ? "근거를 불러오는 중입니다…"
+              ? "근거를 차분히 모으는 중이에요…"
               : status === "empty"
-              ? "표시할 근거가 없습니다."
+              ? "아직 보여드릴 근거가 없어요."
               : status === "anchor-mismatch"
-              ? "하이라이트 정보를 찾지 못했습니다."
-              : "답변에 인용된 근거를 검토해 주세요."}
+              ? "하이라이트 위치를 찾지 못했어요. 원문을 바로 열어 확인해 주세요."
+              : "챗봇이 참고한 문장을 함께 살펴봐요."}
           </p>
         </div>
         <div className="flex items-center gap-2 text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">
@@ -445,7 +592,7 @@ export function EvidencePanel({
               }`}
               onClick={() => onToggleDiff?.(!diffActive)}
             >
-              증거 비교
+              변화 살펴보기
             </button>
           ) : null}
           {activeItem && onRequestOpenPdf ? (
@@ -454,7 +601,7 @@ export function EvidencePanel({
               className="rounded-md border border-border-light px-2 py-1 font-semibold text-text-secondaryLight transition-motion-fast hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary"
               onClick={() => onRequestOpenPdf(activeItem.urnId)}
             >
-              PDF 새 창
+              원문 새 창에서 보기
             </button>
           ) : null}
         </div>

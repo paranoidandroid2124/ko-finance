@@ -29,6 +29,14 @@ const SAMPLE_EVIDENCE: EvidencePanelItem[] = [
     sourceReliability: "high",
     createdAt: "2025-11-20T04:12:45Z",
     chunkId: "chunk-120",
+    diffType: "updated",
+    previousQuote:
+      "3ë¶„ê¸° ë§¤ì¶œì€ ì „ë…„ ë™ê¸° ëŒ€ë¹„ 12% ì¦ê°€í–ˆìœ¼ë©°, í•´ì™¸ ë‹¨í—¤ë¥¼ ì ìœ ìœ¨ ë³´ì •ì´ ì„¤ì •ë˜ì—ˆìŠµë‹ˆë‹¤.",
+    previousSection: "ì¤‘ìš” ì‚¬ì‹¤",
+    previousPageNumber: 11,
+    previousSelfCheck: { verdict: "warn", score: 0.62 },
+    previousSourceReliability: "medium",
+    diffChangedFields: ["quote", "page_number", "self_check", "source_reliability"],
   },
   {
     urnId: "urn:chunk:sample-2",
@@ -45,6 +53,8 @@ const SAMPLE_EVIDENCE: EvidencePanelItem[] = [
     sourceReliability: "medium",
     createdAt: "2025-11-20T04:12:45Z",
     chunkId: "chunk-233",
+    diffType: "created",
+    diffChangedFields: ["quote", "section"],
   },
   {
     urnId: "urn:chunk:sample-locked",
@@ -54,6 +64,17 @@ const SAMPLE_EVIDENCE: EvidencePanelItem[] = [
     locked: true,
     sourceReliability: "high",
     chunkId: "chunk-310",
+    diffType: "unchanged",
+  },
+];
+
+const SAMPLE_REMOVED: EvidencePanelItem[] = [
+  {
+    urnId: "urn:chunk:sample-removed",
+    section: "Removed reference",
+    quote: "This evidence was present in the previous snapshot but removed in the latest response.",
+    pageNumber: 6,
+    diffType: "removed",
   },
 ];
 
@@ -124,6 +145,8 @@ export default function EvidenceLabPage() {
             timeline={timelinePoints}
             pdfUrl={SAMPLE_PDF}
             pdfDownloadUrl={SAMPLE_PDF}
+            diffEnabled
+            diffRemoved={SAMPLE_REMOVED}
           />
         )}
       </div>

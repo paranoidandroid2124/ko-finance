@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -13,7 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from core.logging import get_logger
-from database import get_db
+from database import SessionLocal, get_db
 from llm import llm_service
 from llm.guardrails import SAFE_MESSAGE
 from parse.tasks import run_rag_self_check, snapshot_evidence_diff
@@ -27,6 +28,7 @@ from schemas.api.rag import (
     SelfCheckResult,
 )
 from services import chat_service, vector_service
+from services.evidence_service import attach_diff_metadata
 from models.chat import ChatMessage, ChatSession
 
 
@@ -191,6 +193,34 @@ def _build_evidence_payload(chunks: Iterable[Dict[str, Any]]) -> List[Dict[str, 
     return evidence
 
 
+def _attach_evidence_diff(
+    evidence: List[Dict[str, Any]],
+    *,
+    db: Optional[Session] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    if not evidence:
+        return evidence, {"enabled": False, "removed": []}
+
+    session = db
+    owns_session = False
+    if session is None:
+        session = SessionLocal()
+        owns_session = True
+    try:
+        meta = attach_diff_metadata(session, evidence) or {}
+        meta.setdefault("enabled", False)
+        meta.setdefault("removed", [])
+        return evidence, meta
+    except SQLAlchemyError as exc:
+        logger.warning("Failed to attach evidence diff (db error): %s", exc)
+    except Exception as exc:  # pragma: no cover - defensive best effort
+        logger.warning("Failed to attach evidence diff: %s", exc, exc_info=True)
+    finally:
+        if owns_session and session is not None:
+            session.close()
+    return evidence, {"enabled": False, "removed": []}
+
+
 def _enqueue_evidence_snapshot(
     evidence: List[Dict[str, Any]],
     *,
@@ -345,6 +375,7 @@ def _no_context_response(
         "selected_filing_id": filing_id,
     }
     meta_payload["evidence_version"] = "v2"
+    meta_payload["evidence_diff"] = {"enabled": False, "removed": []}
     chat_service.update_message_state(
         db,
         message_id=assistant_message.id,
@@ -422,6 +453,7 @@ def _intent_fallback_response(
         "related_filings": [],
     }
     meta_payload["evidence_version"] = "v2"
+    meta_payload["evidence_diff"] = {"enabled": False, "removed": []}
 
     chat_service.update_message_state(
         db,
@@ -512,6 +544,8 @@ def _stateless_rag_response(
             meta={
                 "selected_filing_id": selected_filing_id,
                 "related_filings": [item.model_dump() for item in related_filings],
+                "evidence_version": "v2",
+                "evidence_diff": {"enabled": False, "removed": []},
             },
             state="ready",
             related_filings=related_filings,
@@ -526,7 +560,10 @@ def _stateless_rag_response(
     meta_payload.setdefault("related_filings", [item.model_dump() for item in related_filings])
 
     evidence_context = _build_evidence_payload(payload.get("context") or context_chunks)
+    snapshot_payload = deepcopy(evidence_context)
+    evidence_context, diff_meta = _attach_evidence_diff(evidence_context)
     meta_payload.setdefault("evidence_version", "v2")
+    meta_payload["evidence_diff"] = diff_meta
 
     response = RAGQueryResponse(
         question=question,
@@ -565,9 +602,9 @@ def _stateless_rag_response(
         except Exception as exc:  # pragma: no cover - background task failure
             logger.warning("Failed to enqueue stateless RAG self-check (trace_id=%s): %s", trace_id, exc)
 
-    if evidence_context:
+    if snapshot_payload:
         _enqueue_evidence_snapshot(
-            evidence_context,
+            snapshot_payload,
             author=None,
             trace_id=trace_id,
         )
@@ -825,6 +862,8 @@ def query_rag(
             raise HTTPException(status_code=500, detail=f"LLM answer failed: {error}")
 
         context = _build_evidence_payload(result.get("context") or context_chunks)
+        snapshot_payload = deepcopy(context)
+        context, diff_meta = _attach_evidence_diff(context, db=db)
         citations: Dict[str, List[str]] = dict(result.get("citations") or {})
         warnings: List[str] = list(result.get("warnings") or [])
         highlights: List[Dict[str, object]] = list(result.get("highlights") or [])
@@ -867,6 +906,7 @@ def query_rag(
             "intent_model": intent_result.get("model_used"),
         }
         meta_payload["evidence_version"] = "v2"
+        meta_payload["evidence_diff"] = diff_meta
         chat_service.update_message_state(
             db,
             message_id=assistant_message.id,
@@ -921,9 +961,9 @@ def query_rag(
             snapshot_author = str(user_id)
         elif session.user_id:
             snapshot_author = str(session.user_id)
-        if context:
+        if snapshot_payload:
             _enqueue_evidence_snapshot(
-                context,
+                snapshot_payload,
                 author=snapshot_author,
                 trace_id=trace_id,
             )
@@ -1140,6 +1180,8 @@ def query_rag_stream(
 
                 answer_text = final_payload.get("answer") or "".join(streamed_tokens) or "지금은 답변을 준비할 수 없습니다."
                 context = _build_evidence_payload(final_payload.get("context") or context_chunks)
+                snapshot_payload = deepcopy(context)
+                context, diff_meta = _attach_evidence_diff(context, db=db)
                 citations: Dict[str, List[str]] = dict(final_payload.get("citations") or {})
                 warnings: List[str] = list(final_payload.get("warnings") or [])
                 highlights: List[Dict[str, object]] = list(final_payload.get("highlights") or [])
@@ -1174,6 +1216,7 @@ def query_rag_stream(
                     "related_filings": related_meta,
                 }
                 meta_payload["evidence_version"] = "v2"
+                meta_payload["evidence_diff"] = diff_meta
 
                 state_value = "error" if error else "ready"
                 chat_service.update_message_state(
@@ -1231,9 +1274,9 @@ def query_rag_stream(
                     snapshot_author = str(user_id)
                 elif session.user_id:
                     snapshot_author = str(session.user_id)
-                if context:
+                if snapshot_payload:
                     _enqueue_evidence_snapshot(
-                        context,
+                        snapshot_payload,
                         author=snapshot_author,
                         trace_id=trace_id,
                     )

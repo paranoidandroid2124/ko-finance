@@ -14,6 +14,9 @@ type EvidenceWorkspaceProps = {
   evidenceStatus?: "loading" | "ready" | "empty" | "anchor-mismatch";
   timelineLocked?: boolean;
   onRequestUpgrade?: () => void;
+  diffEnabled?: boolean;
+  diffActive?: boolean;
+  diffRemoved?: EvidencePanelItem[];
 };
 
 export function EvidenceWorkspace({
@@ -25,29 +28,46 @@ export function EvidenceWorkspace({
   evidenceStatus = "ready",
   timelineLocked = false,
   onRequestUpgrade,
+  diffEnabled,
+  diffActive,
+  diffRemoved,
 }: EvidenceWorkspaceProps) {
   const {
     evidenceItems,
     timelinePoints,
     selectedEvidenceUrn,
     selectedTimelineDate,
+    hoveredTimelineDate,
     pdfUrl: storePdfUrl,
     pdfDownloadUrl: storePdfDownloadUrl,
+    diffEnabled: storeDiffEnabled,
+    diffActive: storeDiffActive,
+    removedEvidence,
     setEvidence,
     setTimeline,
     selectEvidence,
+    hoverEvidence,
     selectTimelinePoint,
+    hoverTimelinePoint,
+    toggleDiff,
   } = useEvidenceWorkspaceStore();
 
   useEffect(() => {
-    setEvidence(evidence, { pdfUrl, pdfDownloadUrl });
-  }, [evidence, pdfUrl, pdfDownloadUrl, setEvidence]);
+    setEvidence(evidence, {
+      pdfUrl,
+      pdfDownloadUrl,
+      diffEnabled,
+      diffActive,
+      removedEvidence: diffRemoved,
+    });
+  }, [evidence, pdfUrl, pdfDownloadUrl, diffEnabled, diffActive, diffRemoved, setEvidence]);
 
   useEffect(() => {
     setTimeline(timeline);
   }, [timeline, setTimeline]);
 
-  const activeTimelinePoint = timelinePoints.find((point) => point.date === selectedTimelineDate) ?? null;
+  const highlightDate = hoveredTimelineDate ?? selectedTimelineDate;
+  const activeTimelinePoint = timelinePoints.find((point) => point.date === highlightDate) ?? null;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,0.55fr)_minmax(0,0.45fr)] xl:grid-cols-[minmax(0,0.5fr)_minmax(0,0.5fr)]">
@@ -59,8 +79,12 @@ export function EvidenceWorkspace({
         inlinePdfEnabled={Boolean(storePdfUrl)}
         pdfUrl={storePdfUrl}
         pdfDownloadUrl={storePdfDownloadUrl}
+        diffEnabled={storeDiffEnabled}
+        diffActive={storeDiffActive}
         onSelectEvidence={(urnId) => selectEvidence(urnId)}
-        diffEnabled={false}
+        onHoverEvidence={(urnId) => hoverEvidence(urnId)}
+        onToggleDiff={toggleDiff}
+        removedItems={removedEvidence}
         onRequestUpgrade={onRequestUpgrade}
       />
       <div className="flex flex-col gap-4">
@@ -68,10 +92,17 @@ export function EvidenceWorkspace({
           planTier={planTier}
           points={timelinePoints}
           locked={timelineLocked}
-          highlightDate={selectedTimelineDate}
+          highlightDate={highlightDate}
           onSelectPoint={(point) =>
             selectTimelinePoint(point.date, { linkedEvidence: point.evidenceUrnIds })
           }
+          onHoverPoint={(point) => {
+            if (point) {
+              hoverTimelinePoint(point.date, { linkedEvidence: point.evidenceUrnIds });
+              return;
+            }
+            hoverTimelinePoint(undefined);
+          }}
         />
         {activeTimelinePoint ? (
           <div className="rounded-lg border border-border-light bg-background-cardLight p-3 text-xs text-text-secondaryLight dark:border-border-dark dark:bg-background-cardDark dark:text-text-secondaryDark">
@@ -80,7 +111,7 @@ export function EvidenceWorkspace({
             </p>
             <dl className="mt-2 space-y-1">
               <div className="flex justify-between">
-                <dt>감성 지수</dt>
+                <dt>감성 온도</dt>
                 <dd>{activeTimelinePoint.sentimentZ?.toFixed(2) ?? "–"}</dd>
               </div>
               <div className="flex justify-between">
@@ -101,13 +132,13 @@ export function EvidenceWorkspace({
               </div>
               {activeTimelinePoint.eventType ? (
                 <div className="flex justify-between">
-                  <dt>이벤트 유형</dt>
+                  <dt>기록된 소식</dt>
                   <dd>{activeTimelinePoint.eventType}</dd>
                 </div>
               ) : null}
               {activeTimelinePoint.evidenceUrnIds && activeTimelinePoint.evidenceUrnIds.length ? (
                 <div className="flex justify-between">
-                  <dt>연결 근거</dt>
+                  <dt>함께 읽을 문장</dt>
                   <dd>{activeTimelinePoint.evidenceUrnIds.length}개</dd>
                 </div>
               ) : null}

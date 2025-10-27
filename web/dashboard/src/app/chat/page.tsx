@@ -43,6 +43,14 @@ type RagApiContext = {
   source_url?: string;
   viewer_url?: string;
   download_url?: string;
+  diff_type?: string;
+  previous_quote?: string;
+  previous_section?: string;
+  previous_page_number?: number;
+  previous_anchor?: Record<string, unknown>;
+  previous_source_reliability?: string;
+  previous_self_check?: Record<string, unknown>;
+  diff_changed_fields?: string[];
 };
 
 type RagApiHighlight = {
@@ -66,6 +74,7 @@ type RagApiResponse = {
   trace_id?: string | null;
   judge_decision?: string | null;
   judge_reason?: string | null;
+  meta?: Record<string, unknown>;
 };
 
 const ASSISTANT_LOADING_RESPONSE = '답변을 준비하고 있어요. 잠시만 기다려주세요.';
@@ -1031,5 +1040,4 @@ export default function ChatPage() {
     </AppShell>
   );
 }
-
 

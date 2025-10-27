@@ -12,6 +12,7 @@
 | 앵커 미스매치 | `status=anchor-mismatch` | 상단 경고 배너, PDF fallback 버튼 | Storybook `Evidence/EvidencePanel/AnchorMismatch` |
 | Free 플랜 잠금 | `planTier=free`, `inlinePdfEnabled=false` | 잠금 메시지 + 업그레이드 CTA + PDF 새 창 링크 | Storybook `Evidence/EvidencePanel/FreePlanLocked` |
 | TimelineSparkline 기본 | `planTier=pro` | 감성/가격 듀얼축, 이벤트 툴팁 | Storybook `Company/TimelineSparkline/Default` |
+| TimelineSparkline evidence 연동 | `evidenceUrnIds` 매핑, highlightDate 동기화 | Storybook `Company/TimelineSparkline/EvidenceLinked`, `/app/labs/evidence` EvidenceWorkspace |
 | Free 플랜 | `planTier=free` | 가격축 비활성, 감성만 노출 | Storybook `Company/TimelineSparkline/FreePlan` |
 | 잠금 상태 | `locked=true` | 잠금 카드, 업그레이드 CTA | Storybook `Company/TimelineSparkline/Locked` |
 | Chat 연동 | 채팅 화면 EvidenceWorkspace | 근거 선택 시 대화창 하이라이트, PDF 미리보기 동기화 | `/app/chat` 로컬 실행, Session 생성 후 확인 |
@@ -23,6 +24,7 @@
 - TimelineSparkline 상호작용: hover/select 시 `timeline.hover`/`timeline.select` 콘솔 이벤트 임시 확인 → 추후 Langfuse/Analytics 스키마 정의.
 - 채팅 EvidenceWorkspace 연동 시: `rag.evidence_view`, `timeline.interact` 이벤트가 `telemetry:event` 커스텀 이벤트로 브라우저에 전달되는지 확인 (DevTools → Event Listeners).
 
+- Evidence diff ?? ???: `rag.evidence_diff_toggle` (active, enabled, removedCount) ?? ?? ?? ??.
 ## 3. 통합 테스트 계획
 
 1. 백엔드: `tests/test_rag_api.py` v2 페이로드 유지, 향후 EvidencePanel snapshot fixture 연동.

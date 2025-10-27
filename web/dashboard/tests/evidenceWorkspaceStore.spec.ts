@@ -11,6 +11,9 @@ const baseState = {
   hoveredEvidenceUrn: undefined,
   selectedTimelineDate: undefined,
   hoveredTimelineDate: undefined,
+  diffEnabled: false,
+  diffActive: false,
+  removedEvidence: [],
 } as const;
 
 const sampleEvidence = [
@@ -106,5 +109,69 @@ describe("evidenceWorkspaceStore telemetry", () => {
         date: "2025-01-01",
       }),
     );
+  });
+
+  it("logs diff toggle events", () => {
+    const store = useEvidenceWorkspaceStore.getState();
+    store.setEvidence(sampleEvidence.slice(), { diffEnabled: true });
+    logSpy.mockClear();
+
+    store.toggleDiff(true);
+
+    expect(useEvidenceWorkspaceStore.getState().diffActive).toBe(true);
+    expect(logSpy).toHaveBeenCalledWith(
+      "rag.evidence_diff_toggle",
+      expect.objectContaining({
+        active: true,
+        enabled: true,
+      }),
+    );
+  });
+
+  it("syncs hovered evidence with timeline date", () => {
+    const store = useEvidenceWorkspaceStore.getState();
+    store.setEvidence(sampleEvidence.slice());
+    store.setTimeline(sampleTimeline.slice());
+
+    store.hoverEvidence("urn:sample:1");
+
+    const state = useEvidenceWorkspaceStore.getState();
+    expect(state.hoveredTimelineDate).toBe("2025-01-01");
+    expect(state.hoveredEvidenceUrn).toBe("urn:sample:1");
+  });
+
+  it("clears hover state when leaving timeline", () => {
+    const store = useEvidenceWorkspaceStore.getState();
+    store.setEvidence(sampleEvidence.slice());
+    store.setTimeline(sampleTimeline.slice());
+
+    store.hoverTimelinePoint("2025-01-01", { linkedEvidence: ["urn:sample:1"] });
+    store.hoverTimelinePoint(undefined);
+
+    const state = useEvidenceWorkspaceStore.getState();
+    expect(state.hoveredTimelineDate).toBeUndefined();
+    expect(state.hoveredEvidenceUrn).toBeUndefined();
+  });
+
+  it("keeps selected timeline date if still present after refresh", () => {
+    const store = useEvidenceWorkspaceStore.getState();
+    store.setEvidence(sampleEvidence.slice());
+    store.setTimeline(sampleTimeline.slice());
+    store.selectTimelinePoint("2025-01-01", { linkedEvidence: ["urn:sample:1"] });
+
+    store.setTimeline([
+      ...sampleTimeline,
+      {
+        date: "2025-01-02",
+        sentimentZ: 0,
+        priceClose: 1000,
+        volume: 200,
+        eventType: "Other",
+        evidenceUrnIds: [],
+      },
+    ]);
+
+    const state = useEvidenceWorkspaceStore.getState();
+    expect(state.selectedTimelineDate).toBe("2025-01-01");
   });
 });
