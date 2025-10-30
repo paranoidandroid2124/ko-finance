@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import { FilingHeadline, SummaryBlock } from "@/hooks/useCompanySnapshot";
 
 type CompanySummaryCardProps = {
@@ -28,7 +29,7 @@ export function CompanySummaryCard({ name, ticker, headline, summary }: CompanyS
         </div>
         {headline?.viewerUrl ? (
           <Link
-            href={headline.viewerUrl}
+            href={headline.viewerUrl as Route}
             target="_blank"
             rel="noopener noreferrer"
             className="rounded-md border border-border-light px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/10 dark:border-border-dark dark:text-primary.dark dark:hover:bg-primary.dark/15"

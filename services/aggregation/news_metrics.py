@@ -5,13 +5,14 @@ from __future__ import annotations
 import math
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from core.logging import get_logger
 from models.news import NewsSignal, NewsWindowAggregate
+from services.aggregation.news_statistics import build_top_topics, summarize_news_signals
 from services.reliability.source_reliability import (
     apply_window_penalties,
     average_reliability,
@@ -22,6 +23,7 @@ from services.reliability.source_reliability import (
 logger = get_logger(__name__)
 
 DOMESTIC_TLDS = (".kr", ".co.kr", ".go.kr", ".or.kr", ".re.kr", ".pe.kr", ".ne.kr")
+DEFAULT_NEUTRAL_THRESHOLD = 0.15
 
 
 def compute_news_window_metrics(
@@ -44,7 +46,8 @@ def compute_news_window_metrics(
         query = query.filter(NewsSignal.ticker == ticker)
     signals: List[NewsSignal] = query.all()
 
-    article_count = len(signals)
+    summary = summarize_news_signals(signals, neutral_threshold=DEFAULT_NEUTRAL_THRESHOLD)
+    article_count = summary.article_count
     reliability_scores: List[float] = []
     updated_reliability = False
     for signal in signals:
@@ -59,13 +62,12 @@ def compute_news_window_metrics(
             current_reliability = computed
         if current_reliability is not None:
             reliability_scores.append(float(current_reliability))
-    sentiments = [signal.sentiment for signal in signals if signal.sentiment is not None]
-    avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else None
+    avg_sentiment = summary.avg_sentiment
     aggregate_reliability = average_reliability(reliability_scores)
 
     sentiment_z = _compute_sentiment_z_score(db, avg_sentiment)
-    topic_counts = _collect_topic_counts(signals)
-    top_topics = _calculate_top_topics(topic_counts)
+    topic_counts = summary.topic_counts
+    top_topics = build_top_topics(topic_counts, limit=10, include_weights=True)
     novelty_kl = _compute_novelty(db, window_start, window_end, window_days, scope, ticker, topic_counts)
     topic_shift = _compute_topic_shift(db, window_start, window_end, window_days, scope, ticker, topic_counts)
     domestic_ratio, domain_diversity = _compute_domain_metrics(signals, article_count)
@@ -148,17 +150,6 @@ def _collect_topic_counts(signals: Iterable[NewsSignal]) -> Counter:
             if normalized:
                 counts[normalized] += 1
     return counts
-
-
-def _calculate_top_topics(counts: Counter, limit: int = 10) -> List[Dict[str, float]]:
-    total = sum(counts.values())
-    if total == 0:
-        return []
-    top = counts.most_common(limit)
-    return [
-        {"topic": topic, "count": count, "weight": count / total}
-        for topic, count in top
-    ]
 
 
 def _compute_domain_metrics(signals: Iterable[NewsSignal], article_count: int) -> Tuple[Optional[float], Optional[float]]:

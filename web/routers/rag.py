@@ -28,106 +28,27 @@ from schemas.api.rag import (
     SelfCheckResult,
 )
 from services import chat_service, vector_service
+from services.rag_shared import build_anchor_payload, normalize_reliability, safe_float, safe_int
 from services.evidence_service import attach_diff_metadata
 from models.chat import ChatMessage, ChatSession
 
 
-def _safe_int(value: Any) -> Optional[int]:
-    try:
-        if value is None:
-            return None
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _safe_float(value: Any) -> Optional[float]:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _normalize_reliability(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"high", "medium", "low"}:
-            return lowered
-        return None
-    if isinstance(value, (int, float)):
-        numeric = float(value)
-        if numeric >= 0.66:
-            return "high"
-        if numeric >= 0.33:
-            return "medium"
-        return "low"
-    return None
-
-
 def _extract_anchor(chunk: Dict[str, Any]) -> Optional[EvidenceAnchor]:
     metadata = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
-    anchor_raw = None
-    candidate = metadata.get("anchor") or chunk.get("anchor")
-    if isinstance(candidate, dict):
-        anchor_raw = candidate
-
-    paragraph_id = (
-        (anchor_raw or {}).get("paragraph_id")
-        or metadata.get("paragraph_id")
-        or chunk.get("paragraph_id")
-    )
-
-    pdf_rect_raw = None
-    if anchor_raw and isinstance(anchor_raw.get("pdf_rect"), dict):
-        pdf_rect_raw = anchor_raw.get("pdf_rect")
-    elif isinstance(metadata.get("pdf_rect"), dict):
-        pdf_rect_raw = metadata.get("pdf_rect")
-
-    pdf_rect: Optional[Dict[str, Any]] = None
-    if isinstance(pdf_rect_raw, dict):
-        page = _safe_int(pdf_rect_raw.get("page") or chunk.get("page_number"))
-        x = _safe_float(pdf_rect_raw.get("x"))
-        y = _safe_float(pdf_rect_raw.get("y"))
-        width = _safe_float(pdf_rect_raw.get("width"))
-        height = _safe_float(pdf_rect_raw.get("height"))
-        if page:
-            pdf_rect = {
-                "page": page,
-                "x": x or 0.0,
-                "y": y or 0.0,
-                "width": width or 0.0,
-                "height": height or 0.0,
-            }
-
-    similarity = (
-        _safe_float((anchor_raw or {}).get("similarity"))
-        or _safe_float(chunk.get("similarity"))
-        or _safe_float(chunk.get("score"))
-    )
-
-    if not any([paragraph_id, pdf_rect, similarity is not None]):
-        return None
-
-    anchor_payload: Dict[str, Any] = {}
-    if paragraph_id:
-        anchor_payload["paragraph_id"] = str(paragraph_id)
-    if pdf_rect:
-        anchor_payload["pdf_rect"] = pdf_rect
-    if similarity is not None:
-        anchor_payload["similarity"] = similarity
+    anchor_payload = build_anchor_payload(chunk, metadata)
     if not anchor_payload:
         return None
-    return EvidenceAnchor.model_validate(anchor_payload)
+    allowed_keys = {"paragraph_id", "pdf_rect", "similarity"}
+    filtered = {key: anchor_payload.get(key) for key in allowed_keys if key in anchor_payload}
+    if not filtered:
+        return None
+    return EvidenceAnchor.model_validate(filtered)
 
 
 def _normalize_self_check(value: Any) -> Optional[SelfCheckResult]:
     if not isinstance(value, dict):
         return None
-    score = _safe_float(value.get("score"))
+    score = safe_float(value.get("score"))
     verdict_raw = value.get("verdict")
     verdict = verdict_raw.strip().lower() if isinstance(verdict_raw, str) else None
     if verdict and verdict not in {"pass", "warn", "fail"}:
@@ -170,7 +91,7 @@ def _build_evidence_payload(chunks: Iterable[Dict[str, Any]]) -> List[Dict[str, 
         quote = metadata.get("quote") or chunk.get("quote") or chunk.get("content") or ""
         anchor = _extract_anchor(chunk)
         self_check = _normalize_self_check(chunk.get("self_check") or metadata.get("self_check"))
-        reliability = _normalize_reliability(
+        reliability = normalize_reliability(
             chunk.get("source_reliability") or metadata.get("source_reliability")
         )
         created_at = metadata.get("created_at") or chunk.get("created_at")
@@ -178,7 +99,7 @@ def _build_evidence_payload(chunks: Iterable[Dict[str, Any]]) -> List[Dict[str, 
         evidence_model = RAGEvidence(
             urn_id=_resolve_urn(chunk, chunk_id=chunk_id),
             chunk_id=chunk_id,
-            page_number=_safe_int(page_number),
+            page_number=safe_int(page_number),
             section=section,
             quote=str(quote) if quote is not None else "",
             content=str(quote) if quote is not None else None,
@@ -839,11 +760,7 @@ def query_rag(
 
         selected_filing_id = active_filing_id
         started_at = datetime.now(timezone.utc)
-        result = llm_service.answer_with_rag(
-            question,
-            context_chunks,
-            conversation_memory=conversation_memory,
-        )
+        result = llm_service.answer_with_rag(question, context_chunks)
         latency_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
 
         error = result.get("error")
@@ -1156,7 +1073,6 @@ def query_rag_stream(
                 for event in llm_service.stream_answer_with_rag(
                     question,
                     context_chunks,
-                    conversation_memory=conversation_memory,
                 ):
                     if event.get("type") == "token":
                         token = event.get("text") or ""
@@ -1321,6 +1237,7 @@ def query_rag_stream(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 __all__ = ["router"]
+
 
 
 

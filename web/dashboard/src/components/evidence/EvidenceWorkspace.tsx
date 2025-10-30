@@ -13,7 +13,7 @@ type EvidenceWorkspaceProps = {
   pdfDownloadUrl?: string | null;
   evidenceStatus?: "loading" | "ready" | "empty" | "anchor-mismatch";
   timelineLocked?: boolean;
-  onRequestUpgrade?: () => void;
+  onRequestUpgrade?: (tier: PlanTier) => void;
   diffEnabled?: boolean;
   diffActive?: boolean;
   diffRemoved?: EvidencePanelItem[];
@@ -93,6 +93,7 @@ export function EvidenceWorkspace({
           points={timelinePoints}
           locked={timelineLocked}
           highlightDate={highlightDate}
+          onRequestUpgrade={onRequestUpgrade}
           onSelectPoint={(point) =>
             selectTimelinePoint(point.date, { linkedEvidence: point.evidenceUrnIds })
           }

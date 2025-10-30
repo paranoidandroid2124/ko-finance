@@ -7,7 +7,7 @@ import math
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import litellm
 from langfuse import Langfuse
@@ -194,40 +194,97 @@ def _json_completion(
         return {"error": f"JSON decode failure: {exc}", "model_used": model_used}
 
 
-def classify_filing_content(raw_md: str) -> Dict[str, Any]:
-    snippet = raw_md[:12000]
-    messages = classify_filing.get_prompt(snippet)
-    result = _json_completion(CLASSIFICATION_MODEL, messages)
+def _run_json_prompt(
+    *,
+    label: str,
+    model: str,
+    messages: List[Dict[str, Any]],
+    fallback_model: Optional[str] = QUALITY_FALLBACK_MODEL,
+    normalizer: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+    default_on_error: Optional[Dict[str, Any]] = None,
+    log_level: str = "error",
+) -> Dict[str, Any]:
+    log_method = getattr(logger, log_level, logger.error)
+    result = _json_completion(
+        model=model,
+        messages=messages,
+        fallback_model=fallback_model,
+    )
     if "error" in result:
-        logger.error("Classification failed: %s", result["error"])
-    return result
+        log_method("%s failed: %s", label, result["error"])
+        if default_on_error is not None:
+            payload = dict(default_on_error)
+            payload["error"] = result["error"]
+            if result.get("model_used") and "model_used" not in payload:
+                payload["model_used"] = result["model_used"]
+            return payload
+        return result
+    if normalizer is None:
+        return result
+    try:
+        normalized = normalizer(result)
+    except Exception as exc:
+        log_method("%s normalizer failed: %s", label, exc, exc_info=True)
+        return {"error": f"normalizer_failed: {exc}", "raw": result}
+    if "model_used" not in normalized and result.get("model_used"):
+        normalized["model_used"] = result.get("model_used")
+    if "error" in normalized:
+        log_method("%s validation returned error: %s", label, normalized["error"])
+    return normalized
 
 
-def classify_query_intent(question: str) -> Dict[str, Any]:
-    messages = query_intent.get_prompt(question)
-    result = _json_completion(INTENT_MODEL, messages)
-    if "error" in result:
-        logger.error("Intent classification failed: %s", result["error"])
-        return {"decision": "pass", "reason": "fallback", "model_used": result.get("model_used")}
-
-    decision_raw = result.get("decision")
+def _normalize_intent_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(result)
+    decision_raw = normalized.get("decision")
     if isinstance(decision_raw, str):
         decision = decision_raw.strip().lower()
         if decision not in {"pass", "semi_pass", "block"}:
             decision = "pass"
     else:
         decision = "pass"
-    result["decision"] = decision
-    return result
+    normalized["decision"] = decision
+    return normalized
+
+
+def _normalize_guard_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    decision_raw = str(result.get("decision") or "").strip().lower()
+    decision = decision_raw if decision_raw in {"pass", "semi_pass", "block", "unknown"} else "unknown"
+    return {
+        "decision": decision or "unknown",
+        "reason": result.get("reason"),
+        "model_used": result.get("model_used"),
+    }
+
+
+def classify_filing_content(raw_md: str) -> Dict[str, Any]:
+    snippet = raw_md[:12000]
+    messages = classify_filing.get_prompt(snippet)
+    return _run_json_prompt(
+        label="Filing classification",
+        model=CLASSIFICATION_MODEL,
+        messages=messages,
+    )
+
+
+def classify_query_intent(question: str) -> Dict[str, Any]:
+    messages = query_intent.get_prompt(question)
+    return _run_json_prompt(
+        label="Intent classification",
+        model=INTENT_MODEL,
+        messages=messages,
+        normalizer=_normalize_intent_result,
+        default_on_error={"decision": "pass", "reason": "fallback"},
+    )
 
 
 def extract_structured_info(raw_md: str) -> Dict[str, Any]:
     snippet = raw_md[:24000]
     messages = extract_info.get_prompt(snippet)
-    result = _json_completion(EXTRACTION_MODEL, messages)
-    if "error" in result:
-        logger.error("Extraction failed: %s", result["error"])
-    return result
+    return _run_json_prompt(
+        label="Filing extraction",
+        model=EXTRACTION_MODEL,
+        messages=messages,
+    )
 
 
 def _normalize_topics(topics: Any) -> Tuple[List[str], List[str]]:
@@ -338,11 +395,13 @@ def validate_news_analysis_result(result: Dict[str, Any]) -> Dict[str, Any]:
 def analyze_news_article(article_text: str) -> Dict[str, Any]:
     snippet = article_text[:12000]
     messages = analyze_news.get_prompt(snippet)
-    result = _json_completion(NEWS_ANALYSIS_MODEL, messages, fallback_model=QUALITY_FALLBACK_MODEL)
-    if "error" in result:
-        logger.error("News analysis failed: %s", result["error"])
-        return result
-    validated = validate_news_analysis_result(result)
+    validated = _run_json_prompt(
+        label="News analysis",
+        model=NEWS_ANALYSIS_MODEL,
+        messages=messages,
+        fallback_model=QUALITY_FALLBACK_MODEL,
+        normalizer=validate_news_analysis_result,
+    )
     if "error" in validated:
         return validated
     logger.info("News analysis sentiment=%s", validated.get("sentiment"))
@@ -359,19 +418,21 @@ def self_check_extracted_info(raw_md: str, candidate_facts: List[Dict[str, Any]]
         {"role": "system", "content": self_check.SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
-    result = _json_completion(SELF_CHECK_MODEL, messages)
-    if "error" in result:
-        logger.error("Self-check failed: %s", result["error"])
-    return result
+    return _run_json_prompt(
+        label="Self-check verification",
+        model=SELF_CHECK_MODEL,
+        messages=messages,
+    )
 
 
 def summarize_filing_content(raw_md: str) -> Dict[str, Any]:
     snippet = raw_md[:24000]
     messages = summarize_report.get_prompt(snippet)
-    result = _json_completion(SUMMARY_MODEL, messages)
-    if "error" in result:
-        logger.error("Summary generation failed: %s", result["error"])
-    return result
+    return _run_json_prompt(
+        label="Filing summary",
+        model=SUMMARY_MODEL,
+        messages=messages,
+    )
 
 
 def _categorize_context(context_chunks: List[Dict[str, Any]]) -> Dict[str, bool]:
@@ -445,18 +506,13 @@ def _format_transcript_for_summary(transcript: List[Dict[str, str]], *, max_char
 
 def judge_question_for_regulatory_risk(question: str) -> Dict[str, Any]:
     messages = judge_guard.get_prompt(question)
-    result = _json_completion(JUDGE_MODEL, messages)
-    if "error" in result:
-        logger.warning("Judge evaluation failed: %s", result["error"])
-        return {"error": result["error"]}
-    decision = str(result.get("decision", "")).strip().lower()
-    reason = result.get("reason")
-    model_used = result.get("model_used")
-    return {
-        "decision": decision or "unknown",
-        "reason": reason,
-        "model_used": model_used,
-    }
+    return _run_json_prompt(
+        label="Guardrail judge",
+        model=JUDGE_MODEL,
+        messages=messages,
+        normalizer=_normalize_guard_result,
+        log_level="warning",
+    )
 
 
 def _prepare_rag_payload(

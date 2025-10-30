@@ -33,6 +33,7 @@ BASELINE_DOMAIN_SCORES: dict[str, float] = {
     "etoday.co.kr": 0.78,         # 이투데이
     "newstomato.com": 0.78,       # 뉴스토마토
     "moneys.co.kr": 0.78,         # 머니S
+    "yonhapnews.co.kr": 0.92,     # 연합뉴스
     "seoulfn.com": 0.79,          # 서울파이낸스
     "infostockdaily.co.kr": 0.77, # 인포스탁데일리
     "ajunews.com": 0.79,          # 아주경제
@@ -159,10 +160,6 @@ def _score_from_domain(domain: Optional[str]) -> Optional[float]:
         return 0.93
     if domain.endswith(".or.kr"):
         return 0.82
-    if domain.endswith(".co.kr") or domain.endswith(".kr"):
-        return 0.72
-    if domain.endswith(".com"):
-        return 0.68
     return None
 
 

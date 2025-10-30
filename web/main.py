@@ -1,6 +1,7 @@
-﻿from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from services.plan_service import resolve_plan_context
 from web import routers
 
 app = FastAPI(
@@ -22,6 +23,16 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def inject_plan_context(request: Request, call_next):
+    """Ensure plan context is available on each request via request.state."""
+    context = resolve_plan_context(request)
+    request.state.plan_context = context
+    response = await call_next(request)
+    response.headers.setdefault("X-Plan-Tier", context.tier)
+    return response
+
+
 @app.get("/", summary="Health Check", tags=["Default"])
 def health_check():
     """API 상태를 확인하는 헬스 체크 엔드포인트입니다."""
@@ -29,13 +40,15 @@ def health_check():
 
 
 app.include_router(routers.dashboard.router, prefix="/api/v1")
+app.include_router(routers.alerts.router, prefix="/api/v1")
 app.include_router(routers.news.router, prefix="/api/v1")
 app.include_router(routers.chat.router, prefix="/api/v1")
 app.include_router(routers.rag.router, prefix="/api/v1")
 app.include_router(routers.search.router, prefix="/api/v1")
 app.include_router(routers.sectors.router, prefix="/api/v1")
 app.include_router(routers.company.router, prefix="/api/v1")
+app.include_router(routers.payments.router, prefix="/api/v1")
+app.include_router(routers.plan.router, prefix="/api/v1")
 
 if getattr(routers, "filing", None):
     app.include_router(routers.filing.router, prefix="/api/v1")
-

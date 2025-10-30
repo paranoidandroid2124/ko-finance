@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { Search, Loader2 } from "lucide-react";
 import { useCompanySearch, type CompanySearchResult } from "@/hooks/useCompanySearch";
@@ -36,17 +37,17 @@ export function CompanySearchBox({ placeholder = "회사명, 티커, 법인코�
     if (list.length > 0) {
       const href = buildHref(list[0]);
       if (href) {
-        router.push(href);
+        router.push(href as Route);
         return;
       }
     }
-    router.push(`/company/${encodeURIComponent(query.trim().toUpperCase())}`);
+    router.push(`/company/${encodeURIComponent(query.trim().toUpperCase())}` as Route);
   };
 
   const handleSelect = (item: CompanySearchResult) => {
     const href = buildHref(item);
     if (href) {
-      router.push(href);
+      router.push(href as Route);
     }
   };
 

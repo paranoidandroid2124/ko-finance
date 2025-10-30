@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from collections import Counter
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from celery import shared_task
 from pydantic import ValidationError
@@ -26,7 +26,16 @@ from ingest.dart_seed import seed_recent_filings as seed_recent_filings_job
 from ingest.news_fetcher import fetch_news_batch
 from models.chat import ChatMessage, ChatSession
 from models.fact import ExtractedFact
-from models.filing import Filing, STATUS_PENDING
+from models.filing import (
+    Filing,
+    STATUS_PENDING,
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    STATUS_PARTIAL,
+    ANALYSIS_ANALYZED,
+    ANALYSIS_FAILED,
+    ANALYSIS_PARTIAL,
+)
 from models.digest import DailyDigestLog
 from models.news import NewsObservation, NewsSignal
 from models.evidence import EvidenceSnapshot
@@ -34,15 +43,24 @@ from models.summary import Summary
 from parse.pdf_parser import extract_chunks
 from parse.xml_parser import extract_chunks_from_xml
 from schemas.news import NewsArticleCreate
-from services import chat_service, minio_service, vector_service
+from services import alert_service, chat_service, minio_service, vector_service
 from services.aggregation.sector_classifier import assign_article_to_sector
 from services.aggregation.sector_metrics import compute_sector_daily_metrics, compute_sector_window_metrics
 from services.aggregation.news_metrics import compute_news_window_metrics
 from services.notification_service import send_telegram_alert
 from services.reliability.source_reliability import score_article as score_source_reliability
+from services.aggregation.news_statistics import summarize_news_signals, build_top_topics
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+
+@dataclass
+class StageResult:
+    name: str
+    critical: bool
+    success: bool
+    error: Optional[str] = None
 
 
 def _snapshot_hash(payload: Dict[str, Any]) -> str:
@@ -188,6 +206,50 @@ def _open_session() -> Session:
     return SessionLocal()
 
 
+@shared_task(
+    name="alerts.evaluate_rules",
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=30,
+    retry_backoff_max=300,
+    retry_jitter=True,
+    retry_kwargs={"max_retries": 3},
+)
+def evaluate_alert_rules(self, limit: int = 1000) -> Dict[str, int]:
+    """Periodic task that evaluates alert rules and dispatches notifications."""
+    db = _open_session()
+    task_id = getattr(self.request, "id", None)
+    if limit < 1:
+        logger.warning("Alert evaluation limit must be positive. Received %s. Falling back to 1.", limit)
+        limit = 1
+    try:
+        result = alert_service.evaluate_due_alerts(db, limit=limit, task_id=task_id)
+        db.commit()
+        logger.info(
+            "Alert evaluation completed (task=%s): evaluated=%s triggered=%s skipped=%s errors=%s plans=%s",
+            task_id,
+            result.get("evaluated"),
+            result.get("triggered"),
+            result.get("skipped"),
+            result.get("errors"),
+            result.get("by_plan"),
+        )
+        return result
+    except Exception as exc:  # pragma: no cover - Celery runtime guard
+        db.rollback()
+        logger.error(
+            "Alert evaluation failed (task=%s, retry=%s/%s): %s",
+            task_id,
+            getattr(self.request, "retries", 0),
+            getattr(self, "max_retries", 0),
+            exc,
+            exc_info=True,
+        )
+        raise
+    finally:
+        db.close()
+
+
 def _ensure_pdf_path(filing: Filing) -> Optional[str]:
     if filing.file_path and Path(filing.file_path).is_file():
         return filing.file_path
@@ -272,12 +334,19 @@ def _load_xml_paths(filing: Filing) -> List[str]:
     return resolved_paths
 
 
-def _save_chunks(filing: Filing, chunks: List[Dict[str, Any]], db: Session) -> None:
+def _save_chunks(
+    filing: Filing,
+    chunks: List[Dict[str, Any]],
+    db: Session,
+    *,
+    commit: bool = True,
+) -> None:
     filing.chunks = chunks
     filing.raw_md = "\n\n".join(
         chunk["content"] for chunk in chunks if isinstance(chunk.get("content"), str)
     )
-    db.commit()
+    if commit:
+        db.commit()
 
 
 def _normalize_facts(facts_payload: Any) -> List[Dict[str, Any]]:
@@ -360,70 +429,149 @@ def seed_recent_filings_task(days_back: int = 1) -> int:
 @shared_task(name="m1.process_filing")
 def process_filing(filing_id: str) -> str:
     db = _open_session()
+    stage_results: List[StageResult] = []
     try:
         filing = db.query(Filing).filter(Filing.id == filing_id).one_or_none()
         if not filing:
             logger.error("Filing %s not found.", filing_id)
             return "missing"
 
-        pdf_path = _ensure_pdf_path(filing)
-        xml_paths = _load_xml_paths(filing)
+        raw_content = filing.raw_md or ""
+        chunk_count = len(filing.chunks or [])
 
-        chunks: List[Dict[str, Any]] = []
-        if pdf_path:
-            chunks.extend(extract_chunks(pdf_path))
-        if xml_paths:
-            chunks.extend(extract_chunks_from_xml(xml_paths))
+        def run_stage(name: str, func: Callable[[], None], *, critical: bool) -> bool:
+            try:
+                func()
+            except Exception as exc:
+                db.rollback()
+                level = logging.ERROR if critical else logging.WARNING
+                logger.log(
+                    level,
+                    "Filing %s stage '%s' failed: %s",
+                    filing.id,
+                    name,
+                    exc,
+                    exc_info=True,
+                )
+                stage_results.append(
+                    StageResult(name=name, critical=critical, success=False, error=str(exc))
+                )
+                return False
 
-        if chunks:
-            _save_chunks(filing, chunks, db)
+            stage_results.append(StageResult(name=name, critical=critical, success=True))
+            return True
+
+        def ingest_stage() -> None:
+            nonlocal raw_content, chunk_count
+            pdf_path = _ensure_pdf_path(filing)
+            xml_paths = _load_xml_paths(filing)
+            if not pdf_path and not xml_paths:
+                raise RuntimeError("No PDF or XML sources found for ingestion.")
+
+            extracted: List[Dict[str, Any]] = []
+            if pdf_path:
+                extracted.extend(extract_chunks(pdf_path))
+            if xml_paths:
+                extracted.extend(extract_chunks_from_xml(xml_paths))
+            if not extracted:
+                raise RuntimeError("No chunks could be extracted from the available sources.")
+
+            _save_chunks(filing, extracted, db, commit=False)
             vector_metadata = _build_vector_metadata(filing)
-            vector_service.store_chunk_vectors(str(filing.id), chunks, metadata=vector_metadata)
-        else:
-            logger.warning("No chunks extracted for filing %s", filing.id)
+            vector_service.store_chunk_vectors(str(filing.id), extracted, metadata=vector_metadata)
+            db.commit()
 
-        raw_md = filing.raw_md or ""
+            raw_content = filing.raw_md or raw_content
+            chunk_count = len(extracted)
 
-        try:
-            classification = llm_service.classify_filing_content(raw_md)
+        def classification_stage() -> None:
+            nonlocal raw_content
+            if not raw_content.strip():
+                raise RuntimeError("Empty filing content; classification is not possible.")
+
+            classification = llm_service.classify_filing_content(raw_content)
             normalized_category = _normalize_category_label(classification.get("category"))
             filing.category = normalized_category
             filing.category_confidence = classification.get("confidence_score")
             db.commit()
-        except Exception as exc:
-            logger.error("Classification failed for %s: %s", filing.id, exc, exc_info=True)
 
-        facts_payload: List[Dict[str, Any]] = []
-        try:
-            extraction = llm_service.extract_structured_info(raw_md)
-            facts_payload = _normalize_facts(extraction.get("facts"))
-        except Exception as exc:
-            logger.error("Extraction failed for %s: %s", filing.id, exc, exc_info=True)
+        def facts_stage() -> None:
+            nonlocal raw_content
+            if not raw_content.strip():
+                raise RuntimeError("Empty filing content; fact extraction is not possible.")
 
-        if facts_payload:
+            extraction_result = llm_service.extract_structured_info(raw_content)
+            facts_payload = _normalize_facts(extraction_result.get("facts"))
+            if not facts_payload:
+                logger.info("No structured facts extracted for filing %s.", filing.id)
+                return
+
             try:
-                checked = llm_service.self_check_extracted_info(raw_md, facts_payload)
+                checked = llm_service.self_check_extracted_info(raw_content, facts_payload)
+            except Exception as exc:
+                logger.warning("Self-check failed for %s: %s", filing.id, exc, exc_info=True)
+                normalized = facts_payload
+            else:
                 corrected = checked.get("corrected_json", {}).get("facts") or checked.get("corrected_json")
                 normalized = _normalize_facts(corrected) if corrected else facts_payload
-                _save_facts(filing, normalized, db)
-            except Exception as exc:
-                logger.error("Self-check failed for %s: %s", filing.id, exc, exc_info=True)
-                _save_facts(filing, facts_payload, db)
 
-        try:
-            summary = llm_service.summarize_filing_content(raw_md)
+            _save_facts(filing, normalized, db)
+
+        def summary_stage() -> None:
+            nonlocal raw_content
+            if not raw_content.strip():
+                raise RuntimeError("Empty filing content; summary generation is not possible.")
+
+            summary = llm_service.summarize_filing_content(raw_content)
+            if not isinstance(summary, dict):
+                raise RuntimeError("Summary payload is not a dictionary.")
+
             _save_summary(filing, summary, db)
             message = _format_notification(filing, summary)
-            send_telegram_alert(message)
-        except Exception as exc:
-            logger.error("Summary/notification failed for %s: %s", filing.id, exc, exc_info=True)
+            try:
+                send_telegram_alert(message)
+            except Exception as exc:
+                logger.warning("Telegram alert failed for %s: %s", filing.id, exc, exc_info=True)
 
-        filing.status = "COMPLETED"
-        filing.analysis_status = "ANALYZED"
+        ingest_success = run_stage("ingest_chunks", ingest_stage, critical=True)
+
+        if ingest_success:
+            run_stage("classify_category", classification_stage, critical=False)
+            run_stage("extract_facts", facts_stage, critical=False)
+            run_stage("summarize_and_notify", summary_stage, critical=False)
+
+        stage_summary = ", ".join(
+            f"{result.name}={'ok' if result.success else 'fail'}" for result in stage_results
+        ) or "no stages executed"
+        logger.info(
+            "Filing %s processing summary (chunks=%s): %s",
+            filing.id,
+            chunk_count,
+            stage_summary,
+        )
+
+        critical_failures = [result for result in stage_results if result.critical and not result.success]
+        non_critical_failures = [result for result in stage_results if not result.success]
+
+        if critical_failures:
+            filing.status = STATUS_FAILED
+            filing.analysis_status = ANALYSIS_FAILED
+            db.commit()
+            return "failed"
+
+        if non_critical_failures:
+            filing.status = STATUS_PARTIAL
+            filing.analysis_status = ANALYSIS_PARTIAL
+            db.commit()
+            return "partial"
+
+        filing.status = STATUS_COMPLETED
+        filing.analysis_status = ANALYSIS_ANALYZED
         db.commit()
         return "completed"
 
     except Exception as exc:
+        db.rollback()
         logger.error("Error processing filing %s: %s", filing_id, exc, exc_info=True)
         return "error"
     finally:
@@ -439,49 +587,19 @@ def tally_news_window(
     neutral_threshold: float,
 ) -> Dict[str, Any]:
     """Aggregate sentiment statistics for a window of news signals."""
-    article_count = 0
-    positive_count = 0
-    neutral_count = 0
-    negative_count = 0
-    sentiments: List[float] = []
-    topic_counter: Counter[str] = Counter()
-
-    for signal in signals:
-        article_count += 1
-        sentiment = signal.sentiment
-        if sentiment is None:
-            neutral_count += 1
-        else:
-            sentiments.append(sentiment)
-            if sentiment > neutral_threshold:
-                positive_count += 1
-            elif sentiment < -neutral_threshold:
-                negative_count += 1
-            else:
-                neutral_count += 1
-
-        for topic in signal.topics or []:
-            topic_counter[topic] += 1
-
-    avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else None
-    min_sentiment = min(sentiments) if sentiments else None
-    max_sentiment = max(sentiments) if sentiments else None
-
-    top_topics = [
-        {"topic": topic, "count": count}
-        for topic, count in topic_counter.most_common(topics_limit)
-    ]
+    summary = summarize_news_signals(signals, neutral_threshold=neutral_threshold)
+    top_topics = build_top_topics(summary.topic_counts, topics_limit)
 
     return {
         "window_start": window_start,
         "window_end": window_end,
-        "article_count": article_count,
-        "positive_count": positive_count,
-        "neutral_count": neutral_count,
-        "negative_count": negative_count,
-        "avg_sentiment": avg_sentiment,
-        "min_sentiment": min_sentiment,
-        "max_sentiment": max_sentiment,
+        "article_count": summary.article_count,
+        "positive_count": summary.positive_count,
+        "neutral_count": summary.neutral_count,
+        "negative_count": summary.negative_count,
+        "avg_sentiment": summary.avg_sentiment,
+        "min_sentiment": summary.min_sentiment,
+        "max_sentiment": summary.max_sentiment,
         "top_topics": top_topics,
     }
 

@@ -132,30 +132,37 @@ const mapNewsInsights = (records: unknown): NewsWindowInsight[] => {
     return [];
   }
 
-  return records
-    .map((raw) => {
-      if (!isRecord(raw)) {
-        return null;
-      }
+  return records.reduce<NewsWindowInsight[]>((acc, raw) => {
+    if (!isRecord(raw)) {
+      return acc;
+    }
 
-      return {
-        scope: toStringOrNull(raw.scope) ?? "",
-        ticker: toStringOrNull(raw.ticker),
-        windowDays: toNumberOrZero(raw.window_days ?? raw.windowDays),
-        computedFor: toStringOrNull(raw.computed_for ?? raw.computedFor) ?? "",
-        articleCount: toNumberOrZero(raw.article_count ?? raw.articleCount),
-        avgSentiment: toNumberOrNull(raw.avg_sentiment ?? raw.avgSentiment),
-        sentimentZ: toNumberOrNull(raw.sentiment_z ?? raw.sentimentZ),
-        noveltyKl: toNumberOrNull(raw.novelty_kl ?? raw.noveltyKl),
-        topicShift: toNumberOrNull(raw.topic_shift ?? raw.topicShift),
-        domesticRatio: toNumberOrNull(raw.domestic_ratio ?? raw.domesticRatio),
-        domainDiversity: toNumberOrNull(raw.domain_diversity ?? raw.domainDiversity),
-        topTopics: mapTopicWeights(raw.top_topics ?? raw.topTopics),
-        sourceReliability: toNumberOrNull(raw.source_reliability ?? raw.sourceReliability),
-        deduplicationClusterId: toStringOrNull(raw.deduplication_cluster_id ?? raw.deduplicationClusterId),
-      };
-    })
-    .filter((entry): entry is NewsWindowInsight => Boolean(entry));
+    const scope = toStringOrNull(raw.scope);
+    const computedFor = toStringOrNull(raw.computed_for ?? raw.computedFor);
+    if (!scope || !computedFor) {
+      return acc;
+    }
+
+    const insight: NewsWindowInsight = {
+      scope,
+      ticker: toStringOrNull(raw.ticker),
+      windowDays: toNumberOrZero(raw.window_days ?? raw.windowDays),
+      computedFor,
+      articleCount: toNumberOrZero(raw.article_count ?? raw.articleCount),
+      avgSentiment: toNumberOrNull(raw.avg_sentiment ?? raw.avgSentiment),
+      sentimentZ: toNumberOrNull(raw.sentiment_z ?? raw.sentimentZ),
+      noveltyKl: toNumberOrNull(raw.novelty_kl ?? raw.noveltyKl),
+      topicShift: toNumberOrNull(raw.topic_shift ?? raw.topicShift),
+      domesticRatio: toNumberOrNull(raw.domestic_ratio ?? raw.domesticRatio),
+      domainDiversity: toNumberOrNull(raw.domain_diversity ?? raw.domainDiversity),
+      topTopics: mapTopicWeights(raw.top_topics ?? raw.topTopics),
+      sourceReliability: toNumberOrNull(raw.source_reliability ?? raw.sourceReliability),
+      deduplicationClusterId: toStringOrNull(raw.deduplication_cluster_id ?? raw.deduplicationClusterId),
+    };
+
+    acc.push(insight);
+    return acc;
+  }, []);
 };
 
 const mapFilingHeadline = (value: unknown): FilingHeadline | null => {
@@ -190,50 +197,53 @@ const mapKeyMetrics = (entries: unknown): KeyMetric[] => {
   if (!Array.isArray(entries)) {
     return [];
   }
-  return entries
-    .map((entry) => {
-      if (!isRecord(entry)) {
-        return null;
-      }
-      const metricCode = toStringOrNull(entry.metric_code ?? entry.metricCode) ?? "";
-      const label = toStringOrNull(entry.label) ?? "";
-      return {
-        metricCode,
-        label,
-        value: toNumberOrNull(entry.value),
-        unit: toStringOrNull(entry.unit),
-        fiscalYear: toNumberOrNull(entry.fiscal_year ?? entry.fiscalYear),
-        fiscalPeriod: toStringOrNull(entry.fiscal_period ?? entry.fiscalPeriod),
-      };
-    })
-    .filter((metric): metric is KeyMetric => Boolean(metric));
+  return entries.reduce<KeyMetric[]>((acc, entry) => {
+    if (!isRecord(entry)) {
+      return acc;
+    }
+    const metricCode = toStringOrNull(entry.metric_code ?? entry.metricCode);
+    const label = toStringOrNull(entry.label);
+    if (!metricCode || !label) {
+      return acc;
+    }
+    const metric: KeyMetric = {
+      metricCode,
+      label,
+      value: toNumberOrNull(entry.value),
+      unit: toStringOrNull(entry.unit),
+      fiscalYear: toNumberOrNull(entry.fiscal_year ?? entry.fiscalYear),
+      fiscalPeriod: toStringOrNull(entry.fiscal_period ?? entry.fiscalPeriod),
+    };
+    acc.push(metric);
+    return acc;
+  }, []);
 };
 
 const mapEvents = (entries: unknown): EventItem[] => {
   if (!Array.isArray(entries)) {
     return [];
   }
-  return entries
-    .map((entry) => {
-      if (!isRecord(entry)) {
-        return null;
-      }
-      const id = toStringOrNull(entry.id);
-      const eventType = toStringOrNull(entry.event_type ?? entry.eventType);
-      if (!id || !eventType) {
-        return null;
-      }
-      return {
-        id,
-        eventType,
-        eventName: toStringOrNull(entry.event_name ?? entry.eventName),
-        eventDate: toStringOrNull(entry.event_date ?? entry.eventDate),
-        resolutionDate: toStringOrNull(entry.resolution_date ?? entry.resolutionDate),
-        reportName: toStringOrNull(entry.report_name ?? entry.reportName),
-        derivedMetrics: toRecordOrEmpty(entry.derived_metrics ?? entry.derivedMetrics),
-      };
-    })
-    .filter((event): event is EventItem => Boolean(event));
+  return entries.reduce<EventItem[]>((acc, entry) => {
+    if (!isRecord(entry)) {
+      return acc;
+    }
+    const id = toStringOrNull(entry.id);
+    const eventType = toStringOrNull(entry.event_type ?? entry.eventType);
+    if (!id || !eventType) {
+      return acc;
+    }
+    const event: EventItem = {
+      id,
+      eventType,
+      eventName: toStringOrNull(entry.event_name ?? entry.eventName),
+      eventDate: toStringOrNull(entry.event_date ?? entry.eventDate),
+      resolutionDate: toStringOrNull(entry.resolution_date ?? entry.resolutionDate),
+      reportName: toStringOrNull(entry.report_name ?? entry.reportName),
+      derivedMetrics: toRecordOrEmpty(entry.derived_metrics ?? entry.derivedMetrics),
+    };
+    acc.push(event);
+    return acc;
+  }, []);
 };
 
 const mapSnapshotPayload = (payload: unknown): CompanySnapshot => {

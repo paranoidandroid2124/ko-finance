@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { PDFPageViewport } from "pdfjs-dist/types/src/display/api";
+import type { PageViewport } from "pdfjs-dist/types/src/display/display_utils";
 
 type PdfRect = {
   page: number;
@@ -26,7 +26,7 @@ export function InlinePdfViewer({ src, page, highlightRect, className, onLoad, o
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
-  const viewportRef = useRef<PDFPageViewport | null>(null);
+  const viewportRef = useRef<PageViewport | null>(null);
   const [status, setStatus] = useState<ViewerStatus>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 

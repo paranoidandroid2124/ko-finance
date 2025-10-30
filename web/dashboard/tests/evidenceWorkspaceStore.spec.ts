@@ -1,30 +1,34 @@
-import { describe, expect, it, beforeEach, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { EvidencePanelItem } from "@/components/evidence";
+import type { TimelineSparklinePoint } from "@/components/company/TimelineSparkline";
 import { useEvidenceWorkspaceStore } from "@/store/evidenceWorkspaceStore";
 import * as telemetry from "@/lib/telemetry";
 
-const baseState = {
-  evidenceItems: [],
-  timelinePoints: [],
-  pdfUrl: undefined,
-  pdfDownloadUrl: undefined,
-  selectedEvidenceUrn: undefined,
-  hoveredEvidenceUrn: undefined,
-  selectedTimelineDate: undefined,
-  hoveredTimelineDate: undefined,
-  diffEnabled: false,
-  diffActive: false,
-  removedEvidence: [],
-} as const;
+const resetStore = () => {
+  useEvidenceWorkspaceStore.setState({
+    evidenceItems: [],
+    timelinePoints: [],
+    pdfUrl: undefined,
+    pdfDownloadUrl: undefined,
+    selectedEvidenceUrn: undefined,
+    hoveredEvidenceUrn: undefined,
+    selectedTimelineDate: undefined,
+    hoveredTimelineDate: undefined,
+    diffEnabled: false,
+    diffActive: false,
+    removedEvidence: [],
+  });
+};
 
-const sampleEvidence = [
+const sampleEvidence: EvidencePanelItem[] = [
   {
     urnId: "urn:sample:0",
     quote: "Placeholder",
     section: "Intro",
     pageNumber: 1,
-    anchor: undefined,
-    selfCheck: undefined,
-    sourceReliability: "medium" as const,
+    anchor: null,
+    selfCheck: null,
+    sourceReliability: "medium",
     createdAt: "2025-01-01T00:00:00Z",
     chunkId: "chunk-0",
   },
@@ -33,15 +37,15 @@ const sampleEvidence = [
     quote: "Sample quote",
     section: "Sample Section",
     pageNumber: 5,
-    anchor: undefined,
-    selfCheck: undefined,
-    sourceReliability: "high" as const,
+    anchor: null,
+    selfCheck: null,
+    sourceReliability: "high",
     createdAt: "2025-01-01T00:00:00Z",
     chunkId: "chunk-1",
   },
-] as const;
+];
 
-const sampleTimeline = [
+const sampleTimeline: TimelineSparklinePoint[] = [
   {
     date: "2025-01-01",
     sentimentZ: 0.2,
@@ -50,13 +54,13 @@ const sampleTimeline = [
     eventType: "Sample Section",
     evidenceUrnIds: ["urn:sample:1"],
   },
-] as const;
+];
 
 describe("evidenceWorkspaceStore telemetry", () => {
   const logSpy = vi.spyOn(telemetry, "logEvent").mockImplementation(() => {});
 
   beforeEach(() => {
-    useEvidenceWorkspaceStore.setState(baseState);
+    resetStore();
     logSpy.mockClear();
   });
 

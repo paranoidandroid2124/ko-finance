@@ -13,7 +13,7 @@ export type ToastDescriptor = {
   duration?: number;
 };
 
-type ToastInput = Omit<ToastDescriptor, 'id'> & { id?: string };
+export type ToastInput = Omit<ToastDescriptor, 'id'> & { id?: string };
 
 type ToastStoreState = {
   toasts: ToastDescriptor[];

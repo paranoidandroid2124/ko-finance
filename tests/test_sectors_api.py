@@ -1,35 +1,32 @@
-import uuid
+﻿import uuid
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from database import Base, get_db
+from database import get_db
 from models.news import NewsSignal
-from models.sector import NewsArticleSector, Sector, SectorDailyMetric
+from models.sector import NewsArticleSector, SectorDailyMetric
 from services.aggregation.sector_classifier import ensure_sector_catalog
 from services.aggregation.sector_metrics import compute_sector_daily_metrics, compute_sector_window_metrics
 import web.routers.sectors as sectors_router
 
+KST = ZoneInfo("Asia/Seoul")
+
 
 @pytest.fixture()
-def sector_api_client():
-    engine = create_engine('sqlite:///:memory:')
-    Base.metadata.create_all(bind=engine)
-    SessionLocal = sessionmaker(bind=engine)
-    session = SessionLocal()
-
-    sectors = ensure_sector_catalog(session)
+def sector_api_client(db_session):
+    sectors = ensure_sector_catalog(db_session)
     semiconductor = sectors['semiconductor']
 
-    as_of_day = date(2025, 1, 15)
+    today_kst = datetime.now(KST).date()
+
     # Seed historical daily metrics for baseline
     for offset in range(1, 15):
-        day = as_of_day - timedelta(days=offset)
-        session.add(
+        day = today_kst - timedelta(days=offset)
+        db_session.add(
             SectorDailyMetric(
                 sector_id=semiconductor.id,
                 date=day,
@@ -39,7 +36,7 @@ def sector_api_client():
             )
         )
 
-    published_at = datetime(2025, 1, 14, 23, 30, tzinfo=timezone.utc)
+    published_at = datetime.now(timezone.utc) - timedelta(hours=1)
     signal = NewsSignal(
         id=uuid.uuid4(),
         ticker=None,
@@ -52,35 +49,30 @@ def sector_api_client():
         topics=['semi'],
         evidence=None,
     )
-    session.add(signal)
-    session.flush()
-    session.add(NewsArticleSector(article_id=signal.id, sector_id=semiconductor.id, weight=1.0))
-    session.commit()
+    db_session.add(signal)
+    db_session.flush()
+    db_session.add(NewsArticleSector(article_id=signal.id, sector_id=semiconductor.id, weight=1.0))
+    db_session.commit()
 
     # Compute daily + window metrics for use in API responses
-    compute_sector_daily_metrics(session, as_of_day, as_of_day)
-    compute_sector_window_metrics(session, as_of_day, window_days=(7, 30))
-    session.commit()
+    compute_sector_daily_metrics(db_session, today_kst, today_kst)
+    compute_sector_window_metrics(db_session, today_kst, window_days=(7, 30))
+    db_session.commit()
 
     app = FastAPI()
     app.include_router(sectors_router.router, prefix='/api/v1')
 
     def override_get_db():
-        try:
-            yield session
-        finally:
-            session.rollback()
+        yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
 
     client = TestClient(app)
     try:
-        yield client, session, semiconductor, signal
+        yield client, db_session, semiconductor, signal
     finally:
         client.close()
-        session.close()
-        Base.metadata.drop_all(bind=engine)
-        engine.dispose()
+        app.dependency_overrides.pop(get_db, None)
 
 
 def test_sector_signals_endpoint_returns_points(sector_api_client):

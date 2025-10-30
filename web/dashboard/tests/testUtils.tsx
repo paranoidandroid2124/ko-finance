@@ -27,3 +27,8 @@ export function renderWithProviders(ui: React.ReactElement, options?: ProvidersO
 
   return render(ui, { wrapper: Wrapper, ...options });
 }
+
+export const flushAsync = () => new Promise<void>((resolve) => {
+  // wait for queued microtasks (e.g. mutation promises) to settle
+  setTimeout(resolve, 0);
+});

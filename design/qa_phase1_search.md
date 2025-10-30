@@ -39,7 +39,7 @@
 ## 3. Tooling / Scripts
 - `pytest tests/test_search_api.py`
 - Optional: `uvicorn web.main:app --reload` + `pnpm dev` for manual UI.
-- DB spot checks via `psql` or `sqlite` (depending on environment).
+- DB spot checks via `psql`.
 
 ## 4. Outstanding Items
 - [ ] Automate frontend tests (Storybook visual regression or Playwright) for tab pagination.

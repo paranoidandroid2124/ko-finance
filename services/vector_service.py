@@ -14,6 +14,8 @@ import litellm
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient, models
 
+from services.rag_shared import build_anchor_payload, normalize_reliability
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -38,64 +40,6 @@ class VectorSearchResult:
     related_filings: List[Dict[str, Any]] = field(default_factory=list)
 
 
-def _to_paragraph_id(chunk: Dict[str, Any], metadata: Dict[str, Any]) -> Optional[str]:
-    paragraph_id = metadata.get("paragraph_id") or chunk.get("paragraph_id")
-    if paragraph_id:
-        return str(paragraph_id)
-    chunk_id = chunk.get("chunk_id") or chunk.get("id")
-    if chunk_id:
-        return str(chunk_id)
-    return None
-
-
-def _normalize_reliability(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"high", "medium", "low"}:
-            return lowered
-        return None
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return None
-    if numeric >= 0.66:
-        return "high"
-    if numeric >= 0.33:
-        return "medium"
-    return "low"
-
-
-def _normalize_anchor(chunk: Dict[str, Any], metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    anchor = metadata.get("anchor") or chunk.get("anchor")
-    if not isinstance(anchor, dict):
-        anchor = {}
-
-    paragraph_id = _to_paragraph_id(chunk, metadata)
-    if paragraph_id and "paragraph_id" not in anchor:
-        anchor["paragraph_id"] = paragraph_id
-
-    pdf_rect = anchor.get("pdf_rect") or metadata.get("pdf_rect")
-    if isinstance(pdf_rect, dict):
-        anchor["pdf_rect"] = {
-            "page": pdf_rect.get("page") or chunk.get("page_number"),
-            "x": pdf_rect.get("x") or 0.0,
-            "y": pdf_rect.get("y") or 0.0,
-            "width": pdf_rect.get("width") or 0.0,
-            "height": pdf_rect.get("height") or 0.0,
-        }
-
-    similarity = anchor.get("similarity") or chunk.get("similarity") or chunk.get("score")
-    if similarity is not None:
-        try:
-            anchor["similarity"] = float(similarity)
-        except (TypeError, ValueError):
-            anchor.pop("similarity", None)
-
-    return anchor or None
-
-
 def _normalize_chunk_payload(raw_payload: Dict[str, Any]) -> Dict[str, Any]:
     payload = dict(raw_payload)
     metadata = payload.pop("metadata", {}) or {}
@@ -116,11 +60,11 @@ def _normalize_chunk_payload(raw_payload: Dict[str, Any]) -> Dict[str, Any]:
         if payload.get(key) is None and metadata.get(key) is not None:
             payload[key] = metadata[key]
 
-    anchor = _normalize_anchor(payload, metadata)
+    anchor = build_anchor_payload(payload, metadata)
     if anchor:
         payload["anchor"] = anchor
 
-    reliability = _normalize_reliability(payload.get("source_reliability"))
+    reliability = normalize_reliability(payload.get("source_reliability"))
     if reliability:
         payload["source_reliability"] = reliability
 

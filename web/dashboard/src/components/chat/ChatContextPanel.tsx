@@ -11,17 +11,19 @@ export function ChatContextPanel() {
   const { evidence, guardrail, metrics } = useChatStore(selectContextPanelData);
   const highlight = useChatStore(selectHighlightDisplay);
   const focusEvidence = useChatStore((state) => state.focus_evidence_item);
+  const sessionContext = activeSession?.context;
 
   const contextLabel = useMemo(() => {
-    const type = activeSession?.context?.type;
+    const type = sessionContext?.type;
     if (type === "filing") return "공시 컨텍스트";
     if (type === "news") return "뉴스 컨텍스트";
     if (type === "custom") return "사용자 컨텍스트";
     return "연결된 컨텍스트 없음";
-  }, [activeSession?.context?.type]);
+  }, [sessionContext?.type]);
 
-  const contextSummary = activeSession?.context?.summary;
-  const referenceId = activeSession?.context?.referenceId;
+  const contextSummary = sessionContext?.summary ?? null;
+  const referenceId =
+    sessionContext && sessionContext.type !== "custom" ? sessionContext.referenceId ?? undefined : undefined;
   const evidenceErrorMessage =
     evidence.status === "error" && "errorMessage" in evidence ? evidence.errorMessage : undefined;
 
