@@ -6,7 +6,10 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional, Type, TYPE_CHECKING, cast
+
+if TYPE_CHECKING:  # pragma: no cover - for type checkers only
+    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -14,15 +17,17 @@ _AUDIT_LOG_PATH = Path("uploads") / "admin" / "toss_webhook_audit.jsonl"
 _MAX_PERSISTED_ENTRIES = 1000
 
 try:  # pragma: no cover - DB 초기화 실패 시 파일 기반으로만 동작
-    from database import SessionLocal  # type: ignore
-    from models.payments import TossWebhookEventLog  # type: ignore
-    from sqlalchemy.exc import SQLAlchemyError  # type: ignore
+    from database import SessionLocal as _SessionLocal
+    from models.payments import TossWebhookEventLog as _TossWebhookEventLog
+    from sqlalchemy.exc import SQLAlchemyError as _SQLAlchemyError
 except Exception:  # pragma: no cover
-    SessionLocal = None  # type: ignore
-    TossWebhookEventLog = None  # type: ignore
+    _SessionLocal = None
+    _TossWebhookEventLog = None
+    _SQLAlchemyError = Exception
 
-    class SQLAlchemyError(Exception):  # type: ignore
-        pass
+SessionFactory = cast(Optional[Callable[[], "Session"]], _SessionLocal)
+TossWebhookEventLogModel = cast(Optional[Type[Any]], _TossWebhookEventLog)
+SQLAlchemyError = cast(Type[Exception], _SQLAlchemyError)
 
 
 def append_webhook_audit_entry(
@@ -110,17 +115,17 @@ def _persist_to_db(
     payload: Optional[Dict[str, Any]],
     message: Optional[str],
 ) -> None:
-    if SessionLocal is None or TossWebhookEventLog is None:  # pragma: no cover - DB 미구성
+    if SessionFactory is None or TossWebhookEventLogModel is None:  # pragma: no cover - DB 미구성
         return
 
     try:
-        session = SessionLocal()
+        session = SessionFactory()
     except Exception as exc:  # pragma: no cover
         logger.debug("Toss 웹훅 감사 로그 DB 세션 생성 실패: %s", exc)
         return
 
     try:
-        record = TossWebhookEventLog(  # type: ignore[call-arg]
+        record = TossWebhookEventLogModel(
             transmission_id=context.get("transmission_id"),
             order_id=context.get("order_id"),
             event_type=context.get("event_type"),
@@ -143,18 +148,18 @@ def _persist_to_db(
 
 
 def _fetch_recent_from_db(limit: int) -> Optional[Iterable[Dict[str, Any]]]:
-    if SessionLocal is None or TossWebhookEventLog is None:  # pragma: no cover
+    if SessionFactory is None or TossWebhookEventLogModel is None:  # pragma: no cover
         return None
 
     try:
-        session = SessionLocal()
+        session = SessionFactory()
     except Exception:  # pragma: no cover
         return None
 
     try:
         rows = (
-            session.query(TossWebhookEventLog)  # type: ignore[attr-defined]
-            .order_by(TossWebhookEventLog.created_at.desc())  # type: ignore[attr-defined]
+            session.query(TossWebhookEventLogModel)
+            .order_by(TossWebhookEventLogModel.created_at.desc())
             .limit(limit)
             .all()
         )

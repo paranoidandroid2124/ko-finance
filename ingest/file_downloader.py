@@ -9,7 +9,7 @@ import re
 import time
 import zipfile
 from pathlib import Path
-from typing import Dict, Optional
+from typing import List, Optional, TypedDict
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
@@ -59,18 +59,32 @@ def _get_with_retry(client: httpx.Client, url: str) -> httpx.Response:
     raise last_error
 
 
+class AttachmentInfo(TypedDict):
+    name: str
+    path: str
+    type: str
+
+
+class FilingPackage(TypedDict, total=False):
+    rcp_no: str
+    download_url: Optional[str]
+    pdf: Optional[str]
+    xml: List[str]
+    attachments: List[AttachmentInfo]
+
+
 def parse_filing_bundle(
     receipt_no: str,
     data: bytes,
     save_dir: str,
     download_url: Optional[str] = None,
     content_type_header: Optional[str] = None,
-) -> Optional[Dict[str, object]]:
+) -> Optional[FilingPackage]:
     """Persist downloaded ZIP/PDF content and return file metadata."""
     base_dir = Path(save_dir) / receipt_no
     base_dir.mkdir(parents=True, exist_ok=True)
 
-    package: Dict[str, object] = {
+    package: FilingPackage = {
         "rcp_no": receipt_no,
         "download_url": download_url,
         "pdf": None,
@@ -151,7 +165,7 @@ def _force_https(url: str) -> str:
     return sanitized
 
 
-def fetch_viewer_bundle(viewer_url: str, save_dir: str) -> Optional[Dict[str, object]]:
+def fetch_viewer_bundle(viewer_url: str, save_dir: str) -> Optional[FilingPackage]:
     """Download a filing bundle by scraping the DART viewer page."""
     viewer_url = _force_https(viewer_url)
     try:
@@ -176,11 +190,11 @@ def fetch_viewer_bundle(viewer_url: str, save_dir: str) -> Optional[Dict[str, ob
             download_page = _get_with_retry(client, download_page_url)
             download_soup = BeautifulSoup(download_page.text, "lxml")
 
-            package: Optional[Dict[str, object]] = None
+            package: Optional[FilingPackage] = None
             base_dir = Path(save_dir) / receipt_no
             base_dir.mkdir(parents=True, exist_ok=True)
 
-            def ensure_package() -> Dict[str, object]:
+            def ensure_package() -> FilingPackage:
                 nonlocal package
                 if package is None:
                     package = {
@@ -190,7 +204,7 @@ def fetch_viewer_bundle(viewer_url: str, save_dir: str) -> Optional[Dict[str, ob
                         "xml": [],
                         "attachments": [],
                     }
-                return package  # type: ignore[return-value]
+                return package
 
             for btn in download_soup.select("a.btnFile"):
                 href = btn.get("href")
@@ -224,7 +238,7 @@ def fetch_viewer_bundle(viewer_url: str, save_dir: str) -> Optional[Dict[str, ob
                     filename = os.path.basename(parsed_url.path)
 
                 if not filename:
-                    filename = f"{receipt_no}_{len(pkg['attachments'])}.dat"  # type: ignore[index]
+                    filename = f"{receipt_no}_{len(pkg['attachments'])}.dat"
 
                 output_path = base_dir / filename
                 output_path.write_bytes(data)
@@ -233,15 +247,11 @@ def fetch_viewer_bundle(viewer_url: str, save_dir: str) -> Optional[Dict[str, ob
                     if pkg.get("pdf") is None:
                         pkg["pdf"] = str(output_path.resolve())
                 elif attachment_type in {"xml", "xbrl"}:
-                    xml_list = pkg.setdefault("xml", [])  # type: ignore[assignment]
-                    if isinstance(xml_list, list):
-                        xml_list.append(str(output_path.resolve()))
+                    pkg["xml"].append(str(output_path.resolve()))
 
-                attachments = pkg.setdefault("attachments", [])  # type: ignore[assignment]
-                if isinstance(attachments, list):
-                    attachments.append(
-                        {"name": filename, "path": str(output_path.resolve()), "type": attachment_type}
-                    )
+                pkg["attachments"].append(
+                    {"name": filename, "path": str(output_path.resolve()), "type": attachment_type}
+                )
 
             if package:
                 return package
@@ -258,7 +268,8 @@ def download_dart_pdf(viewer_url: str, save_dir: str) -> Optional[str]:
     package = fetch_viewer_bundle(viewer_url, save_dir)
     if not package:
         return None
-    return package.get("pdf")  # type: ignore[return-value]
+    pdf_path = package.get("pdf")
+    return pdf_path
 
 
 __all__ = ["parse_filing_bundle", "fetch_viewer_bundle", "download_dart_pdf"]

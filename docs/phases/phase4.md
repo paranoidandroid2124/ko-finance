@@ -20,6 +20,7 @@
 - **P1 (스프린트 2)**: RAG 컨텍스트 관리 API·UI, 벡터 재색인 트리거 연동, 감사 로그 확대
 - **P2 (스프린트 3)**: Operations 패널(스케줄·API 키·알림), Langfuse/관측 토글, 배너 편집
 - 모든 도메인 공통으로 Admin RBAC/감사/배포 전략은 단일 스토리로 묶어 동시 진행
+- **범위 밖**: 인프라/GCP 이전, IaC 정비, 장기적인 Secret Manager 전환 등은 Phase 5에서 다룬다.
 
 ### LLM & Guardrail 콘솔
 

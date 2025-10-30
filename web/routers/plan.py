@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 
-from schemas.api.plan import PlanContextResponse, PlanContextUpdateRequest, PlanFeatureFlagsSchema, PlanQuotaSchema
+from schemas.api.plan import (
+    PlanContextResponse,
+    PlanContextUpdateRequest,
+    PlanFeatureFlagsSchema,
+    PlanQuotaSchema,
+    PlanTier,
+)
 from services.plan_service import PlanContext, update_plan_context as update_plan_context_service
 from web.deps import get_plan_context
 
@@ -21,7 +27,7 @@ def _serialize_plan_context(plan: PlanContext, *, checkout_requested: Optional[b
     updated_at = plan.updated_at.isoformat() if plan.updated_at else None
     checkout_flag = plan.checkout_requested if checkout_requested is None else checkout_requested
     return PlanContextResponse(
-        planTier=plan.tier,  # type: ignore[arg-type]
+        planTier=cast(PlanTier, plan.tier),
         expiresAt=expires_at,
         entitlements=sorted(plan.entitlements),
         featureFlags=PlanFeatureFlagsSchema(

@@ -134,3 +134,12 @@ def record_webhook_event(
     )
 
     _store_events(filtered)
+
+
+def reset_state_for_tests(*, path: Optional[Path] = None) -> None:  # pragma: no cover - testing helper
+    """Clear cached state and optionally point storage to a new path."""
+    global _WEBHOOK_STATE_PATH, _EVENT_CACHE, _EVENT_CACHE_PATH
+    if path is not None:
+        _WEBHOOK_STATE_PATH = Path(path)
+    _EVENT_CACHE = None
+    _EVENT_CACHE_PATH = None
