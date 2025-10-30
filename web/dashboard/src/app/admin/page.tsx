@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 
-import { PlanSummaryCard } from "@/components/plan/PlanSummaryCard";
-import { PlanAlertOverview } from "@/components/plan/PlanAlertOverview";
-import { PlanTierPreview } from "@/components/plan/PlanTierPreview";
+import { PlanQuickActionsPanel } from "@/components/admin/PlanQuickActionsPanel";
+import { TossWebhookAuditPanel } from "@/components/admin/TossWebhookAuditPanel";
 import { AdminShell } from "@/components/layout/AdminShell";
+import { PlanAlertOverview } from "@/components/plan/PlanAlertOverview";
+import { PlanSummaryCard } from "@/components/plan/PlanSummaryCard";
+import { PlanTierPreview } from "@/components/plan/PlanTierPreview";
 import { useAlertRules } from "@/hooks/useAlerts";
 
 type Section = {
@@ -28,29 +30,29 @@ const CONFIG_SECTIONS: Section[] = [
     title: "LLM & Prompts",
     description: "Manage base prompts, model routing, and runtime parameters used by chat and RAG flows.",
     bullets: ["System instructions", "LiteLLM profiles", "Fallback / retry policy"],
-    actionLabel: "Open prompt controls"
+    actionLabel: "Open prompt controls",
   },
   {
     id: "guardrails",
     title: "Guardrail Policies",
     description: "Tune the intent filter thresholds, blocklists, and user-facing guardrail copy.",
     bullets: ["Intent filter rules", "Semi-pass messaging", "Forbidden keywords"],
-    actionLabel: "Review guardrails"
+    actionLabel: "Review guardrails",
   },
   {
     id: "rag",
     title: "RAG Context",
     description: "Select data sources and similarity cutoffs that power retrieval augmented responses.",
     bullets: ["Context sources", "Default filters", "Similarity threshold"],
-    actionLabel: "Configure RAG context"
+    actionLabel: "Configure RAG context",
   },
   {
     id: "ui",
     title: "UI & UX Settings",
     description: "Control dashboard defaults, labeling, and informational banners presented to operators.",
     bullets: ["Default date ranges", "Highlight palette", "Admin notices"],
-    actionLabel: "Adjust interface"
-  }
+    actionLabel: "Adjust interface",
+  },
 ];
 
 const OPERATIONS_SECTIONS: Section[] = [
@@ -59,50 +61,58 @@ const OPERATIONS_SECTIONS: Section[] = [
     title: "News & Sector Pipeline",
     description: "Enable feeds, assign sector mappings, and tune aggregation thresholds.",
     bullets: ["RSS sources", "Sector keywords", "Sentiment thresholds"],
-    actionLabel: "Edit pipeline config"
+    actionLabel: "Edit pipeline config",
   },
   {
     id: "schedules",
     title: "Schedules & Tasks",
     description: "Inspect Celery beat cadence, trigger jobs on demand, and view run history.",
     bullets: ["Job intervals", "Manual triggers", "Recent logs"],
-    actionLabel: "Manage schedules"
+    actionLabel: "Manage schedules",
   },
   {
     id: "operations",
     title: "Operations & Access",
     description: "Rotate API keys, toggle observability sinks, and manage test or maintenance modes.",
     bullets: ["API keys", "Langfuse toggle", "Test mode"],
-    actionLabel: "Review operations"
+    actionLabel: "Review operations",
   },
   {
     id: "alerts",
     title: "Notification Channels",
     description: "Maintain Telegram, email, and webhook endpoints for automated alerts.",
     bullets: ["Channel settings", "Message templates", "Escalation rules"],
-    actionLabel: "Update channels"
-  }
+    actionLabel: "Update channels",
+  },
 ];
 
 const QUICK_ACTIONS: QuickAction[] = [
   {
     id: "seed-news",
     label: "Seed news feeds",
-    description: "Queue the `m2.seed_news_feeds` task to fetch the latest RSS content."
+    description: "Queue the `m2.seed_news_feeds` task to fetch the latest RSS content.",
   },
   {
     id: "aggregate-sentiment",
     label: "Run sentiment aggregation",
-    description: "Trigger `m2.aggregate_news` and sector aggregation warm-ups."
+    description: "Trigger `m2.aggregate_news` and sector aggregation warm-ups.",
   },
   {
     id: "rebuild-rag",
     label: "Refresh RAG index",
-    description: "Launch the vector service backfill to sync filings and documents."
-  }
+    description: "Launch the vector service backfill to sync filings and documents.",
+  },
 ];
 
-function SectionCard({ section, onSelect, isActive }: { section: Section; onSelect: (id: string) => void; isActive: boolean }) {
+function SectionCard({
+  section,
+  onSelect,
+  isActive,
+}: {
+  section: Section;
+  onSelect: (id: string) => void;
+  isActive: boolean;
+}) {
   const { id, title, description, bullets, actionLabel } = section;
   const borderClass = isActive
     ? "border-primary shadow-lg shadow-primary/10 dark:border-primary.dark"
@@ -164,18 +174,22 @@ export default function AdminPage() {
   return (
     <AdminShell
       title="Administration"
-      description="플랜별 운영 도구와 파이프라인 제어를 한곳에서 살펴보세요."
+      description="플랜별 운영 도구와 파이프라인 제어를 한 곳에서 살펴보세요."
     >
-      <div className="grid gap-4 lg:grid-cols-2">
-        <PlanSummaryCard />
-        <PlanAlertOverview plan={alertPlan} loading={isAlertPlanLoading} error={alertPlanErrorMessage} />
+      <div className="grid gap-6 xl:grid-cols-[2fr,1fr]">
+        <PlanQuickActionsPanel />
+        <div className="space-y-6">
+          <PlanSummaryCard />
+          <PlanAlertOverview plan={alertPlan} loading={isAlertPlanLoading} error={alertPlanErrorMessage} />
+          <TossWebhookAuditPanel />
+        </div>
       </div>
 
-      <PlanTierPreview className="lg:max-w-3xl" />
+      <PlanTierPreview className="xl:max-w-3xl" />
 
       <div className="rounded-xl border border-dashed border-border-light bg-background-cardLight p-6 text-sm text-text-secondaryLight shadow-card dark:border-border-dark dark:bg-background-cardDark dark:text-text-secondaryDark">
         <p>
-          프롬프트, 가드레일, 데이터 파이프라인을 단계별로 정리하고 있어요. 아래 섹션을 선택하면 자세한 설정 패널이 열릴 예정입니다.
+          프론트, 가드레일, 데이터 파이프라인 설정을 단계별로 정리하고 있어요. 아래 섹션을 선택하면 자세한 설정 패널이 열릴 예정입니다.
         </p>
         <p className="mt-2">
           현재 선택된 영역:&nbsp;
@@ -191,7 +205,12 @@ export default function AdminPage() {
         </header>
         <div className="grid gap-4 md:grid-cols-2">
           {CONFIG_SECTIONS.map((section) => (
-            <SectionCard key={section.id} section={section} onSelect={setActiveSection} isActive={activeSection === section.id} />
+            <SectionCard
+              key={section.id}
+              section={section}
+              onSelect={setActiveSection}
+              isActive={activeSection === section.id}
+            />
           ))}
         </div>
       </section>
@@ -204,7 +223,12 @@ export default function AdminPage() {
         </header>
         <div className="grid gap-4 md:grid-cols-2">
           {OPERATIONS_SECTIONS.map((section) => (
-            <SectionCard key={section.id} section={section} onSelect={setActiveSection} isActive={activeSection === section.id} />
+            <SectionCard
+              key={section.id}
+              section={section}
+              onSelect={setActiveSection}
+              isActive={activeSection === section.id}
+            />
           ))}
         </div>
       </section>
@@ -215,7 +239,7 @@ export default function AdminPage() {
             Quick Actions
           </h2>
           <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-            운영용 API와 큐 핸들러가 연결되면 이 자리에서 바로 실행할 수 있어요. 지금은 준비 중이라 미리보기 상태로 표시됩니다.
+            운영용 API와 툴 핸들러가 연결되면 이 자리에서 바로 실행할 수 있어요. 지금은 준비 중이라 미리보기 상태로 표시됩니다.
           </p>
         </header>
         <div className="space-y-3">
