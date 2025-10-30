@@ -21,6 +21,8 @@ from schemas.api.search import (
     SearchResultActions,
     SearchTotals,
 )
+from services.plan_service import PlanContext
+from web.deps import get_plan_context
 
 router = APIRouter(prefix="/search", tags=["Search"])
 
@@ -66,6 +68,7 @@ def aggregated_search(
     offset: int = Query(0, ge=0, description="타입별 페이지 오프셋"),
     types: list[str] | None = Query(None, description="요청할 결과 타입 (filing, news, table, chart)"),
     db: Session = Depends(get_db),
+    plan: PlanContext = Depends(get_plan_context),
 ) -> SearchResponse:
     keyword = (q or "").strip()
     requested_types = _normalize_types(types)
@@ -83,6 +86,7 @@ def aggregated_search(
         tables if "table" in requested_types else [],
         charts if "chart" in requested_types else [],
         context,
+        plan,
     )
 
     totals = SearchTotals(
@@ -393,6 +397,7 @@ def _build_results(
     tables: Sequence[TableSummary],
     charts: Sequence[ChartSummary],
     context: CountContext,
+    plan: PlanContext,
 ) -> list[SearchResult]:
     ranked: list[tuple[datetime, SearchResult]] = []
 
@@ -411,7 +416,7 @@ def _build_results(
             latestIngestedAt=_format_relative_time(timestamp),
             sourceReliability=_lookup_reliability(filing.ticker, context.reliability_by_ticker),
             evidenceCounts=counts,
-            actions=_default_actions("filing"),
+            actions=_plan_actions("filing", plan),
         )
         ranked.append((_normalize_timestamp(timestamp), result))
 
@@ -432,7 +437,7 @@ def _build_results(
             if isinstance(article.source_reliability, (int, float))
             else _lookup_reliability(article.ticker, context.reliability_by_ticker),
             evidenceCounts=counts,
-            actions=_default_actions("news"),
+            actions=_plan_actions("news", plan),
         )
         ranked.append((_normalize_timestamp(timestamp), result))
 
@@ -451,7 +456,7 @@ def _build_results(
             category="재무 데이터",
             latestIngestedAt=_format_relative_time(timestamp),
             evidenceCounts=counts,
-            actions=_default_actions("table"),
+            actions=_plan_actions("table", plan),
         )
         ranked.append((_normalize_timestamp(timestamp), result))
 
@@ -471,7 +476,7 @@ def _build_results(
             latestIngestedAt=_format_relative_time(timestamp),
             sourceReliability=chart.source_reliability,
             evidenceCounts=counts,
-            actions=_default_actions("chart"),
+            actions=_plan_actions("chart", plan),
         )
         ranked.append((_normalize_timestamp(timestamp), result))
 
@@ -498,15 +503,35 @@ def _build_evidence_counts(**values: int | None) -> SearchEvidenceCounts | None:
     return SearchEvidenceCounts(**filtered)
 
 
-def _default_actions(result_type: str) -> SearchResultActions:
+def _plan_actions(result_type: str, plan: PlanContext) -> SearchResultActions:
+    compare_allowed = plan.allows("search.compare")
+    alert_allowed = plan.allows("search.alerts")
+    export_allowed = plan.allows("search.export")
+
     if result_type == "filing":
-        return SearchResultActions(compareLocked=False, alertLocked=True, exportLocked=True)
+        return SearchResultActions(
+            compareLocked=not compare_allowed,
+            alertLocked=not alert_allowed,
+            exportLocked=not export_allowed,
+        )
     if result_type == "news":
-        return SearchResultActions(compareLocked=True, alertLocked=False, exportLocked=True)
+        return SearchResultActions(
+            compareLocked=not compare_allowed,
+            alertLocked=not alert_allowed,
+            exportLocked=not export_allowed,
+        )
     if result_type == "table":
-        return SearchResultActions(compareLocked=True, alertLocked=True, exportLocked=False)
+        return SearchResultActions(
+            compareLocked=True,
+            alertLocked=True,
+            exportLocked=False,
+        )
     if result_type == "chart":
-        return SearchResultActions(compareLocked=True, alertLocked=False, exportLocked=True)
+        return SearchResultActions(
+            compareLocked=True,
+            alertLocked=not alert_allowed,
+            exportLocked=True,
+        )
     return SearchResultActions(compareLocked=True, alertLocked=True, exportLocked=True)
 
 

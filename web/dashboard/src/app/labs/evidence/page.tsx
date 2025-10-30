@@ -9,6 +9,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { useCompanyTimeline } from "@/hooks/useCompanyTimeline";
 import type { EvidencePanelItem } from "@/components/evidence";
 import type { TimelineSparklinePoint } from "@/components/company/TimelineSparkline";
+import { usePlanUpgrade } from "@/hooks/usePlanUpgrade";
 
 const SAMPLE_PDF =
   "data:application/pdf;base64,JVBERi0xLjMKJcTl8uXrp/Og0MTGCjEgMCBvYmoKPDwvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlIC9QYWdlcyAvQ291bnQgMSAvS2lkcyBbMyAwIFJdPj4KZW5kb2JqCjMgMCBvYmoKPDwvVHlwZSAvUGFnZSAvUGFyZW50IDIgMCBSIC9NZWRpYUJveCBbMCAwIDU5NSA4NDJdIC9Db250ZW50cyA0IDAgUiAvUmVzb3VyY2VzIDw8Pj4+PgplbmRvYmoKNCAwIG9iago8PC9MZW5ndGggNTY+PgpzdHJlYW0KQlQKL0YxIDI0IFRmCjEwMCA3NjAgVGQKKChIZWxsbyBQREYpIFRqCkVUCmVuZHN0cmVhbQplbmRvYmoKeHJlZgowIDUKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDExIDAwMDAwIG4gCjAwMDAwMDAwNzMgMDAwMDAgbiAKMDAwMDAwMDE1MyAwMDAwMCBuIAowMDAwMDAwMjE3IDAwMDAwIG4gCnRyYWlsZXIKPDwvUm9vdCAxIDAgUiAvU2l6ZSA1Pj4Kc3RhcnR4cmVmCjI0MAolJUVPRgo=";
@@ -111,6 +112,7 @@ export default function EvidenceLabPage() {
 
   const ticker = "005930";
   const { data, isLoading, isError } = useCompanyTimeline(ticker, 180);
+  const { requestUpgrade } = usePlanUpgrade();
 
   const timelinePoints = useMemo(() => {
     if (data?.points && data.points.length > 0) {
@@ -147,6 +149,7 @@ export default function EvidenceLabPage() {
             pdfDownloadUrl={SAMPLE_PDF}
             diffEnabled
             diffRemoved={SAMPLE_REMOVED}
+            onRequestUpgrade={requestUpgrade}
           />
         )}
       </div>

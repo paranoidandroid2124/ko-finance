@@ -2,7 +2,8 @@ import type { Meta, StoryObj } from "@storybook/react";
 import { useState } from "react";
 
 import { GlobalSearchBar } from "../src/components/search/GlobalSearchBar";
-import { SearchResults, type SearchResult } from "../src/components/search/SearchResults";
+import { SearchResults } from "../src/components/search/SearchResults";
+import type { SearchResult } from "../src/hooks/useSearchResults";
 
 const mockResults: SearchResult[] = [
   {

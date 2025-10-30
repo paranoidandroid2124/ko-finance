@@ -3,8 +3,9 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { EChartsType } from "echarts";
-import type { PlanTier } from "@/components/evidence";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
+import { PlanLock } from "@/components/ui/PlanLock";
+import type { PlanTier } from "@/store/planStore";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -26,7 +27,7 @@ export type TimelineSparklineProps = {
   showVolume?: boolean;
   onHoverPoint?: (point: TimelineSparklinePoint | null) => void;
   onSelectPoint?: (point: TimelineSparklinePoint) => void;
-  onRequestUpgrade?: () => void;
+  onRequestUpgrade?: (tier: PlanTier) => void;
 };
 
 const PLAN_DESCRIPTION: Record<PlanTier, string> = {
@@ -352,23 +353,13 @@ export function TimelineSparkline({
 
       <div className="mt-4">
         {locked ? (
-          <div className="flex h-[240px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border-light/80 bg-white/70 text-center text-sm text-text-secondaryLight dark:border-border-dark/70 dark:bg-white/10 dark:text-text-secondaryDark">
-            <p className="text-base font-semibold text-text-primaryLight dark:text-text-primaryDark">
-              Pro 동료들과 먼저 나누는 타임라인
-            </p>
-            <p className="text-xs leading-5">
-              감성 온도와 가격 지표는 Pro 이상에서 함께 열어드리고 있어요. 필요하시면 언제든 연락 주세요, 바로 안내해 드릴게요.
-            </p>
-            {onRequestUpgrade ? (
-              <button
-                type="button"
-                className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white transition-motion-fast hover:bg-primary-hover"
-                onClick={onRequestUpgrade}
-              >
-                함께 이야기 나누기
-              </button>
-            ) : null}
-          </div>
+          <PlanLock
+            requiredTier="pro"
+            currentTier={planTier}
+            description="Pro 이상 플랜에서 감성·가격 타임라인과 증거 연동을 함께 확인할 수 있습니다."
+            onUpgrade={onRequestUpgrade}
+            className="flex h-[240px] flex-col justify-center"
+          />
         ) : !hasData ? (
           <div className="flex h-[240px] items-center justify-center rounded-lg border border-dashed border-border-light text-xs text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
             아직 보여드릴 타임라인이 없어요. 잠시 뒤 다시 살펴볼까요?
@@ -392,3 +383,5 @@ export function TimelineSparkline({
     </section>
   );
 }
+
+

@@ -145,7 +145,7 @@ export default function DashboardPage() {
       window.open(target, "_blank", "noopener,noreferrer");
       return;
     }
-    router.push(target);
+    router.push(target as Parameters<typeof router.push>[0]);
   };
 
   const handleSearchTypeChange = (type: SearchResultType) => {

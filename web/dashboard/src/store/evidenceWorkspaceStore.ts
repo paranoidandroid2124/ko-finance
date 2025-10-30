@@ -37,7 +37,7 @@ type EvidenceWorkspaceState = {
   reset: () => void;
 };
 
-const INITIAL_STATE: Omit<EvidenceWorkspaceState, 'setEvidence' | 'setTimeline' | 'selectEvidence' | 'hoverEvidence' | 'selectTimelinePoint' | 'hoverTimelinePoint' | 'reset'> = {
+const INITIAL_STATE: Omit<EvidenceWorkspaceState, 'setEvidence' | 'setTimeline' | 'selectEvidence' | 'hoverEvidence' | 'selectTimelinePoint' | 'hoverTimelinePoint' | 'toggleDiff' | 'reset'> = {
   evidenceItems: [],
   timelinePoints: [],
   pdfUrl: undefined,
@@ -103,10 +103,11 @@ export const useEvidenceWorkspaceStore = create<EvidenceWorkspaceState>((set, ge
   },
 
   selectEvidence(urnId) {
+    const current = get();
+    if (current.selectedEvidenceUrn === urnId) {
+      return;
+    }
     set((state) => {
-      if (state.selectedEvidenceUrn === urnId) {
-        return null;
-      }
       const evidence = state.evidenceItems.find((item) => item.urnId === urnId);
       if (evidence) {
         logEvent('rag.evidence_view', {
@@ -143,9 +144,9 @@ export const useEvidenceWorkspaceStore = create<EvidenceWorkspaceState>((set, ge
   },
 
   selectTimelinePoint(date, options) {
-    const { evidenceUrnIds } = options ?? {};
+    const { linkedEvidence } = options ?? {};
     set((state) => {
-      const firstEvidence = (evidenceUrnIds ?? []).find((urn) =>
+      const firstEvidence = (linkedEvidence ?? []).find((urn) =>
         state.evidenceItems.some((item) => item.urnId === urn),
       );
       const timelinePoint = state.timelinePoints.find((point) => point.date === date);
@@ -165,7 +166,7 @@ export const useEvidenceWorkspaceStore = create<EvidenceWorkspaceState>((set, ge
   },
 
   hoverTimelinePoint(date, options) {
-    const { evidenceUrnIds } = options ?? {};
+    const { linkedEvidence } = options ?? {};
     if (!date) {
       set({ hoveredTimelineDate: undefined, hoveredEvidenceUrn: undefined });
       return;
@@ -176,11 +177,11 @@ export const useEvidenceWorkspaceStore = create<EvidenceWorkspaceState>((set, ge
       logEvent('timeline.interact', {
         action: 'hover',
         date,
-        evidenceCount: evidenceUrnIds?.length ?? 0,
+        evidenceCount: linkedEvidence?.length ?? 0,
       });
     }
 
-    const nextEvidence = evidenceUrnIds?.find((urn) =>
+    const nextEvidence = linkedEvidence?.find((urn) =>
       state.evidenceItems.some((item) => item.urnId === urn),
     );
 

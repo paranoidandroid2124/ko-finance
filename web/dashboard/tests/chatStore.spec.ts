@@ -1,25 +1,55 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { resetChatStores } from "./setupTests";
 import {
+  type ChatSession,
+  type RagEvidenceState,
   selectContextPanelData,
   selectGuardrailTelemetry,
   selectMetricTelemetry,
   useChatStore
 } from "@/store/chatStore";
 
-const resetStore = () => {
-  useChatStore.setState({
-    sessions: [],
-    activeSessionId: null,
-    persistenceError: null,
-    hydrated: true,
-    loading: false,
-    error: null
-  });
+const makeEvidence = (
+  overrides: Partial<RagEvidenceState> = {}
+): RagEvidenceState => {
+  const base: RagEvidenceState = {
+    status: "idle",
+    items: [],
+    activeId: undefined,
+    confidence: undefined,
+    documentTitle: undefined,
+    documentUrl: undefined
+  };
+  return { ...base, ...overrides } as RagEvidenceState;
 };
+
+const makeTelemetry = (
+  overrides: Partial<ChatSession["telemetry"]> = {}
+): ChatSession["telemetry"] => ({
+  guardrail: { status: "idle", ...(overrides.guardrail ?? {}) },
+  metrics: { status: "idle", items: [], ...(overrides.metrics ?? {}) }
+});
+
+const makeSession = (overrides: Partial<ChatSession> = {}): ChatSession => ({
+  id: overrides.id ?? "session-default",
+  title: overrides.title ?? "Sample Session",
+  version: overrides.version,
+  updatedAt: overrides.updatedAt ?? "2025-01-01T00:00:00Z",
+  lastMessageAt: overrides.lastMessageAt ?? null,
+  context: overrides.context ?? { type: "custom", summary: null },
+  messages: overrides.messages ?? [],
+  messagesLoaded: overrides.messagesLoaded ?? true,
+  evidence: makeEvidence(
+    typeof overrides.evidence !== "undefined" ? overrides.evidence : {}
+  ),
+  telemetry: makeTelemetry(
+    typeof overrides.telemetry !== "undefined" ? overrides.telemetry : {}
+  )
+});
 
 describe("chatStore", () => {
   beforeEach(() => {
-    resetStore();
+    resetChatStores();
   });
 
   it("creates a new empty session with assistant greeting", async () => {
@@ -35,16 +65,23 @@ describe("chatStore", () => {
   it("starts a filing conversation with supplied metadata", async () => {
     const payload = {
       filingId: "F-999",
-      company: "테스트기업",
-      title: "테스트 공시",
-      summary: "요약 본문"
+      company: "Contoso",
+      title: "Contoso Q3 Filing",
+      summary: "Key highlights from the latest filing."
     };
 
-    const sessionId = await useChatStore.getState().startFilingConversation(payload);
-    const created = useChatStore.getState().sessions.find((session) => session.id === sessionId);
+    const sessionId = await useChatStore.getState().startFilingConversation(
+      payload
+    );
+    const created = useChatStore
+      .getState()
+      .sessions.find((session) => session.id === sessionId);
 
-    expect(created?.context?.referenceId).toBe(payload.filingId);
-    expect(created?.context?.summary).toBe(payload.summary);
+    expect(created?.context?.type).toBe("filing");
+    if (created?.context?.type === "filing") {
+      expect(created.context.referenceId).toBe(payload.filingId);
+      expect(created.context.summary).toBe(payload.summary);
+    }
     expect(created?.messages[0]?.content).toContain(payload.title);
   });
 
@@ -53,7 +90,7 @@ describe("chatStore", () => {
     useChatStore.getState().addMessage("unknown-session", {
       id: "msg-unknown",
       role: "user",
-      content: "잘못된 세션",
+      content: "orphan message",
       timestamp
     });
 
@@ -67,13 +104,17 @@ describe("chatStore", () => {
     useChatStore.getState().addMessage(sessionId, {
       id: "msg-1",
       role: "user",
-      content: "추가 질문",
+      content: "question about filings",
       timestamp
     });
 
-    const session = useChatStore.getState().sessions.find((item) => item.id === sessionId);
+    const session = useChatStore
+      .getState()
+      .sessions.find((item) => item.id === sessionId);
 
-    expect(session?.messages.some((message) => message.id === "msg-1")).toBe(true);
+    expect(session?.messages.some((message) => message.id === "msg-1")).toBe(
+      true
+    );
     expect(session?.updatedAt).toBe(timestamp);
   });
 
@@ -81,29 +122,23 @@ describe("chatStore", () => {
     const sessionId = "session-focus";
     useChatStore.setState({
       sessions: [
-        {
+        makeSession({
           id: sessionId,
-          title: "샘플 세션",
-          updatedAt: "방금",
-          messages: [],
-          context: { type: "custom" },
-          evidence: {
+          title: "Session With Evidence",
+          evidence: makeEvidence({
             status: "ready",
             items: [
-              { id: "ev-a", title: "근거 A", snippet: "A 설명" },
-              { id: "ev-b", title: "근거 B", snippet: "B 설명" }
+              { id: "ev-a", title: "Evidence A", snippet: "Snippet A" },
+              { id: "ev-b", title: "Evidence B", snippet: "Snippet B" }
             ],
-            activeId: undefined,
-            confidence: 0.5,
-            documentTitle: "샘플 문서"
-          }
-        }
+            confidence: 0.5
+          })
+        })
       ],
       activeSessionId: sessionId,
       hydrated: true,
       loading: false,
-      error: null,
-      persistenceError: null
+      error: null
     });
 
     useChatStore.getState().focus_evidence_item("ev-b");
@@ -125,38 +160,34 @@ describe("chatStore", () => {
     const sessionId = "telemetry-session";
     useChatStore.setState({
       sessions: [
-        {
+        makeSession({
           id: sessionId,
-          title: "텔레메트리 세션",
-          updatedAt: "지금",
-          messages: [],
-          context: { type: "custom" },
-          telemetry: {
+          title: "Session With Telemetry",
+          telemetry: makeTelemetry({
             guardrail: {
               status: "ready",
               level: "fail",
-              message: "보안 정책으로 응답이 제한되었습니다."
+              message: "Sensitive content detected"
             },
             metrics: {
               status: "ready",
               items: [
                 {
                   id: "mrr",
-                  label: "월간 반복 매출",
-                  value: "₩520억",
+                  label: "MRR",
+                  value: "$520K",
                   change: "+4%",
                   trend: "up"
                 }
               ]
             }
-          }
-        }
+          })
+        })
       ],
       activeSessionId: sessionId,
       hydrated: true,
       loading: false,
-      error: null,
-      persistenceError: null
+      error: null
     });
 
     const guardrail = selectGuardrailTelemetry(useChatStore.getState());
@@ -165,15 +196,19 @@ describe("chatStore", () => {
 
     expect(guardrail.status).toBe("ready");
     expect(guardrail.level).toBe("fail");
-    expect(metrics.items[0]?.label).toBe("월간 반복 매출");
+    expect(metrics.items[0]?.label).toBe("MRR");
     expect(bundle.guardrail.level).toBe("fail");
     expect(bundle.metrics.items).toHaveLength(1);
     expect(bundle.evidence.status).toBe("idle");
   });
 
   it("removes sessions and promotes the next session as active", async () => {
-    const first = await useChatStore.getState().createSession({ title: "첫 번째" });
-    const second = await useChatStore.getState().createSession({ title: "두 번째" });
+    const first = await useChatStore
+      .getState()
+      .createSession({ title: "First Session" });
+    const second = await useChatStore
+      .getState()
+      .createSession({ title: "Second Session" });
 
     useChatStore.setState({ activeSessionId: first });
     await useChatStore.getState().removeSession(first);
@@ -194,16 +229,24 @@ describe("chatStore", () => {
 
   it("renames sessions using the renameSession action", async () => {
     const sessionId = await useChatStore.getState().createSession();
-    await useChatStore.getState().renameSession(sessionId, "업데이트된 제목");
+    await useChatStore
+      .getState()
+      .renameSession(sessionId, "Renamed Session Title");
 
-    const updated = useChatStore.getState().sessions.find((session) => session.id === sessionId);
-    expect(updated?.title).toBe("업데이트된 제목");
+    const updated = useChatStore
+      .getState()
+      .sessions.find((session) => session.id === sessionId);
+    expect(updated?.title).toBe("Renamed Session Title");
   });
 
   it("caps the stored session history at ten entries", async () => {
     for (let index = 0; index < 12; index += 1) {
-      const id = await useChatStore.getState().createSession({ title: `세션 ${index + 1}` });
-      await useChatStore.getState().renameSession(id, `세션 ${index + 1}`);
+      const id = await useChatStore
+        .getState()
+        .createSession({ title: `Session ${index + 1}` });
+      await useChatStore
+        .getState()
+        .renameSession(id, `Session ${index + 1}`);
     }
 
     const state = useChatStore.getState();

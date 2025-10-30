@@ -1,7 +1,12 @@
 "use client";
 
 import { useState } from "react";
+
+import { PlanSummaryCard } from "@/components/plan/PlanSummaryCard";
+import { PlanAlertOverview } from "@/components/plan/PlanAlertOverview";
+import { PlanTierPreview } from "@/components/plan/PlanTierPreview";
 import { AdminShell } from "@/components/layout/AdminShell";
+import { useAlertRules } from "@/hooks/useAlerts";
 
 type Section = {
   id: string;
@@ -147,19 +152,34 @@ function QuickActionCard({ action }: { action: QuickAction }) {
 
 export default function AdminPage() {
   const [activeSection, setActiveSection] = useState<string | null>(null);
+  const {
+    data: alertRulesData,
+    isLoading: isAlertPlanLoading,
+    isError: isAlertPlanError,
+  } = useAlertRules();
+
+  const alertPlan = alertRulesData?.plan ?? null;
+  const alertPlanErrorMessage = isAlertPlanError ? "알림 플랜 정보를 불러오지 못했어요." : undefined;
 
   return (
     <AdminShell
       title="Administration"
-      description="Manage runtime configuration, pipelines, and operational controls for the K-Finance Copilot."
+      description="플랜별 운영 도구와 파이프라인 제어를 한곳에서 살펴보세요."
     >
-      <div className="rounded-xl border border-dashed border-border-light bg-background-cardLight p-6 text-sm text-text-secondaryLight dark:border-border-dark dark:bg-background-cardDark dark:text-text-secondaryDark">
+      <div className="grid gap-4 lg:grid-cols-2">
+        <PlanSummaryCard />
+        <PlanAlertOverview plan={alertPlan} loading={isAlertPlanLoading} error={alertPlanErrorMessage} />
+      </div>
+
+      <PlanTierPreview className="lg:max-w-3xl" />
+
+      <div className="rounded-xl border border-dashed border-border-light bg-background-cardLight p-6 text-sm text-text-secondaryLight shadow-card dark:border-border-dark dark:bg-background-cardDark dark:text-text-secondaryDark">
         <p>
-          Configure production-ready controls for prompts, guardrails, pipelines, and operational toggles from a single
-          surface. Start by selecting a section below; detail panels will open in this workspace.
+          프롬프트, 가드레일, 데이터 파이프라인을 단계별로 정리하고 있어요. 아래 섹션을 선택하면 자세한 설정 패널이 열릴 예정입니다.
         </p>
         <p className="mt-2">
-          Active section: <span className="font-semibold text-text-primaryLight dark:text-text-primaryDark">{activeSection ?? "none"}</span>
+          현재 선택된 영역:&nbsp;
+          <span className="font-semibold text-text-primaryLight dark:text-text-primaryDark">{activeSection ?? "없음"}</span>
         </p>
       </div>
 
@@ -195,7 +215,7 @@ export default function AdminPage() {
             Quick Actions
           </h2>
           <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-            These shortcuts will dispatch Celery tasks or API calls once available. They are disabled until the backend endpoints land.
+            운영용 API와 큐 핸들러가 연결되면 이 자리에서 바로 실행할 수 있어요. 지금은 준비 중이라 미리보기 상태로 표시됩니다.
           </p>
         </header>
         <div className="space-y-3">

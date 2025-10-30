@@ -23,10 +23,14 @@ services:
     env_file:
       - .env
     depends_on:
-      - litellm
-      - redis
-      - postgres
-      - qdrant
+      litellm:
+        condition: service_started
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
     networks:
       - kfinance_network
 
@@ -46,10 +50,14 @@ services:
     env_file:
       - .env
     depends_on:
-      - litellm
-      - redis
-      - postgres
-      - qdrant
+      litellm:
+        condition: service_started
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
     networks:
       - kfinance_network
 
@@ -84,6 +92,11 @@ services:
       - "${POSTGRES_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     networks:
       - kfinance_network
 
@@ -123,7 +136,8 @@ services:
     env_file:
       - .env
     depends_on:
-      - redis
+      redis:
+        condition: service_started
     networks:
       - kfinance_network
 
@@ -175,9 +189,12 @@ services:
     env_file:
       - .env
     depends_on:
-      - postgres
-      - redis
-      - qdrant
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
     networks:
       - kfinance_network
 

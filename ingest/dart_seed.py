@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import SessionLocal
@@ -154,9 +155,15 @@ def seed_recent_filings(
                 source_files=source_files,
             )
 
-            db.add(new_filing)
-            db.commit()
-            db.refresh(new_filing)
+            try:
+                db.add(new_filing)
+                db.commit()
+                db.refresh(new_filing)
+                existing_receipts.add(receipt_no)
+            except IntegrityError:
+                db.rollback()
+                logger.info("Filing %s already exists. Skipping duplicate insert.", receipt_no)
+                continue
 
             presigned_url = _ensure_minio_copy(receipt_no, pdf_path)
             if presigned_url:

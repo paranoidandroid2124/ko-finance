@@ -30,30 +30,43 @@ const mapTimelinePoints = (entries: unknown): TimelineSparklinePoint[] => {
   if (!Array.isArray(entries)) {
     return [];
   }
-  return entries
-    .map((item) => {
-      if (typeof item !== "object" || item === null) {
-        return null;
-      }
-      const record = item as Record<string, unknown>;
-      const dateValue = record.date ?? record.computed_for ?? record.computedFor;
-      if (!dateValue) {
-        return null;
-      }
-      return {
-        date: toString(dateValue),
-        sentimentZ: toNumberOrNull(record.sentiment_z ?? record.sentimentZ),
-        priceClose: toNumberOrNull(record.price_close ?? record.priceClose),
-        volume: toNumberOrNull(record.volume),
-        eventType: typeof record.event_type === "string" ? record.event_type : (record.eventType as string | undefined),
-        evidenceUrnIds: Array.isArray(record.evidence_urn_ids ?? record.evidenceUrnIds)
-          ? ((record.evidence_urn_ids ?? record.evidenceUrnIds) as unknown[])
-              .map((value) => (typeof value === "string" ? value : String(value)))
-              .filter(Boolean)
-          : undefined,
-      } satisfies TimelineSparklinePoint;
-    })
-    .filter((point): point is TimelineSparklinePoint => Boolean(point));
+  return entries.reduce<TimelineSparklinePoint[]>((acc, item) => {
+    if (typeof item !== "object" || item === null) {
+      return acc;
+    }
+
+    const record = item as Record<string, unknown>;
+    const dateValue = record.date ?? record.computed_for ?? record.computedFor;
+    if (!dateValue) {
+      return acc;
+    }
+
+    const eventTypeRaw =
+      typeof record.event_type === "string"
+        ? record.event_type
+        : typeof record.eventType === "string"
+          ? record.eventType
+          : null;
+
+    const evidenceRaw = record.evidence_urn_ids ?? record.evidenceUrnIds;
+    const evidenceUrnIds = Array.isArray(evidenceRaw)
+      ? (evidenceRaw as unknown[])
+          .map((value) => (typeof value === "string" ? value : String(value)))
+          .filter((value): value is string => value.length > 0)
+      : undefined;
+
+    const point: TimelineSparklinePoint = {
+      date: toString(dateValue),
+      sentimentZ: toNumberOrNull(record.sentiment_z ?? record.sentimentZ),
+      priceClose: toNumberOrNull(record.price_close ?? record.priceClose),
+      volume: toNumberOrNull(record.volume),
+      eventType: eventTypeRaw,
+      evidenceUrnIds,
+    };
+
+    acc.push(point);
+    return acc;
+  }, []);
 };
 
 type CompanyTimelineResponse = {
@@ -103,4 +116,3 @@ export function useCompanyTimeline(identifier: string, windowDays = 180) {
     enabled: Boolean(identifier),
   });
 }
-

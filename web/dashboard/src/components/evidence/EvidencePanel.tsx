@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useIntersectionObserver } from "@/hooks/useIntersectionObserver";
+import { PlanLock } from "@/components/ui/PlanLock";
+import type { PlanTier as PlanTierType } from "@/store/planStore";
 import { InlinePdfViewer } from "./InlinePdfViewer";
 
-export type PlanTier = "free" | "pro" | "enterprise";
+export type PlanTier = PlanTierType;
 
 export type EvidenceAnchor = {
   paragraphId?: string | null;
@@ -62,7 +64,7 @@ export type EvidencePanelProps = {
   onSelectEvidence?: (urnId: string) => void;
   onHoverEvidence?: (urnId: string | undefined) => void;
   onRequestOpenPdf?: (urnId: string) => void;
-  onRequestUpgrade?: () => void;
+  onRequestUpgrade?: (tier: PlanTier) => void;
   onToggleDiff?: (nextValue: boolean) => void;
 };
 
@@ -271,26 +273,18 @@ export function EvidencePanel({
       return null;
     }
     return (
-      <div className="flex flex-col gap-3 rounded-lg border border-dashed border-border-light/80 bg-white/80 p-4 text-xs text-text-secondaryLight dark:border-border-dark/70 dark:bg-white/10 dark:text-text-secondaryDark">
-        <div>
-          <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">
-            Pro 동료들과 먼저 살펴보는 근거
-          </p>
-          <p className="mt-1 text-text-secondaryLight dark:text-text-secondaryDark">
-            {activeItem.lockedMessage ??
-              "Pro 이상 플랜에서 하이라이트와 PDF 미리보기를 함께 열어드리고 있어요. 필요하시면 언제든 연결해 드릴게요."}
-          </p>
-        </div>
-        <button
-          type="button"
-          className="inline-flex w-fit items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white transition-motion-fast hover:bg-primary-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          onClick={onRequestUpgrade}
-        >
-          팀과 상담하기
-        </button>
-      </div>
+      <PlanLock
+        requiredTier="pro"
+        currentTier={planTier}
+        description={
+          activeItem.lockedMessage ?? "Pro ?? ???? ?????? PDF ???? ??? ??? ? ????."
+        }
+        onUpgrade={onRequestUpgrade}
+      />
     );
   };
+
+
 
   const renderPdfPane = () => {
     const inlineAllowed = inlinePdfEnabled && !!pdfUrl && !activeItem?.locked;
@@ -307,15 +301,29 @@ export function EvidencePanel({
       );
 
     if (!inlineAllowed) {
+      if (activeItem?.locked) {
+        return (
+          <PlanLock
+            requiredTier="pro"
+            currentTier={planTier}
+            description={
+              activeItem.lockedMessage ??
+              "Pro ?? ???? ??????? PDF ??? ????? ?????? ?? ??? ? ????."
+            }
+            onUpgrade={onRequestUpgrade}
+            className="flex h-full flex-col justify-center"
+          >
+            {downloadLink}
+          </PlanLock>
+        );
+      }
       return (
         <div className="flex h-full flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border-light/70 bg-background-cardLight/60 p-4 text-center text-sm text-text-secondaryLight dark:border-border-dark/60 dark:bg-background-cardDark/50 dark:text-text-secondaryDark">
-          <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">PDF 미리보기를 잠시 열 수 없어요</p>
+          <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">PDF ????? ?? ? ? ???</p>
           <p className="text-xs leading-5">
-            {activeItem?.locked
-              ? "이 문서는 Pro 이상 플랜에서 하이라이트와 함께 열어드리고 있어요. 필요하시면 저희가 바로 도와드릴게요."
-              : pdfUrl
-              ? "지금은 PDF 미리보기가 동작하지 않아요. 원문 새 창을 열어 먼저 확인해 주세요."
-              : "연결된 PDF를 찾지 못했어요. 아래 링크로 바로 살펴보실 수 있어요."}
+            {pdfUrl
+              ? "??? PDF ????? ???? ???. ?? ? ?? ?? ?? ??? ???."
+              : "??? PDF? ?? ????. ?? ??? ?? ???? ? ???."}
           </p>
           {downloadLink}
         </div>
@@ -323,6 +331,7 @@ export function EvidencePanel({
     }
 
     return (
+
       <div className="flex h-full flex-col gap-3">
         <InlinePdfViewer
           key={`${activeItem?.urnId ?? "pdf"}-${pdfPage ?? "page"}`}
@@ -548,7 +557,7 @@ export function EvidencePanel({
                     <button
                       type="button"
                       className="rounded-md border border-primary/60 px-2 py-1 text-[11px] font-semibold text-primary transition-motion-fast hover:bg-primary/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-                      onClick={onRequestUpgrade}
+                      onClick={() => onRequestUpgrade?.("pro")}
                     >
                       팀과 상담하기
                     </button>
@@ -621,3 +630,5 @@ export function EvidencePanel({
 }
 
 export type { EvidenceItem as EvidencePanelItem };
+
+

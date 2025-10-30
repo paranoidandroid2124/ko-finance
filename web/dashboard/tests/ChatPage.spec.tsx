@@ -3,7 +3,9 @@ import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatPage from "@/app/chat/page";
 import { useChatStore, type ChatSession } from "@/store/chatStore";
+import { createSession as createSessionApi } from "@/lib/chatApi";
 import { renderWithProviders } from "./testUtils";
+import { resetChatStores } from "./setupTests";
 
 const searchParamsState = { value: "" };
 const replaceMock = vi.fn();
@@ -14,18 +16,18 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => {
     const params = new URLSearchParams(searchParamsState.value);
     return {
-      get: (key: string) => params.get(key)
+      get: (key: string) => params.get(key),
     };
   },
   useRouter: () => ({
     replace: replaceMock,
-    push: pushMock
+    push: pushMock,
   }),
-  usePathname: () => PATHNAME
+  usePathname: () => PATHNAME,
 }));
 
 vi.mock("@/components/layout/AppShell", () => ({
-  AppShell: ({ children }: { children: React.ReactNode }) => <div data-testid="app-shell">{children}</div>
+  AppShell: ({ children }: { children: React.ReactNode }) => <div data-testid="app-shell">{children}</div>,
 }));
 
 vi.mock("@/components/chat/ChatHistoryList", () => ({
@@ -33,7 +35,7 @@ vi.mock("@/components/chat/ChatHistoryList", () => ({
     sessions,
     selectedId,
     onSelect,
-    onNewSession
+    onNewSession,
   }: {
     sessions: { id: string; title: string; updatedAt: string }[];
     selectedId?: string;
@@ -49,34 +51,51 @@ vi.mock("@/components/chat/ChatHistoryList", () => ({
       ))}
       <button onClick={() => onNewSession?.()}>new-session</button>
     </div>
-  )
+  ),
 }));
 
 vi.mock("@/components/chat/ChatInput", () => ({
   ChatInput: ({ onSubmit }: { onSubmit?: (value: string) => void }) => (
     <button onClick={() => onSubmit?.("user question")}>send-message</button>
-  )
+  ),
 }));
 
 vi.mock("@/components/chat/ChatMessage", () => ({
-  ChatMessageBubble: ({ content }: { content: string }) => <div>{content}</div>
+  ChatMessageBubble: ({ content }: { content: string }) => <div>{content}</div>,
 }));
 
 vi.mock("@/components/chat/ChatContextPanel", () => ({
-  ChatContextPanel: () => <aside data-testid="context-panel" />
+  ChatContextPanel: () => <aside data-testid="context-panel" />,
 }));
 
-const resetStore = () => {
-  useChatStore.setState({ sessions: [], activeSessionId: null, hydrated: true, loading: false, error: null });
+const emptyEvidence: ChatSession["evidence"] = {
+  status: "idle",
+  items: [],
+  activeId: undefined,
+  confidence: undefined,
+  documentTitle: undefined,
+  documentUrl: undefined,
+};
+
+const idleTelemetry: ChatSession["telemetry"] = {
+  guardrail: { status: "idle" },
+  metrics: { status: "idle", items: [] },
 };
 
 const setSearchParams = (value: string) => {
   searchParamsState.value = value;
 };
 
+const withDefaults = (session: Omit<ChatSession, "messagesLoaded" | "evidence" | "telemetry">): ChatSession => ({
+  ...session,
+  messagesLoaded: session.messages.length > 0,
+  evidence: { ...emptyEvidence },
+  telemetry: { ...idleTelemetry },
+});
+
 describe("ChatPage", () => {
   beforeEach(() => {
-    resetStore();
+    resetChatStores();
     setSearchParams("");
     replaceMock.mockClear();
     pushMock.mockClear();
@@ -86,24 +105,23 @@ describe("ChatPage", () => {
     cleanup();
   });
 
-  // 정상 흐름: URL 쿼리에 포함된 세션이 있으면 렌더링 시 해당 세션이 활성화된다.
   it("activates session from query parameter", () => {
-    const existingSession: ChatSession = {
+    const existingSession = withDefaults({
       id: "chat-100",
-      title: "세션A",
-      updatedAt: "방금",
+      title: "�,,�.~A",
+      updatedAt: "��c�,^",
+      context: { type: "custom" },
       messages: [
         {
           id: "msg-1",
-          role: "assistant" as const,
+          role: "assistant",
           content: "existing message",
-          timestamp: "09:00"
-        }
+          timestamp: "09:00",
+        },
       ],
-      context: { type: "custom" }
-    };
+    });
 
-    useChatStore.setState({ sessions: [existingSession], activeSessionId: null });
+    useChatStore.setState({ sessions: [existingSession], activeSessionId: null, hydrated: true, loading: false, error: null });
     setSearchParams("session=chat-100");
 
     renderWithProviders(<ChatPage />);
@@ -111,7 +129,6 @@ describe("ChatPage", () => {
     expect(screen.getByText("existing message")).toBeInTheDocument();
   });
 
-  // 사용자 입력: 새 세션 버튼을 누르면 createSession이 호출되고 URL 쿼리가 업데이트된다.
   it("creates a new session from history control", async () => {
     renderWithProviders(<ChatPage />);
 
@@ -128,24 +145,27 @@ describe("ChatPage", () => {
     expect(targetPath).toContain("session=");
   });
 
-  // 정상 흐름: 메시지를 전송하면 사용자/어시스턴트 메시지가 세션에 누적된다.
   it("appends user and assistant messages on send", async () => {
-    const session: ChatSession = {
-      id: "chat-200",
-      title: "세션B",
-      updatedAt: "방금",
-      messages: [],
-      context: { type: "custom" }
+    const apiSession = await createSessionApi({ title: "existing session" });
+    const session = {
+      ...withDefaults({
+        id: apiSession.id,
+        title: apiSession.title ?? "existing session",
+        updatedAt: apiSession.updated_at ?? new Date().toISOString(),
+        context: { type: "custom" },
+        messages: [],
+      }),
+      version: apiSession.version ?? 1,
     };
 
-    useChatStore.setState({ sessions: [session], activeSessionId: "chat-200" });
-    setSearchParams("session=chat-200");
+    useChatStore.setState({ sessions: [session], activeSessionId: session.id, hydrated: true, loading: false, error: null });
+    setSearchParams(`session=${session.id}`);
     renderWithProviders(<ChatPage />);
 
     fireEvent.click(screen.getByText("send-message"));
 
     await waitFor(() => {
-      const updated = useChatStore.getState().sessions.find((item) => item.id === "chat-200");
+      const updated = useChatStore.getState().sessions.find((item) => item.id === session.id);
       expect(updated?.messages.filter((message) => message.role === "user").length).toBe(1);
       expect(updated?.messages.filter((message) => message.role === "assistant").length).toBeGreaterThanOrEqual(1);
     });

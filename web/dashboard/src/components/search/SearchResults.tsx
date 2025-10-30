@@ -1,7 +1,9 @@
 "use client";
 
+import { Lock } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
+import { nextTier, usePlanTier } from "@/store/planStore";
 import type {
   SearchResult as SearchResultItem,
   SearchResultType,
@@ -182,6 +184,10 @@ export function SearchResults({
 }
 
 function LockedButton({ label, isLocked }: { label: string; isLocked?: boolean }) {
+  const currentTier = usePlanTier();
+  const upgradeTier = nextTier(currentTier) ?? "enterprise";
+  const targetLabel = upgradeTier === "enterprise" ? "Enterprise" : "Pro";
+
   if (!isLocked) {
     return (
       <button
@@ -204,9 +210,9 @@ function LockedButton({ label, isLocked }: { label: string; isLocked?: boolean }
       }}
     >
       <span>{label}</span>
-      <span aria-hidden>🔒</span>
+      <Lock aria-hidden className="h-4 w-4 text-primary" />
       <span className="pointer-events-none absolute -bottom-10 left-1/2 w-max -translate-x-1/2 rounded-lg border border-border-light bg-background-cardLight px-3 py-1 text-[11px] opacity-0 shadow-md transition-motion-medium group-hover:translate-y-2 group-hover:opacity-100 dark:border-border-dark dark:bg-background-cardDark">
-        Pro 플랜에서 이용 가능합니다.
+        {targetLabel} 플랜으로 업그레이드하면 곧바로 사용할 수 있어요.
       </span>
     </button>
   );
@@ -226,3 +232,4 @@ function badgeLabel(key: string): string {
       return key;
   }
 }
+

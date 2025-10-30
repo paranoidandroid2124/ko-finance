@@ -23,8 +23,8 @@ type SelectedHeatmapCell = {
 };
 
 export function NewsSentimentHeatmap() {
-  const { window, sectors: selectedSectors } = useNewsFilterStore(selectNewsFilterOptions, shallow);
-  const windowMinutes = windowToMinutes[window] ?? windowToMinutes['24h'];
+  const { window: windowOption, sectors: selectedSectors } = useNewsFilterStore(selectNewsFilterOptions, shallow);
+  const windowMinutes = windowToMinutes[windowOption] ?? windowToMinutes['24h'];
 
   const { data, isLoading, isError } = useNewsHeatmap({ windowMinutes });
   const [selectedCell, setSelectedCell] = useState<SelectedHeatmapCell | null>(null);

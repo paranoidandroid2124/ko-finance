@@ -46,9 +46,9 @@ export function useIntersectionObserver(options: UseIntersectionObserverOptions 
   const normalizedThreshold = useMemo<IntersectionObserverInit["threshold"]>(() => {
     if (Array.isArray(threshold)) {
       const sanitized = threshold.length ? threshold : [defaultOptions.threshold];
-      return sanitized.map((value) => clampThreshold(value));
+      return sanitized.map((value) => clampThreshold(Number(value))) as number[];
     }
-    return clampThreshold(threshold as number);
+    return clampThreshold(Number(threshold ?? defaultOptions.threshold));
   }, [threshold]);
 
   useEffect(() => {

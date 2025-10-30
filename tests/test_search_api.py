@@ -7,10 +7,6 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Text, create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-
 from database import get_db
 from models.company import CorpMetric
 from models.filing import Filing
@@ -28,52 +24,22 @@ def _load_search_router():
 
 
 @pytest.fixture()
-def search_api_client():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Filing.__table__.create(bind=engine)
-    CorpMetric.__table__.create(bind=engine)
-
-    topics_column = NewsSignal.__table__.c.get("topics")
-    original_topics_type = None
-    if topics_column is not None:
-        original_topics_type = topics_column.type
-        topics_column.type = Text()
-    NewsSignal.__table__.create(bind=engine)
-    if topics_column is not None:
-        topics_column.type = original_topics_type
-
-    NewsWindowAggregate.__table__.create(bind=engine)
-
-    SessionLocal = sessionmaker(bind=engine)
-    session = SessionLocal()
-
+def search_api_client(db_session):
     search_router = _load_search_router()
     app = FastAPI()
     app.include_router(search_router.router, prefix="/api/v1")
 
     def override_get_db():
-        try:
-            yield session
-        finally:
-            session.rollback()
+        yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
 
     client = TestClient(app)
     try:
-        yield client, session
+        yield client, db_session
     finally:
         client.close()
-        session.close()
-        NewsWindowAggregate.__table__.drop(bind=engine)
-        NewsSignal.__table__.drop(bind=engine)
-        CorpMetric.__table__.drop(bind=engine)
-        Filing.__table__.drop(bind=engine)
-        engine.dispose()
+        app.dependency_overrides.pop(get_db, None)
 
 
 def seed_sample_data(session):

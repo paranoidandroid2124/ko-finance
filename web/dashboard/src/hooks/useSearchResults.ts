@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { resolveApiBase } from "@/lib/apiBase";
 
 export type SearchResultType = "filing" | "news" | "table" | "chart";
@@ -78,7 +78,7 @@ export function useSearchResults(query: string, type: SearchResultType, limit = 
     queryKey: ["search", trimmed, type, limit, offset],
     queryFn: () => fetchSearchResults(trimmed, type, limit, offset),
     enabled: trimmed.length > 0,
-    keepPreviousData: true,
+    placeholderData: keepPreviousData,
     staleTime: 30_000,
   });
 }
