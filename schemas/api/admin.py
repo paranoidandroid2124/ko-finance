@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 PlanTier = Literal["free", "pro", "enterprise"]
 
@@ -41,7 +41,7 @@ class PlanQuickAdjustRequest(BaseModel):
         description="checkoutRequested 플래그를 명시적으로 설정/해제할 때 사용합니다.",
     )
 
-    @validator("entitlements", pre=True)
+    @field_validator("entitlements", mode="before")
     def _normalize_entitlements(cls, value: Optional[List[str]]) -> List[str]:
         if not value:
             return []
@@ -56,12 +56,22 @@ class PlanQuickAdjustRequest(BaseModel):
         return normalized
 
 
-class PlanQuickAdjustResponse(BaseModel):
-    planTier: PlanTier
-    entitlements: List[str]
-    expiresAt: Optional[str]
-    checkoutRequested: bool
-    updatedAt: Optional[str]
-    updatedBy: Optional[str]
-    changeNote: Optional[str]
-    quota: Dict[str, Any]
+class TossWebhookReplayRequest(BaseModel):
+    transmissionId: str = Field(..., description="재처리할 Toss webhook transmission ID.")
+
+
+class TossWebhookReplayResponse(BaseModel):
+    status: str = Field(..., description="웹훅 이벤트 상태 값.")
+    orderId: Optional[str] = Field(default=None, description="연관된 orderId.")
+    tier: Optional[PlanTier] = Field(default=None, description="재처리로 적용된 플랜 티어.")
+    noop: Optional[bool] = Field(default=None, description="실행할 작업이 없어 건너뛴 경우 true.")
+
+
+__all__ = [
+    "PlanQuickAdjustQuota",
+    "PlanQuickAdjustRequest",
+    "WebhookAuditEntrySchema",
+    "WebhookAuditListResponse",
+    "TossWebhookReplayRequest",
+    "TossWebhookReplayResponse",
+]

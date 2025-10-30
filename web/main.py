@@ -49,6 +49,7 @@ app.include_router(routers.sectors.router, prefix="/api/v1")
 app.include_router(routers.company.router, prefix="/api/v1")
 app.include_router(routers.payments.router, prefix="/api/v1")
 app.include_router(routers.plan.router, prefix="/api/v1")
+app.include_router(routers.admin.router, prefix="/api/v1")
 
 if getattr(routers, "filing", None):
     app.include_router(routers.filing.router, prefix="/api/v1")

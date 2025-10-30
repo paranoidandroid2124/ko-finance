@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request, status
 
@@ -21,6 +21,12 @@ from services.payments import (
 )
 from services.payments.toss_webhook_audit import append_webhook_audit_entry
 from services.payments.toss_webhook_store import has_processed_webhook, record_webhook_event
+from services.payments.toss_webhook_utils import (
+    build_webhook_dedupe_key,
+    extract_tier_from_order_id,
+    resolve_order_id,
+    resolve_payment_status,
+)
 from services.plan_service import PlanTier, SUPPORTED_PLAN_TIERS, apply_checkout_upgrade, clear_checkout_requested
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
@@ -146,9 +152,9 @@ async def handle_toss_webhook(request: Request) -> Dict[str, str]:
         )
         return {"status": "accepted"}
 
-    status_value = _resolve_payment_status(event)
-    order_id = _resolve_order_id(event)
-    dedupe_key = _build_webhook_dedupe_key(transmission_id, order_id, status_value)
+    status_value = resolve_payment_status(event)
+    order_id = resolve_order_id(event)
+    dedupe_key = build_webhook_dedupe_key(transmission_id, order_id, status_value)
 
     log_context = {
         **base_log_context,
@@ -167,7 +173,7 @@ async def handle_toss_webhook(request: Request) -> Dict[str, str]:
         return {"status": "accepted"}
 
     if status_value == "DONE":
-        tier = _extract_tier_from_order_id(order_id)
+        tier = extract_tier_from_order_id(order_id)
         if tier is None:
             logger.error("Unable to infer plan tier from webhook payload.", extra={"webhook": log_context})
             append_webhook_audit_entry(
@@ -264,47 +270,3 @@ async def handle_toss_webhook(request: Request) -> Dict[str, str]:
     )
 
     return {"status": "accepted"}
-
-
-def _resolve_payment_status(event: Dict[str, Any]) -> Optional[str]:
-    data = event.get("data") or {}
-    status_value = data.get("status") or event.get("status")
-    if isinstance(status_value, str):
-        return status_value.upper()
-    return None
-
-
-def _resolve_order_id(event: Dict[str, Any]) -> Optional[str]:
-    data = event.get("data") or {}
-    order_id = data.get("orderId") or event.get("orderId")
-    if isinstance(order_id, str):
-        return order_id
-    return None
-
-
-def _extract_tier_from_order_id(order_id: Optional[str]) -> Optional[PlanTier]:
-    if not order_id:
-        return None
-    parts = order_id.split("-")
-    if len(parts) < 3:
-        return None
-    prefix, tier_candidate = parts[0], parts[1]
-    if prefix != "kfinance":
-        return None
-    if tier_candidate not in SUPPORTED_PLAN_TIERS:
-        return None
-    return cast(PlanTier, tier_candidate)
-
-
-def _build_webhook_dedupe_key(
-    transmission_id: Optional[str],
-    order_id: Optional[str],
-    status_value: Optional[str],
-) -> Optional[str]:
-    if transmission_id:
-        return transmission_id
-    if order_id and status_value:
-        return f"{order_id}:{status_value}"
-    if order_id:
-        return order_id
-    return None

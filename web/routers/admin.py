@@ -8,10 +8,13 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from schemas.api.admin import (
     PlanQuickAdjustRequest,
-    PlanQuickAdjustResponse,
+    TossWebhookReplayRequest,
+    TossWebhookReplayResponse,
     WebhookAuditListResponse,
 )
+from schemas.api.plan import PlanContextResponse, PlanFeatureFlagsSchema, PlanQuotaSchema
 from services.payments.toss_webhook_audit import read_recent_webhook_entries
+from services.payments.toss_webhook_replay import replay_toss_webhook_event
 from services.plan_service import PlanContext, update_plan_context
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -20,7 +23,7 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
 @router.get(
     "/webhooks/toss/events",
     response_model=WebhookAuditListResponse,
-    summary="토스 웹훅 감사 로그를 조회합니다.",
+    summary="?? ?? ?? ??? ?????.",
 )
 def list_toss_webhook_audit_entries(limit: int = Query(100, ge=1, le=500)) -> WebhookAuditListResponse:
     items = list(read_recent_webhook_entries(limit=limit))
@@ -28,14 +31,36 @@ def list_toss_webhook_audit_entries(limit: int = Query(100, ge=1, le=500)) -> We
 
 
 @router.post(
-    "/plan/quick-adjust",
-    response_model=PlanQuickAdjustResponse,
-    summary="플랜 티어 및 권한을 신속히 조정합니다.",
+    "/webhooks/toss/replay",
+    response_model=TossWebhookReplayResponse,
+    summary="?? ?? ???? ???? ??????.",
 )
-def apply_plan_quick_adjust(payload: PlanQuickAdjustRequest) -> PlanQuickAdjustResponse:
+def replay_toss_webhook(payload: TossWebhookReplayRequest) -> TossWebhookReplayResponse:
+    try:
+        result = replay_toss_webhook_event(payload.transmissionId)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "admin.webhook_replay_invalid", "message": str(exc)},
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "admin.webhook_replay_failed", "message": str(exc)},
+        ) from exc
+
+    return TossWebhookReplayResponse(**result)
+
+
+@router.post(
+    "/plan/quick-adjust",
+    response_model=PlanContextResponse,
+    summary="?? ?? ? ??? ??? ?????.",
+)
+def apply_plan_quick_adjust(payload: PlanQuickAdjustRequest) -> PlanContextResponse:
     quota_overrides: Dict[str, Any] = {}
     if payload.quota is not None:
-        quota_overrides = {key: value for key, value in payload.quota.dict().items() if value is not None}
+        quota_overrides = payload.quota.model_dump(exclude_none=True)
 
     try:
         context = update_plan_context(
@@ -62,8 +87,9 @@ def apply_plan_quick_adjust(payload: PlanQuickAdjustRequest) -> PlanQuickAdjustR
     return _plan_context_to_response(context)
 
 
-def _plan_context_to_response(context: PlanContext) -> PlanQuickAdjustResponse:
-    return PlanQuickAdjustResponse(
+def _plan_context_to_response(context: PlanContext) -> PlanContextResponse:
+    feature_flags = context.feature_flags()
+    return PlanContextResponse(
         planTier=context.tier,
         entitlements=sorted(context.entitlements),
         expiresAt=context.expires_at.isoformat() if context.expires_at else None,
@@ -71,5 +97,13 @@ def _plan_context_to_response(context: PlanContext) -> PlanQuickAdjustResponse:
         updatedAt=context.updated_at.isoformat() if context.updated_at else None,
         updatedBy=context.updated_by,
         changeNote=context.change_note,
-        quota=context.quota.to_dict(),
+        quota=PlanQuotaSchema(**context.quota.to_dict()),
+        featureFlags=PlanFeatureFlagsSchema(
+            searchCompare=feature_flags.get("search.compare", False),
+            searchAlerts=feature_flags.get("search.alerts", False),
+            searchExport=feature_flags.get("search.export", False),
+            evidenceInlinePdf=feature_flags.get("evidence.inline_pdf", False),
+            evidenceDiff=feature_flags.get("evidence.diff", False),
+            timelineFull=feature_flags.get("timeline.full", False),
+        ),
     )
