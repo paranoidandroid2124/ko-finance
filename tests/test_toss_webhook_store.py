@@ -11,11 +11,9 @@ def _isolate_webhook_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Redirect the webhook store to a temporary path per test and reset caches."""
     path = tmp_path / "toss_webhook_events.json"
     monkeypatch.setattr(store, "_WEBHOOK_STATE_PATH", path)
-    store._EVENT_CACHE = None  # type: ignore[attr-defined]
-    store._EVENT_CACHE_PATH = None  # type: ignore[attr-defined]
+    store.reset_state_for_tests()
     yield path
-    store._EVENT_CACHE = None  # type: ignore[attr-defined]
-    store._EVENT_CACHE_PATH = None  # type: ignore[attr-defined]
+    store.reset_state_for_tests()
 
 
 def _load_raw_events(path: Path) -> list[dict]:
@@ -75,8 +73,7 @@ def test_record_respects_maximum_window(tmp_path: Path, monkeypatch: pytest.Monk
     path = tmp_path / "toss_webhook_events.json"
     monkeypatch.setattr(store, "_WEBHOOK_STATE_PATH", path)
     monkeypatch.setattr(store, "_MAX_RECORDED_EVENTS", 3)
-    store._EVENT_CACHE = None  # type: ignore[attr-defined]
-    store._EVENT_CACHE_PATH = None  # type: ignore[attr-defined]
+    store.reset_state_for_tests()
 
     for idx in range(5):
         store.record_webhook_event(
@@ -90,8 +87,7 @@ def test_record_respects_maximum_window(tmp_path: Path, monkeypatch: pytest.Monk
     events = _load_raw_events(path)
     assert len(events) == 3
     assert [event["key"] for event in events] == ["order-2", "order-3", "order-4"]
-    store._EVENT_CACHE = None  # type: ignore[attr-defined]
-    store._EVENT_CACHE_PATH = None  # type: ignore[attr-defined]
+    store.reset_state_for_tests()
 
 
 def test_record_ignored_when_key_missing(_isolate_webhook_store: Path) -> None:

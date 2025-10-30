@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict, List, Optional, Union, Literal
 
-from pydantic import BaseModel, Field, ConfigDict, constr
+from pydantic import BaseModel, Field, ConfigDict, validator
 
 
 class FilingFilter(BaseModel):
@@ -21,8 +21,12 @@ class FilingFilter(BaseModel):
 class RAGQueryRequest(BaseModel):
     """Request payload for /rag/query."""
 
-    question: constr(strip_whitespace=True, min_length=1)  # type: ignore[type-arg]
-    filing_id: Optional[constr(strip_whitespace=True, min_length=1)] = Field(  # type: ignore[type-arg]
+    question: str = Field(
+        ...,
+        min_length=1,
+        description="Fully formed analyst question passed to the RAG pipeline.",
+    )
+    filing_id: Optional[str] = Field(
         default=None,
         description="Explicit filing focus. If omitted, the service will auto-select the most relevant filing.",
     )
@@ -40,6 +44,20 @@ class RAGQueryRequest(BaseModel):
     retry_of_message_id: Optional[uuid.UUID] = Field(default=None)
     idempotency_key: Optional[str] = Field(default=None, max_length=128)
     meta: Dict[str, Any] = Field(default_factory=dict)
+
+    @validator("question")
+    def _normalize_question(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("question must not be empty")
+        return stripped
+
+    @validator("filing_id")
+    def _normalize_filing_id(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
 
 
 class RelatedFiling(BaseModel):
