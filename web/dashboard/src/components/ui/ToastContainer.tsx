@@ -36,6 +36,27 @@ function ToastItem({ toast, onDismiss }: ToastItemProps) {
     >
       {toast.title && <p className="text-xs font-semibold uppercase tracking-wide">{toast.title}</p>}
       <p className="whitespace-pre-line leading-relaxed">{toast.message}</p>
+      {toast.actionLabel ? (
+        <div className="mt-1 flex justify-end">
+          <button
+            type="button"
+            className="inline-flex items-center rounded-md border border-current px-2 py-1 text-[11px] font-semibold uppercase tracking-wide transition hover:bg-current/10"
+            onClick={() => {
+              try {
+                toast.onAction?.();
+              } catch (error) {
+                // no-op; action handlers are best-effort
+              }
+              if (toast.actionHref) {
+                window.open(toast.actionHref, "_blank", "noopener,noreferrer");
+              }
+              onDismiss(toast.id);
+            }}
+          >
+            {toast.actionLabel}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

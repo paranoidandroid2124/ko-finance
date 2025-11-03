@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional, cast
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from schemas.api.plan import (
     PlanContextResponse,
@@ -14,12 +14,10 @@ from schemas.api.plan import (
     PlanTier,
 )
 from services.plan_service import PlanContext, update_plan_context as update_plan_context_service
+from web.deps_admin import AdminSession, require_admin_session_for_plan
 from web.deps import get_plan_context
 
 router = APIRouter(prefix="/plan", tags=["Plan"])
-
-_ALLOWED_ADMIN_ROLES = {"admin", "owner"}
-
 
 def _serialize_plan_context(plan: PlanContext, *, checkout_requested: Optional[bool] = None) -> PlanContextResponse:
     feature_flags = plan.feature_flags()
@@ -54,13 +52,8 @@ def read_plan_context(plan: PlanContext = Depends(get_plan_context)) -> PlanCont
 @router.patch("/context", response_model=PlanContextResponse, summary="플랜 기본값을 저장합니다.")
 def patch_plan_context(
     payload: PlanContextUpdateRequest,
-    x_admin_role: Optional[str] = Header(default=None),
+    _admin_session: AdminSession = Depends(require_admin_session_for_plan),
 ) -> PlanContextResponse:
-    if not x_admin_role or x_admin_role.lower() not in _ALLOWED_ADMIN_ROLES:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "plan.unauthorized", "message": "Plan settings update requires admin privileges."},
-        )
     try:
         updated = update_plan_context_service(
             plan_tier=payload.planTier,

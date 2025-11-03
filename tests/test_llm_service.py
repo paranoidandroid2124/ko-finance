@@ -1,4 +1,4 @@
-﻿import json
+import json
 import sys
 import types
 import unittest
@@ -120,13 +120,13 @@ class NewsAnalysisValidationTests(unittest.TestCase):
 
 
 class RagCitationHelperTests(unittest.TestCase):
-    def test_select_prompt_builder_for_table(self):
+    def test_pick_prompt_builder_for_table(self):
         context = [{"type": "table"}, {"type": "text"}]
-        builder = llm_service._select_prompt_builder(context)
+        builder = llm_service._pick_prompt_builder(context)
         from llm.prompts import table_aware_rag, rag_qa  # local import for comparison
 
         self.assertIs(builder, table_aware_rag)
-        builder_text = llm_service._select_prompt_builder([{"type": "text"}])
+        builder_text = llm_service._pick_prompt_builder([{"type": "text"}])
         self.assertIs(builder_text, rag_qa)
 
     def test_categorize_context(self):
@@ -181,7 +181,8 @@ class GuardrailEnforcementTests(unittest.TestCase):
         )
 
         with patch("llm.llm_service._safe_completion", return_value=(dummy_response, "test-model")):
-            result = llm_service.answer_with_rag("question", context_chunks)
+            result = llm_service.generate_rag_answer("question", context_chunks)
+        self.assertEqual(result.get("rag_mode"), "vector")
 
         self.assertTrue(any("guardrail_violation" in warn for warn in result["warnings"]))
         self.assertEqual(result["answer"], SAFE_MESSAGE)

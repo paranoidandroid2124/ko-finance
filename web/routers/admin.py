@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse
 
 from schemas.api.admin import (
+    AdminSessionResponse,
     PlanQuickAdjustRequest,
     TossWebhookReplayRequest,
     TossWebhookReplayResponse,
@@ -16,8 +19,27 @@ from schemas.api.plan import PlanContextResponse, PlanFeatureFlagsSchema, PlanQu
 from services.payments.toss_webhook_audit import read_recent_webhook_entries
 from services.payments.toss_webhook_replay import replay_toss_webhook_event
 from services.plan_service import PlanContext, update_plan_context
+from web.deps_admin import AdminSession, require_admin_session
 
-router = APIRouter(prefix="/admin", tags=["Admin"])
+router = APIRouter(prefix="/admin", tags=["Admin"], dependencies=[Depends(require_admin_session)])
+
+_AUDIT_DIR = Path("uploads") / "admin"
+
+
+@router.get(
+    "/session",
+    response_model=AdminSessionResponse,
+    summary="관리자 세션 상태를 확인합니다.",
+)
+def read_admin_session(request: Request) -> AdminSessionResponse:
+    session: Optional[AdminSession] = getattr(request.state, "admin_session", None)
+    if session is None:
+        session = require_admin_session(request)
+    return AdminSessionResponse(
+        actor=session.actor,
+        issuedAt=session.issued_at.isoformat(),
+        tokenHint=session.token_hint,
+    )
 
 
 @router.get(
@@ -85,6 +107,18 @@ def apply_plan_quick_adjust(payload: PlanQuickAdjustRequest) -> PlanContextRespo
         ) from exc
 
     return _plan_context_to_response(context)
+
+
+@router.get(
+    "/plan/audit/logs",
+    summary="플랜 변경 감사 로그를 다운로드합니다.",
+    response_class=FileResponse,
+)
+def download_plan_audit_log() -> FileResponse:
+    audit_path = (_AUDIT_DIR / "plan_audit.jsonl").resolve()
+    if not audit_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="audit_log_not_found")
+    return FileResponse(audit_path, media_type="application/json", filename="plan_audit.jsonl")
 
 
 def _plan_context_to_response(context: PlanContext) -> PlanContextResponse:

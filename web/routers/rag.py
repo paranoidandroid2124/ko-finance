@@ -259,7 +259,7 @@ def _vector_search(
         raise HTTPException(status_code=503, detail="Vector search is currently unavailable.")
 
 
-def _no_context_response(
+def build_empty_response(
     db: Session,
     *,
     question: str,
@@ -271,6 +271,8 @@ def _no_context_response(
     assistant_message: ChatMessage,
     conversation_memory: Optional[Dict[str, Any]] = None,
     related_filings: Optional[List[RelatedFiling]] = None,
+    judge_result: Optional[Dict[str, Any]] = None,
+    rag_mode: str = "vector",
 ) -> Tuple[RAGQueryResponse, bool]:
     fallback_text = NO_CONTEXT_ANSWER
     conversation_summary = None
@@ -278,6 +280,11 @@ def _no_context_response(
     if conversation_memory:
         conversation_summary = conversation_memory.get("summary")
         recent_turns = len(conversation_memory.get("recent_turns") or [])
+    guardrail_meta = {
+        "decision": judge_result.get("decision") if judge_result else None,
+        "reason": judge_result.get("reason") if judge_result else None,
+        "rag_mode": rag_mode,
+    }
     meta_payload = {
         "model": None,
         "prompt_version": None,
@@ -286,7 +293,7 @@ def _no_context_response(
         "output_tokens": None,
         "cost": None,
         "retrieval": {"doc_ids": [], "hit_at_k": 0, "filing_id": None, "filters": {}},
-        "guardrail": {"decision": None, "reason": None},
+        "guardrail": guardrail_meta,
         "turnId": str(turn_id),
         "traceId": trace_id,
         "citations": {"page": [], "table": [], "footnote": []},
@@ -324,11 +331,12 @@ def _no_context_response(
         meta=meta_payload,
         state="ready",
         related_filings=related_filings or [],
+        rag_mode=rag_mode,
     )
     return response, needs_summary
 
 
-def _intent_fallback_response(
+def build_intent_reply(
     db: Session,
     *,
     question: str,
@@ -375,6 +383,7 @@ def _intent_fallback_response(
     }
     meta_payload["evidence_version"] = "v2"
     meta_payload["evidence_diff"] = {"enabled": False, "removed": []}
+    meta_payload["guardrail"]["rag_mode"] = "none"
 
     chat_service.update_message_state(
         db,
@@ -408,12 +417,13 @@ def _intent_fallback_response(
         meta=meta_payload,
         state="blocked" if decision == "block" else "ready",
         related_filings=[],
+        rag_mode="none",
     )
 
     return response, needs_summary
 
 
-def _stateless_rag_response(
+def build_basic_reply(
     *,
     question: str,
     filing_id: Optional[str],
@@ -422,63 +432,87 @@ def _stateless_rag_response(
     run_self_check: bool,
     filters: Optional[Dict[str, Any]] = None,
 ) -> RAGQueryResponse:
-    retrieval = _vector_search(
-        question,
-        filing_id=filing_id,
-        top_k=top_k,
-        max_filings=1,
-        filters=filters or {},
-    )
-    context_chunks = retrieval.chunks
-    related_filings: List[RelatedFiling] = [
-        RelatedFiling(
-            filing_id=item["filing_id"],
-            score=float(item.get("score") or 0.0),
-            title=item.get("title"),
-            sentiment=item.get("sentiment"),
-            published_at=item.get("published_at"),
-        )
-        for item in retrieval.related_filings
-        if item.get("filing_id")
-    ]
-    selected_filing_id = retrieval.filing_id or filing_id
-    if selected_filing_id is None and related_filings:
-        selected_filing_id = related_filings[0].filing_id
+    judge_result = llm_service.assess_query_risk(question)
+    judge_decision = (judge_result.get("decision") or "unknown") if judge_result else "unknown"
+    rag_mode = (judge_result.get("rag_mode") or "vector") if judge_result else "vector"
 
-    if not context_chunks:
-        return RAGQueryResponse(
-            question=question,
-            filing_id=selected_filing_id,
-            session_id=None,
-            turn_id=None,
-            user_message_id=None,
-            assistant_message_id=None,
-            answer=NO_CONTEXT_ANSWER,
-            context=[],
-            citations={},
-            warnings=["no_context"],
-            highlights=[],
-            error=None,
-            original_answer=None,
-            model_used=None,
-            trace_id=trace_id,
-            meta={
-                "selected_filing_id": selected_filing_id,
-                "related_filings": [item.model_dump() for item in related_filings],
-                "evidence_version": "v2",
-                "evidence_diff": {"enabled": False, "removed": []},
-            },
-            state="ready",
-            related_filings=related_filings,
-        )
+    should_retrieve = rag_mode != "none" and judge_decision in {"pass", "unknown"}
+    retrieval: Optional[vector_service.VectorSearchResult] = None
+    context_chunks: List[Dict[str, Any]] = []
+    related_filings: List[RelatedFiling] = []
+    selected_filing_id = filing_id
 
-    payload = llm_service.answer_with_rag(question, context_chunks)
+    if should_retrieve:
+        retrieval = _vector_search(
+            question,
+            filing_id=filing_id,
+            top_k=top_k,
+            max_filings=1,
+            filters=filters or {},
+        )
+        context_chunks = retrieval.chunks
+        related_filings = [
+            RelatedFiling(
+                filing_id=item["filing_id"],
+                score=float(item.get("score") or 0.0),
+                title=item.get("title"),
+                sentiment=item.get("sentiment"),
+                published_at=item.get("published_at"),
+            )
+            for item in retrieval.related_filings
+            if item.get("filing_id")
+        ]
+        selected_filing_id = retrieval.filing_id or filing_id
+        if selected_filing_id is None and related_filings:
+            selected_filing_id = related_filings[0].filing_id
+
+        if rag_mode == "vector" and not context_chunks:
+            return RAGQueryResponse(
+                question=question,
+                filing_id=selected_filing_id,
+                session_id=None,
+                turn_id=None,
+                user_message_id=None,
+                assistant_message_id=None,
+                answer=NO_CONTEXT_ANSWER,
+                context=[],
+                citations={},
+                warnings=["no_context"],
+                highlights=[],
+                error=None,
+                original_answer=None,
+                model_used=None,
+                trace_id=trace_id,
+                meta={
+                    "selected_filing_id": selected_filing_id,
+                    "related_filings": [item.model_dump() for item in related_filings],
+                    "evidence_version": "v2",
+                    "evidence_diff": {"enabled": False, "removed": []},
+                    "guardrail": {
+                        "decision": judge_result.get("decision") if judge_result else None,
+                        "reason": judge_result.get("reason") if judge_result else None,
+                        "rag_mode": rag_mode,
+                    },
+                },
+                state="ready",
+                related_filings=related_filings,
+                rag_mode=rag_mode,
+            )
+
+    payload = llm_service.generate_rag_answer(question, context_chunks, judge_result=judge_result)
+    payload_rag_mode = payload.get("rag_mode") or rag_mode
     meta_payload = dict(payload.get("meta", {}))
     retrieval_meta = dict(meta_payload.get("retrieval") or {})
     retrieval_meta.setdefault("filing_id", selected_filing_id)
+    retrieval_meta.setdefault("rag_mode", payload_rag_mode)
     meta_payload["retrieval"] = retrieval_meta
     meta_payload.setdefault("selected_filing_id", selected_filing_id)
     meta_payload.setdefault("related_filings", [item.model_dump() for item in related_filings])
+    guard_meta = dict(meta_payload.get("guardrail") or {})
+    guard_meta.setdefault("decision", payload.get("judge_decision"))
+    guard_meta.setdefault("reason", payload.get("judge_reason"))
+    guard_meta["rag_mode"] = payload_rag_mode
+    meta_payload["guardrail"] = guard_meta
 
     evidence_context = _build_evidence_payload(payload.get("context") or context_chunks)
     snapshot_payload = deepcopy(evidence_context)
@@ -507,6 +541,7 @@ def _stateless_rag_response(
         meta=meta_payload,
         state=payload.get("state", "ready"),
         related_filings=related_filings,
+        rag_mode=payload_rag_mode,
     )
 
     if run_self_check:
@@ -698,7 +733,7 @@ def query_rag(
         intent_model = intent_result.get("model_used")
 
         if intent_decision != "pass":
-            response, needs_summary = _intent_fallback_response(
+            response, needs_summary = build_intent_reply(
                 db,
                 question=question,
                 trace_id=trace_id,
@@ -716,51 +751,63 @@ def query_rag(
                 chat_service.enqueue_session_summary(session.id)
             return response
 
-        retrieval = _vector_search(
-            question,
-            filing_id=filing_id,
-            top_k=request.top_k,
-            max_filings=max_filings,
-            filters=filter_payload,
-        )
-        context_chunks = retrieval.chunks
-        related_filings: List[RelatedFiling] = [
-            RelatedFiling(
-                filing_id=item["filing_id"],
-                score=float(item.get("score") or 0.0),
-                title=item.get("title"),
-                sentiment=item.get("sentiment"),
-                published_at=item.get("published_at"),
-            )
-            for item in retrieval.related_filings
-            if item.get("filing_id")
-        ]
-        active_filing_id = retrieval.filing_id or filing_id
-        if active_filing_id is None and related_filings:
-            active_filing_id = related_filings[0].filing_id
+        judge_result = llm_service.assess_query_risk(question)
+        judge_decision = (judge_result.get("decision") or "unknown") if judge_result else "unknown"
+        rag_mode = (judge_result.get("rag_mode") or "vector") if judge_result else "vector"
 
-        if not context_chunks:
-            logger.info("No context chunks found (filing=%s, trace_id=%s).", active_filing_id or "<auto>", trace_id)
-            response, needs_summary = _no_context_response(
-                db,
-                question=question,
-                filing_id=active_filing_id,
-                trace_id=trace_id,
-                session=session,
-                turn_id=turn_id,
-                user_message=user_message,
-                assistant_message=assistant_message,
-                conversation_memory=conversation_memory,
-                related_filings=related_filings,
+        should_retrieve = rag_mode != "none" and judge_decision in {"pass", "unknown"}
+        retrieval: Optional[vector_service.VectorSearchResult] = None
+        context_chunks: List[Dict[str, Any]] = []
+        related_filings: List[RelatedFiling] = []
+        active_filing_id = filing_id
+
+        if should_retrieve:
+            retrieval = _vector_search(
+                question,
+                filing_id=filing_id,
+                top_k=request.top_k,
+                max_filings=max_filings,
+                filters=filter_payload,
             )
-            db.commit()
-            if needs_summary:
-                chat_service.enqueue_session_summary(session.id)
-            return response
+            context_chunks = retrieval.chunks
+            related_filings = [
+                RelatedFiling(
+                    filing_id=item["filing_id"],
+                    score=float(item.get("score") or 0.0),
+                    title=item.get("title"),
+                    sentiment=item.get("sentiment"),
+                    published_at=item.get("published_at"),
+                )
+                for item in retrieval.related_filings
+                if item.get("filing_id")
+            ]
+            active_filing_id = retrieval.filing_id or filing_id
+            if active_filing_id is None and related_filings:
+                active_filing_id = related_filings[0].filing_id
+
+            if rag_mode == "vector" and not context_chunks:
+                logger.info("No context chunks found (filing=%s, trace_id=%s).", active_filing_id or "<auto>", trace_id)
+                response, needs_summary = build_empty_response(
+                    db,
+                    question=question,
+                    filing_id=active_filing_id,
+                    trace_id=trace_id,
+                    session=session,
+                    turn_id=turn_id,
+                    user_message=user_message,
+                    assistant_message=assistant_message,
+                    conversation_memory=conversation_memory,
+                    related_filings=related_filings,
+                )
+                db.commit()
+                if needs_summary:
+                    chat_service.enqueue_session_summary(session.id)
+                return response
 
         selected_filing_id = active_filing_id
         started_at = datetime.now(timezone.utc)
-        result = llm_service.answer_with_rag(question, context_chunks)
+        result = llm_service.generate_rag_answer(question, context_chunks, judge_result=judge_result)
+        payload_rag_mode = result.get("rag_mode") or rag_mode
         latency_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
 
         error = result.get("error")
@@ -805,10 +852,12 @@ def query_rag(
                 "hit_at_k": len(context_chunks),
                 "filing_id": selected_filing_id,
                 "filters": filter_payload,
+                "rag_mode": payload_rag_mode,
             },
             "guardrail": {
                 "decision": result.get("judge_decision"),
                 "reason": result.get("judge_reason"),
+                "rag_mode": payload_rag_mode,
             },
             "turnId": str(turn_id),
             "traceId": trace_id,
@@ -856,6 +905,7 @@ def query_rag(
             meta=meta_payload,
             state=state_value,
             related_filings=related_filings,
+            rag_mode=payload_rag_mode,
         )
 
         if request.run_self_check:
@@ -895,7 +945,7 @@ def query_rag(
     except SQLAlchemyError as exc:
         db.rollback()
         logger.warning("Database error during RAG query; falling back to stateless mode: %s", exc)
-        return _stateless_rag_response(
+        return build_basic_reply(
             question=question,
             filing_id=filing_id,
             trace_id=trace_id,
@@ -960,7 +1010,7 @@ def query_rag_stream(
         intent_model = intent_result.get("model_used")
 
         if intent_decision != "pass":
-            response, needs_summary = _intent_fallback_response(
+            response, needs_summary = build_intent_reply(
                 db,
                 question=question,
                 trace_id=trace_id,
@@ -991,59 +1041,72 @@ def query_rag_stream(
 
             return StreamingResponse(intent_stream(), media_type="text/event-stream")
 
-        retrieval = _vector_search(
-            question,
-            filing_id=filing_id,
-            top_k=request.top_k,
-            max_filings=max_filings,
-            filters=filter_payload,
-        )
-        context_chunks = retrieval.chunks
-        related_filings: List[RelatedFiling] = [
-            RelatedFiling(
-                filing_id=item["filing_id"],
-                score=float(item.get("score") or 0.0),
-                title=item.get("title"),
-                sentiment=item.get("sentiment"),
-                published_at=item.get("published_at"),
+        judge_result = llm_service.assess_query_risk(question)
+        judge_decision = (judge_result.get("decision") or "unknown") if judge_result else "unknown"
+        rag_mode = (judge_result.get("rag_mode") or "vector") if judge_result else "vector"
+
+        should_retrieve = rag_mode != "none" and judge_decision in {"pass", "unknown"}
+        retrieval: Optional[vector_service.VectorSearchResult] = None
+        context_chunks: List[Dict[str, Any]] = []
+        related_filings: List[RelatedFiling] = []
+        active_filing_id = filing_id
+
+        if should_retrieve:
+            retrieval = _vector_search(
+                question,
+                filing_id=filing_id,
+                top_k=request.top_k,
+                max_filings=max_filings,
+                filters=filter_payload,
             )
-            for item in retrieval.related_filings
-            if item.get("filing_id")
-        ]
-        active_filing_id = retrieval.filing_id or filing_id
-        if active_filing_id is None and related_filings:
-            active_filing_id = related_filings[0].filing_id
+            context_chunks = retrieval.chunks
+            related_filings = [
+                RelatedFiling(
+                    filing_id=item["filing_id"],
+                    score=float(item.get("score") or 0.0),
+                    title=item.get("title"),
+                    sentiment=item.get("sentiment"),
+                    published_at=item.get("published_at"),
+                )
+                for item in retrieval.related_filings
+                if item.get("filing_id")
+            ]
+            active_filing_id = retrieval.filing_id or filing_id
+            if active_filing_id is None and related_filings:
+                active_filing_id = related_filings[0].filing_id
 
-        if not context_chunks:
-            response, needs_summary = _no_context_response(
-                db,
-                question=question,
-                filing_id=active_filing_id,
-                trace_id=trace_id,
-                session=session,
-                turn_id=turn_id,
-                user_message=user_message,
-                assistant_message=assistant_message,
-                conversation_memory=conversation_memory,
-                related_filings=related_filings,
-            )
-            db.commit()
-            if needs_summary:
-                chat_service.enqueue_session_summary(session.id)
+            if rag_mode == "vector" and not context_chunks:
+                response, needs_summary = build_empty_response(
+                    db,
+                    question=question,
+                    filing_id=active_filing_id,
+                    trace_id=trace_id,
+                    session=session,
+                    turn_id=turn_id,
+                    user_message=user_message,
+                    assistant_message=assistant_message,
+                    conversation_memory=conversation_memory,
+                    related_filings=related_filings,
+                    judge_result=judge_result,
+                    rag_mode=rag_mode,
+                )
+                db.commit()
+                if needs_summary:
+                    chat_service.enqueue_session_summary(session.id)
 
-            payload = response.model_dump(mode="json")
+                payload = response.model_dump(mode="json")
 
-            def no_context_stream():
-                yield json.dumps(
-                    {
-                        "event": "done",
-                        "id": str(assistant_message.id),
-                        "turn_id": str(turn_id),
-                        "payload": payload,
-                    }
-                ) + "\n"
+                def no_context_stream():
+                    yield json.dumps(
+                        {
+                            "event": "done",
+                            "id": str(assistant_message.id),
+                            "turn_id": str(turn_id),
+                            "payload": payload,
+                        }
+                    ) + "\n"
 
-            return StreamingResponse(no_context_stream(), media_type="text/event-stream")
+                return StreamingResponse(no_context_stream(), media_type="text/event-stream")
 
         memory_summary = conversation_memory.get("summary") if conversation_memory else None
         memory_turn_count = len(conversation_memory.get("recent_turns") or []) if conversation_memory else 0
@@ -1058,6 +1121,11 @@ def query_rag_stream(
                 "selected_filing_id": selected_filing_id,
                 "related_filings": related_meta,
                 "filters": filter_payload,
+                "guardrail": {
+                    "decision": judge_result.get("decision") if judge_result else None,
+                    "reason": judge_result.get("reason") if judge_result else None,
+                    "rag_mode": rag_mode,
+                },
             }
             yield json.dumps(
                 {
@@ -1070,9 +1138,10 @@ def query_rag_stream(
 
             final_payload: Optional[Dict[str, object]] = None
             try:
-                for event in llm_service.stream_answer_with_rag(
+                for event in llm_service.stream_rag_answer(
                     question,
                     context_chunks,
+                    judge_result=judge_result,
                 ):
                     if event.get("type") == "token":
                         token = event.get("text") or ""
@@ -1093,6 +1162,8 @@ def query_rag_stream(
 
                 if final_payload is None:
                     final_payload = {}
+
+                payload_rag_mode = final_payload.get("rag_mode") or rag_mode
 
                 answer_text = final_payload.get("answer") or "".join(streamed_tokens) or "지금은 답변을 준비할 수 없습니다."
                 context = _build_evidence_payload(final_payload.get("context") or context_chunks)
@@ -1117,10 +1188,12 @@ def query_rag_stream(
                         "hit_at_k": len(context_chunks),
                         "filing_id": selected_filing_id,
                         "filters": filter_payload,
+                        "rag_mode": payload_rag_mode,
                     },
                     "guardrail": {
                         "decision": final_payload.get("judge_decision"),
                         "reason": final_payload.get("judge_reason"),
+                        "rag_mode": payload_rag_mode,
                     },
                     "turnId": str(turn_id),
                     "traceId": trace_id,
@@ -1167,6 +1240,7 @@ def query_rag_stream(
                     meta=meta_payload,
                     state=state_value,
                     related_filings=related_filings,
+                    rag_mode=payload_rag_mode,
                 )
 
                 if request.run_self_check:

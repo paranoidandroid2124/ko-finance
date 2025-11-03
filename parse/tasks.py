@@ -20,7 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import llm.llm_service as llm_service
-from core.env import env_float, env_int, env_str
+from core.env import env_bool, env_float, env_int, env_str
 from database import SessionLocal
 from ingest.dart_seed import seed_recent_filings as seed_recent_filings_job
 from ingest.news_fetcher import fetch_news_batch
@@ -43,7 +43,7 @@ from models.summary import Summary
 from parse.pdf_parser import extract_chunks
 from parse.xml_parser import extract_chunks_from_xml
 from schemas.news import NewsArticleCreate
-from services import alert_service, chat_service, minio_service, vector_service
+from services import alert_service, chat_service, minio_service, vector_service, ocr_service
 from services.aggregation.sector_classifier import assign_article_to_sector
 from services.aggregation.sector_metrics import compute_sector_daily_metrics, compute_sector_window_metrics
 from services.aggregation.news_metrics import compute_news_window_metrics
@@ -53,6 +53,10 @@ from services.aggregation.news_statistics import summarize_news_signals, build_t
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+_OCR_MIN_TEXT_LENGTH = env_int("OCR_TRIGGER_MIN_TEXT_LENGTH", 400, minimum=0)
+_OCR_ENABLE_LOG = env_bool("OCR_LOG_DECISIONS", True)
+_OCR_PAGE_LIMIT = env_int("OCR_TRIGGER_MAX_PAGES", 15, minimum=1)
 
 
 @dataclass
@@ -114,6 +118,19 @@ def _persist_evidence_snapshot(
         "snapshot_hash": snapshot_hash,
         "diff_type": diff_type,
     }
+
+
+def _count_text_characters(chunks: Iterable[Dict[str, Any]], *, source: Optional[str] = None) -> int:
+    total = 0
+    for chunk in chunks:
+        if chunk.get("type") != "text":
+            continue
+        if source and chunk.get("source") != source:
+            continue
+        content = chunk.get("content")
+        if isinstance(content, str):
+            total += len(content)
+    return total
 
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 
@@ -396,6 +413,27 @@ def _save_summary(filing: Filing, summary: Dict[str, Any], db: Session) -> None:
     record.why = summary.get("why")
     record.insight = summary.get("insight")
     record.confidence_score = summary.get("confidence_score")
+    sentiment_label = summary.get("sentiment")
+    sentiment_reason = summary.get("sentiment_reason")
+    normalized_label: Optional[str] = None
+    sentiment_aliases = {
+        "positive": "positive",
+        "긍정": "positive",
+        "negative": "negative",
+        "부정": "negative",
+        "neutral": "neutral",
+        "중립": "neutral",
+    }
+    if isinstance(sentiment_label, str):
+        candidate = sentiment_label.strip().lower()
+        normalized_label = sentiment_aliases.get(candidate)
+    normalized_reason: Optional[str] = None
+    if isinstance(sentiment_reason, str):
+        stripped = sentiment_reason.strip()
+        if stripped:
+            normalized_reason = stripped
+    record.sentiment_label = normalized_label
+    record.sentiment_reason = normalized_reason
     db.commit()
 
 
@@ -470,7 +508,39 @@ def process_filing(filing_id: str) -> str:
 
             extracted: List[Dict[str, Any]] = []
             if pdf_path:
-                extracted.extend(extract_chunks(pdf_path))
+                pdf_chunks = extract_chunks(pdf_path)
+                extracted.extend(pdf_chunks)
+                pdf_text_characters = _count_text_characters(pdf_chunks, source="pdf")
+                if (
+                    ocr_service.is_enabled()
+                    and pdf_text_characters < _OCR_MIN_TEXT_LENGTH
+                ):
+                    if _OCR_ENABLE_LOG:
+                        logger.info(
+                            "Vision OCR fallback triggered for filing %s (pdf_text_chars=%d).",
+                            filing.id,
+                            pdf_text_characters,
+                        )
+                    try:
+                        ocr_chunks = ocr_service.extract_text_chunks_from_pdf(
+                            pdf_path,
+                            max_pages=_OCR_PAGE_LIMIT,
+                        )
+                    except Exception as exc:  # pragma: no cover - external service
+                        logger.warning(
+                            "Vision OCR failed for filing %s: %s",
+                            filing.id,
+                            exc,
+                            exc_info=True,
+                        )
+                    else:
+                        if ocr_chunks:
+                            extracted.extend(ocr_chunks)
+                        elif _OCR_ENABLE_LOG:
+                            logger.info(
+                                "Vision OCR produced no text for filing %s.",
+                                filing.id,
+                            )
             if xml_paths:
                 extracted.extend(extract_chunks_from_xml(xml_paths))
             if not extracted:

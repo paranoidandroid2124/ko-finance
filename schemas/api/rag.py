@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict, List, Optional, Union, Literal
 
-from pydantic import BaseModel, Field, ConfigDict, validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 class FilingFilter(BaseModel):
@@ -45,19 +45,23 @@ class RAGQueryRequest(BaseModel):
     idempotency_key: Optional[str] = Field(default=None, max_length=128)
     meta: Dict[str, Any] = Field(default_factory=dict)
 
-    @validator("question")
-    def _normalize_question(cls, value: str) -> str:
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("question must not be empty")
-        return stripped
+    @field_validator("question", mode="before")
+    def _normalize_question(cls, value: Any) -> str:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                raise ValueError("question must not be empty")
+            return stripped
+        raise TypeError("question must be a string")
 
-    @validator("filing_id")
-    def _normalize_filing_id(cls, value: Optional[str]) -> Optional[str]:
+    @field_validator("filing_id", mode="before")
+    def _normalize_filing_id(cls, value: Optional[Any]) -> Optional[str]:
         if value is None:
             return None
-        stripped = value.strip()
-        return stripped or None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return str(value)
 
 
 class RelatedFiling(BaseModel):
@@ -173,6 +177,10 @@ class RAGQueryResponse(BaseModel):
     meta: Dict[str, Any] = Field(default_factory=dict)
     state: Optional[str] = None
     related_filings: List[RelatedFiling] = Field(default_factory=list)
+    rag_mode: Optional[Literal["vector", "optional", "none"]] = Field(
+        default=None,
+        description="Selected retrieval strategy for this answer.",
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

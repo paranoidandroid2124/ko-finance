@@ -23,6 +23,12 @@ pip install -r requirements.txt
   - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` if you want notifications
   - `GEMINI_API_KEY`/`OPENAI_API_KEY` for LiteLLM routing
 - Optional integrations: `LANGFUSE_*`, `MINIO_*`, `QDRANT_*`
+- Optional OCR fallback (Google Cloud Vision):
+  - `ENABLE_VISION_OCR=true` to activate Vision-backed OCR for image-based filings
+  - `GOOGLE_APPLICATION_CREDENTIALS` pointing to the service account JSON with Vision access
+  - `OCR_TRIGGER_MIN_TEXT_LENGTH` (default `400`) controls when the fallback runs
+  - `OCR_TRIGGER_MAX_PAGES` (default `15`) limits how many pages are rasterised per filing
+  - `OCR_VISION_RENDER_DPI` and `OCR_VISION_LANGUAGE_HINTS` fine-tune rendering quality and language hints
 
 ### 4. Running Locally
 #### 4.1 Docker Compose

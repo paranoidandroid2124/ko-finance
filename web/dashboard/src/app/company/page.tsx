@@ -5,7 +5,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { CompanySearchBox } from "@/components/company/CompanySearchBox";
 import { CompanySuggestionSection } from "@/components/company/CompanySuggestionSection";
 import { useCompanySuggestions } from "@/hooks/useCompanySuggestions";
-import { type CompanySearchResult } from "@/hooks/useCompanySearch";
+import { normalizeCompanySearchResult, type CompanySearchResult } from "@/hooks/useCompanySearch";
 
 const RECENT_COMPANIES_KEY = "kofilot_recent_companies";
 
@@ -18,7 +18,10 @@ const loadRecentCompanies = (): CompanySearchResult[] => {
     if (!stored) return [];
     const parsed = JSON.parse(stored);
     if (!Array.isArray(parsed)) return [];
-    return parsed.slice(0, 6);
+    return parsed
+      .map((item) => normalizeCompanySearchResult(item))
+      .filter((item) => item.corpName || item.ticker || item.corpCode)
+      .slice(0, 6);
   } catch {
     return [];
   }

@@ -123,7 +123,7 @@ def extract_chunks_from_xml(xml_paths: List[str]) -> List[Dict[str, object]]:
                         ),
                     )
                 )
-                table_tag.extract()
+                # keep table_tag in place for potential fallback text extraction
 
             footnote_tags = soup.find_all(
                 lambda tag: bool(tag.name)
@@ -180,6 +180,24 @@ def extract_chunks_from_xml(xml_paths: List[str]) -> List[Dict[str, object]]:
                     )
                 )
                 sequence += 1
+
+            if sequence == 1:
+                # no paragraph-sized text found; fallback to shorter table paragraphs
+                for tag in soup.find_all(PARAGRAPH_TAGS):
+                    text = normalize_text(tag.get_text(" ", strip=True))
+                    if not text:
+                        continue
+                    chunks.append(
+                        build_chunk(
+                            f"{base_id}-fallback-{sequence}",
+                            chunk_type="text",
+                            content=text,
+                            section=tag.name.lower(),
+                            source="xml",
+                            metadata=_build_metadata(tag, source_file, include_text=text),
+                        )
+                    )
+                    sequence += 1
 
             logger.info("Extracted %d chunks from XML %s.", sequence - 1, xml_path)
         except Exception as exc:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 DEFAULT_BANNED_PATTERNS = [
     r"(매수|매도)\s*(추천|권유)",
@@ -22,22 +22,34 @@ DEFAULT_BANNED_PATTERNS = [
     r"guarantee[d]?\s+(profit|return)",
 ]
 
+_DEFAULT_SAFE_MESSAGE = "투자 자문이나 매수·매도 권고는 제공되지 않습니다. 정보 제공 목적의 분석 질문만 부탁드립니다."
 
-def _load_custom_patterns() -> List[str]:
+SAFE_MESSAGE = _DEFAULT_SAFE_MESSAGE
+_CUSTOM_BLOCKLIST: List[str] = []
+
+
+def _load_env_patterns() -> List[str]:
     raw = os.getenv("GUARDRAIL_BANNED_PATTERNS")
     if not raw:
         return []
     return [pattern.strip() for pattern in raw.split(",") if pattern.strip()]
 
 
-BANNED_PATTERNS = [
-    re.compile(pattern, re.IGNORECASE) for pattern in (*DEFAULT_BANNED_PATTERNS, *_load_custom_patterns())
-]
+def _compile_patterns(patterns: Iterable[str]) -> List[re.Pattern[str]]:
+    compiled: List[re.Pattern[str]] = []
+    for pattern in patterns:
+        try:
+            compiled.append(re.compile(pattern, re.IGNORECASE))
+        except re.error:
+            continue
+    return compiled
 
-SAFE_MESSAGE = (
-    "투자 자문이나 매수·매도 권고는 제공되지 않습니다. "
-    "정보 제공 목적의 분석 질문만 부탁드립니다."
-)
+
+def _effective_blocklist() -> List[str]:
+    return [*DEFAULT_BANNED_PATTERNS, *_load_env_patterns(), *_CUSTOM_BLOCKLIST]
+
+
+BANNED_PATTERNS = _compile_patterns(_effective_blocklist())
 
 
 def apply_answer_guard(answer: str) -> Tuple[str, Optional[str]]:
@@ -50,5 +62,32 @@ def apply_answer_guard(answer: str) -> Tuple[str, Optional[str]]:
     return answer, None
 
 
-__all__ = ["apply_answer_guard", "SAFE_MESSAGE"]
+def update_guardrail_blocklist(blocklist: Iterable[str]) -> None:
+    """Override the runtime guardrail blocklist with administrator-provided patterns."""
+    global _CUSTOM_BLOCKLIST, BANNED_PATTERNS
+    _CUSTOM_BLOCKLIST = [pattern.strip() for pattern in blocklist if isinstance(pattern, str) and pattern.strip()]
+    BANNED_PATTERNS = _compile_patterns(_effective_blocklist())
 
+
+def update_safe_message(message: Optional[str]) -> None:
+    """Update the fallback guardrail message used when responses are blocked."""
+    global SAFE_MESSAGE
+    SAFE_MESSAGE = message or _DEFAULT_SAFE_MESSAGE
+
+
+def matched_blocklist_terms(text: str) -> List[str]:
+    """Return the list of blocklist regex patterns that match the supplied text."""
+    hits: List[str] = []
+    for pattern in BANNED_PATTERNS:
+        if pattern.search(text):
+            hits.append(pattern.pattern)
+    return hits
+
+
+__all__ = [
+    "apply_answer_guard",
+    "matched_blocklist_terms",
+    "SAFE_MESSAGE",
+    "update_guardrail_blocklist",
+    "update_safe_message",
+]

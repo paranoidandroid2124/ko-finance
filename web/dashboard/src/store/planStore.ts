@@ -163,6 +163,7 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
       const baseUrl = resolveApiBase();
       const response = await fetch(`${baseUrl}/api/v1/plan/context`, {
         cache: 'no-store',
+        credentials: 'include',
         headers: { Accept: 'application/json' },
         signal: options?.signal,
       });
@@ -270,10 +271,10 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
     try {
       const response = await fetch(`${baseUrl}/api/v1/plan/context`, {
         method: 'PATCH',
+        credentials: 'include',
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
-          'X-Admin-Role': 'admin',
         },
         body: JSON.stringify(body),
       });

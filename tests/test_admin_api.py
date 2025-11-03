@@ -10,6 +10,9 @@ from fastapi.testclient import TestClient
 from services import plan_service
 from web.routers.admin import router as admin_router
 
+ADMIN_TOKEN = "test-admin-token"
+ADMIN_AUTH_HEADER = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
+
 
 @pytest.fixture()
 def admin_plan_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
@@ -17,6 +20,9 @@ def admin_plan_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
     monkeypatch.setattr(plan_service, "_DEFAULT_PLAN_SETTINGS_PATH", plan_settings_path)
     plan_service._PLAN_SETTINGS_CACHE = None
     plan_service._PLAN_SETTINGS_CACHE_PATH = None
+    monkeypatch.setenv("ADMIN_API_TOKEN", ADMIN_TOKEN)
+    monkeypatch.setenv("ADMIN_API_ACTOR", "qa-admin@kfinance.ai")
+    monkeypatch.delenv("ADMIN_API_TOKENS", raising=False)
 
     app = FastAPI()
     app.include_router(admin_router, prefix="/api/v1")
@@ -28,6 +34,15 @@ def admin_plan_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
         client.close()
         plan_service._PLAN_SETTINGS_CACHE = None
         plan_service._PLAN_SETTINGS_CACHE_PATH = None
+
+
+def test_admin_session_endpoint(admin_plan_env: TestClient) -> None:
+    response = admin_plan_env.get("/api/v1/admin/session", headers=ADMIN_AUTH_HEADER)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["actor"] == "qa-admin@kfinance.ai"
+    assert payload["issuedAt"]
+    assert payload["tokenHint"]
 
 
 def test_list_toss_webhook_events(monkeypatch: pytest.MonkeyPatch, admin_plan_env: TestClient) -> None:
@@ -42,7 +57,7 @@ def test_list_toss_webhook_events(monkeypatch: pytest.MonkeyPatch, admin_plan_en
     ]
     monkeypatch.setattr("web.routers.admin.read_recent_webhook_entries", lambda limit=100: sample)
 
-    response = admin_plan_env.get("/api/v1/admin/webhooks/toss/events?limit=50")
+    response = admin_plan_env.get("/api/v1/admin/webhooks/toss/events?limit=50", headers=ADMIN_AUTH_HEADER)
     assert response.status_code == 200
     payload = response.json()
     assert payload["items"][0]["result"] == "processed"
@@ -58,6 +73,7 @@ def test_replay_toss_webhook(monkeypatch: pytest.MonkeyPatch, admin_plan_env: Te
     response = admin_plan_env.post(
         "/api/v1/admin/webhooks/toss/replay",
         json={"transmissionId": "trans-1"},
+        headers=ADMIN_AUTH_HEADER,
     )
     assert response.status_code == 200
     payload = response.json()
@@ -83,7 +99,7 @@ def test_plan_quick_adjust_updates_settings(admin_plan_env: TestClient, tmp_path
         "forceCheckoutRequested": False,
     }
 
-    response = admin_plan_env.post("/api/v1/admin/plan/quick-adjust", json=payload)
+    response = admin_plan_env.post("/api/v1/admin/plan/quick-adjust", json=payload, headers=ADMIN_AUTH_HEADER)
     assert response.status_code == 200
     body = response.json()
     assert body["planTier"] == "enterprise"

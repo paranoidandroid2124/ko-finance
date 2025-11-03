@@ -74,6 +74,7 @@ type RagApiResponse = {
   trace_id?: string | null;
   judge_decision?: string | null;
   judge_reason?: string | null;
+  rag_mode?: string | null;
   meta?: Record<string, unknown>;
 };
 
@@ -674,6 +675,28 @@ export default function ChatPage() {
             message: guardrail.message
           });
         }
+
+        const retrievalMeta = (payload.meta?.retrieval ?? {}) as Record<string, unknown>;
+        const guardrailMeta = (payload.meta?.guardrail ?? {}) as Record<string, unknown>;
+        const rawRagMode =
+          (typeof payload.rag_mode === 'string' && payload.rag_mode) ||
+          (typeof retrievalMeta.rag_mode === 'string' && String(retrievalMeta.rag_mode)) ||
+          (typeof guardrailMeta.rag_mode === 'string' && String(guardrailMeta.rag_mode)) ||
+          (typeof guardrailMeta.ragMode === 'string' && String(guardrailMeta.ragMode));
+        const normalizedRagMode = rawRagMode ? rawRagMode.toLowerCase() : undefined;
+        if (normalizedRagMode === 'optional') {
+          showToast({
+            intent: 'info',
+            title: '문서 검색은 선택형으로 진행했어요',
+            message: '필요하면 문서 근거를 더 찾아볼게요.'
+          });
+        } else if (normalizedRagMode === 'none') {
+          showToast({
+            intent: 'warning',
+            title: '문서 검색 없이 답변했어요',
+            message: '질문 특성상 직접 모델이 답변했어요.'
+          });
+        }
       };
 
       try {
@@ -1040,4 +1063,3 @@ export default function ChatPage() {
     </AppShell>
   );
 }
-

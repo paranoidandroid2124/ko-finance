@@ -32,8 +32,8 @@ const SAMPLE_EVIDENCE: EvidencePanelItem[] = [
     chunkId: "chunk-120",
     diffType: "updated",
     previousQuote:
-      "3ë¶„ê¸° ë§¤ì¶œì€ ì „ë…„ ë™ê¸° ëŒ€ë¹„ 12% ì¦ê°€í–ˆìœ¼ë©°, í•´ì™¸ ë‹¨í—¤ë¥¼ ì ìœ ìœ¨ ë³´ì •ì´ ì„¤ì •ë˜ì—ˆìŠµë‹ˆë‹¤.",
-    previousSection: "ì¤‘ìš” ì‚¬ì‹¤",
+      "3분기 매출은 전년 동기 대비 12% 증가했고, 해외 단말 점유율 보정이 설정됐습니다.",
+    previousSection: "중요 사실",
     previousPageNumber: 11,
     previousSelfCheck: { verdict: "warn", score: 0.62 },
     previousSourceReliability: "medium",

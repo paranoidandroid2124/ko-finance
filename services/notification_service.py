@@ -94,9 +94,37 @@ def _render_channel_payload(
     return payload
 
 
+def build_channel_preview(
+    *,
+    channel_type: Optional[str],
+    message: str,
+    metadata: Optional[Dict[str, Any]],
+    template: Optional[str],
+    message_template: Optional[str],
+) -> Dict[str, Any]:
+    combined_metadata: Dict[str, Any] = dict(metadata or {})
+    if channel_type:
+        combined_metadata.setdefault("channel_type", channel_type)
+
+    preview_message = message
+    if message_template:
+        try:
+            preview_message = message_template.format(message=message, **combined_metadata)
+        except Exception as exc:  # pragma: no cover - preview should not fail
+            logger.debug("Channel preview template failed: %s", exc)
+            preview_message = message_template
+
+    rendered = _render_channel_payload(preview_message, combined_metadata, template)
+    return {
+        "message": preview_message,
+        "payload": rendered,
+        "templateUsed": template,
+    }
+
+
 def _aggregate_results(results: Sequence[NotificationResult]) -> NotificationResult:
     if not results:
-        return NotificationResult(status="failed", error="ë°œì†¡ ëŒ€ìƒì´ ì—†ìŠµë‹ˆë‹¤.", delivered=0, failed=0)
+        return NotificationResult(status="failed", error="발송 대상이 없습니다.", delivered=0, failed=0)
     delivered = sum(result.delivered for result in results)
     failed = sum(result.failed for result in results)
     errors = [result.error for result in results if result.error]
@@ -398,4 +426,4 @@ CHANNEL_REGISTRY: Dict[str, Callable[..., NotificationResult]] = {
 }
 
 
-__all__ = ["dispatch_notification", "send_telegram_alert", "NotificationResult"]
+__all__ = ["dispatch_notification", "send_telegram_alert", "NotificationResult", "build_channel_preview"]

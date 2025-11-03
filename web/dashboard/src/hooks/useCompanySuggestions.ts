@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import type { CompanySearchResult } from "./useCompanySearch";
+import { normalizeCompanySearchResult, type CompanySearchResult } from "./useCompanySearch";
 
 const resolveApiBase = () => {
   const base = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
@@ -20,7 +20,7 @@ const fetchCompanySuggestions = async (limit: number): Promise<CompanySuggestion
   const baseUrl = resolveApiBase();
   const params = new URLSearchParams({ limit: limit.toString() });
   const response = await fetch(`${baseUrl}/api/v1/companies/suggestions?${params.toString()}`, {
-    cache: "no-store"
+    cache: "no-store",
   });
 
   if (!response.ok) {
@@ -29,14 +29,18 @@ const fetchCompanySuggestions = async (limit: number): Promise<CompanySuggestion
 
   const payload = await response.json();
   return {
-    recentFilings: Array.isArray(payload?.recent_filings) ? payload.recent_filings : [],
-    trendingNews: Array.isArray(payload?.trending_news) ? payload.trending_news : []
+    recentFilings: Array.isArray(payload?.recent_filings)
+      ? payload.recent_filings.map((item: unknown) => normalizeCompanySearchResult(item))
+      : [],
+    trendingNews: Array.isArray(payload?.trending_news)
+      ? payload.trending_news.map((item: unknown) => normalizeCompanySearchResult(item))
+      : [],
   };
 };
 
 export function useCompanySuggestions(limit = 6) {
   return useQuery({
     queryKey: ["companies", "suggestions", limit],
-    queryFn: () => fetchCompanySuggestions(limit)
+    queryFn: () => fetchCompanySuggestions(limit),
   });
 }

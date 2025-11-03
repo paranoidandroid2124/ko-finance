@@ -16,6 +16,9 @@ If any 5W1H element is missing, use the literal string "정보 없음".
 If the excerpt is empty or contains no meaningful disclosure content, set every 5W1H field to "정보 없음",
 set "insight" to "유효한 공시 본문이 제공되지 않아 요약이 불가능합니다.", and set "confidence_score" to 0.0.
 
+Classify the disclosure sentiment as one of "positive", "neutral", or "negative" based on investor impact.
+If you are unsure, use "neutral" and explain briefly.
+
 Return JSON:
 {{
   "who": "...",
@@ -25,7 +28,9 @@ Return JSON:
   "how": "...",
   "why": "...",
   "insight": "...",
-  "confidence_score": 0.0-1.0
+  "confidence_score": 0.0-1.0,
+  "sentiment": "positive|neutral|negative",
+  "sentiment_reason": "최대 160자 근거"
 }}
 
 FILING EXCERPT:

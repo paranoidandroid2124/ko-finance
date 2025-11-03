@@ -4,6 +4,8 @@ import clsx from "classnames";
 import { useEffect, useMemo, useState } from "react";
 
 import { usePlanQuickAdjust } from "@/hooks/useAdminQuickActions";
+import { useAdminSession } from "@/hooks/useAdminSession";
+import { resolveApiBase } from "@/lib/apiBase";
 import { useToastStore } from "@/store/toastStore";
 import { planTierRank, usePlanStore, type PlanQuota, type PlanTier } from "@/store/planStore";
 
@@ -15,12 +17,12 @@ type EntitlementOption = {
 };
 
 const ENTITLEMENT_OPTIONS: EntitlementOption[] = [
-  { value: "search.compare", label: "비교 검색", description: "동시에 여러 회사를 비교 검색합니다.", minTier: "pro" },
-  { value: "search.alerts", label: "알림 검색", description: "조건 기반 알림을 설정하고 Slack/Email로 전달합니다.", minTier: "pro" },
-  { value: "search.export", label: "데이터 내보내기", description: "검색 결과를 CSV로 추출합니다.", minTier: "enterprise" },
-  { value: "evidence.inline_pdf", label: "PDF 인라인 뷰어", description: "대시보드에서 바로 PDF를 확인합니다.", minTier: "pro" },
+  { value: "search.compare", label: "비교 검색", description: "동시에 여러 회사를 비교 검색해요.", minTier: "pro" },
+  { value: "search.alerts", label: "알림 검색", description: "조건 기반 알림을 설정하고 Slack/Email로 전달해요.", minTier: "pro" },
+  { value: "search.export", label: "데이터 내보내기", description: "검색 결과를 CSV로 추출해요.", minTier: "enterprise" },
+  { value: "evidence.inline_pdf", label: "PDF 인라인 뷰어", description: "대시보드에서 바로 PDF를 확인해요.", minTier: "pro" },
   { value: "evidence.diff", label: "정정 Diff 비교", description: "정정 공시 Diff 분석을 제공합니다.", minTier: "enterprise" },
-  { value: "timeline.full", label: "전체 타임라인", description: "기업 이벤트 전체 타임라인을 확인합니다.", minTier: "enterprise" },
+  { value: "timeline.full", label: "전체 타임라인", description: "기업 이벤트 전체 타임라인을 확인해요.", minTier: "enterprise" },
 ];
 
 const PLAN_TIER_LABEL: Record<PlanTier, string> = {
@@ -122,11 +124,12 @@ const buildInitialState = (args: {
   expiresAt?: string | null;
   quota: PlanQuota;
   updatedBy?: string | null;
+  defaultActor?: string | null;
 }): FormState => ({
   planTier: args.planTier,
   entitlements: ensureEntitlementsForTier(args.planTier, args.entitlements),
   expiresAtInput: isoToLocalInput(args.expiresAt ?? null),
-  actor: args.updatedBy ?? "admin@kfinance.ai",
+  actor: args.updatedBy ?? args.defaultActor ?? "admin@kfinance.ai",
   changeNote: "",
   chatRequestsPerDay: args.quota.chatRequestsPerDay?.toString() ?? "",
   ragTopK: args.quota.ragTopK?.toString() ?? "",
@@ -154,15 +157,25 @@ export function PlanQuickActionsPanel() {
     checkoutRequested: state.checkoutRequested,
     fetchPlan: state.fetchPlan,
   }));
+  const {
+    data: adminSession,
+    isLoading: isAdminSessionLoading,
+    isUnauthorized: isAdminUnauthorized,
+    error: adminSessionError,
+    refetch: refetchAdminSession,
+  } = useAdminSession();
+  const defaultActor = adminSession?.actor ?? null;
+  const auditDownloadUrl = `${resolveApiBase()}/api/v1/admin/plan/audit/logs`;
+
   const [formState, setFormState] = useState<FormState>(() =>
-    buildInitialState({ planTier, entitlements, quota, expiresAt, updatedBy }),
+    buildInitialState({ planTier, entitlements, quota, expiresAt, updatedBy, defaultActor }),
   );
   const { mutateAsync, isPending } = usePlanQuickAdjust();
   const pushToast = useToastStore((state) => state.show);
 
   useEffect(() => {
-    setFormState(buildInitialState({ planTier, entitlements, quota, expiresAt, updatedBy }));
-  }, [planTier, entitlements, quota, expiresAt, updatedBy]);
+    setFormState(buildInitialState({ planTier, entitlements, quota, expiresAt, updatedBy, defaultActor }));
+  }, [planTier, entitlements, quota, expiresAt, updatedBy, defaultActor]);
 
   const handleEntitlementToggle = (value: string) => {
     setFormState((prev) => {
@@ -189,11 +202,13 @@ export function PlanQuickActionsPanel() {
       const ragTopK = sanitizeNumber(formState.ragTopK);
       const peerExportRowLimit = sanitizeNumber(formState.peerExportRowLimit);
 
+      const actorValue = formState.actor.trim() || defaultActor || "admin@kfinance.ai";
+
       const payload = {
         planTier: formState.planTier,
         entitlements: entitlementsList,
         expiresAt: expiresAtIso,
-        actor: formState.actor.trim() || "admin@kfinance.ai",
+        actor: actorValue,
         changeNote: formState.changeNote.trim() || undefined,
         triggerCheckout: formState.triggerCheckout,
         quota: {
@@ -230,7 +245,7 @@ export function PlanQuickActionsPanel() {
   };
 
   const handleReset = () => {
-    setFormState(buildInitialState({ planTier, entitlements, quota, expiresAt, updatedBy }));
+    setFormState(buildInitialState({ planTier, entitlements, quota, expiresAt, updatedBy, defaultActor }));
   };
 
   const handleTierChange = (tier: PlanTier) => {
@@ -255,15 +270,45 @@ export function PlanQuickActionsPanel() {
   }, [baseEntitlements, formState.entitlements]);
 
   const checkoutStatusLabel = checkoutRequested ? "진행 중" : "없음";
+  const showLoadingSession = isAdminSessionLoading;
+  const showUnauthorized = isAdminUnauthorized;
+  const sessionError = !showUnauthorized && adminSessionError ? adminSessionError : undefined;
+  const sessionErrorMessage =
+    sessionError instanceof Error ? sessionError.message : "관리자 세션을 확인하지 못했어요.";
 
-  return (
-    <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
-      <header className="flex flex-col gap-1 border-b border-border-light pb-4 dark:border-border-dark">
-        <h2 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">플랜 퀵 액션</h2>
-        <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
-          플랜 티어와 권한, 쿼터를 빠르게 조정하고 Toss checkout 상태를 정리합니다. 기본 제공 권한은 티어별로 잠겨 있어요.
+  let content: JSX.Element;
+
+  if (showLoadingSession) {
+    content = (
+      <div className="mt-4 rounded-xl border border-dashed border-border-light bg-background-base/40 p-5 text-sm text-text-secondaryLight dark:border-border-dark dark:bg-background-cardDark/40 dark:text-text-secondaryDark">
+        관리자 권한을 확인하는 중이에요. 잠시만 기다려 주세요.
+      </div>
+    );
+  } else if (showUnauthorized) {
+    content = (
+      <div className="mt-4 rounded-xl border border-dashed border-amber-300 bg-amber-50 p-5 text-sm text-amber-800 dark:border-amber-500/60 dark:bg-amber-500/10 dark:text-amber-200">
+        <p className="font-semibold">운영 팀 전용 공간이에요.</p>
+        <p className="mt-2">
+          접근 권한이 없거나 세션이 만료된 것 같아요. 새로운 토큰을 등록했거나 권한이 필요하다면 운영 팀에 편하게 알려 주세요.
         </p>
-      </header>
+      </div>
+    );
+  } else if (sessionError) {
+    content = (
+      <div className="mt-4 rounded-xl border border-dashed border-red-300 bg-red-50 p-5 text-sm text-red-800 dark:border-red-500/60 dark:bg-red-500/10 dark:text-red-200">
+        <p className="font-semibold">세션 정보를 불러오지 못했어요.</p>
+        <p className="mt-2">{sessionErrorMessage}</p>
+        <button
+          type="button"
+          onClick={() => refetchAdminSession()}
+          className="mt-3 inline-flex items-center rounded-lg border border-border-light px-3 py-1.5 text-xs font-semibold text-text-secondaryLight transition hover:bg-border-light/30 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-light dark:border-border-dark dark:text-text-secondaryDark dark:hover:bg-border-dark/40 dark:focus-visible:outline-border-dark"
+        >
+          다시 확인
+        </button>
+      </div>
+    );
+  } else {
+    content = (
       <form className="mt-4 space-y-6" onSubmit={handleSubmit}>
         <div className="grid gap-4 lg:grid-cols-2">
           <div>
@@ -314,6 +359,35 @@ export function PlanQuickActionsPanel() {
           </label>
         </div>
 
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium text-text-primaryLight dark:text-text-primaryDark">실행자(Actor)</span>
+            <input
+              type="text"
+              value={formState.actor}
+              onChange={(event) => setFormState((prev) => ({ ...prev, actor: event.target.value }))}
+              placeholder={defaultActor ?? "운영자 이름"}
+              className="rounded-lg border border-border-light bg-background-base px-3 py-2 text-sm text-text-primaryLight focus:border-primary focus:outline-none dark:border-border-dark dark:bg-background-cardDark dark:text-text-primaryDark"
+            />
+            <span className="text-xs text-text-tertiaryLight dark:text-text-tertiaryDark">
+              현재 로그인한 운영자 계정이 기본으로 채워집니다. 다른 담당자로 기록해야 한다면 직접 입력해 주세요.
+            </span>
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium text-text-primaryLight dark:text-text-primaryDark">변경 메모</span>
+            <input
+              type="text"
+              value={formState.changeNote}
+              onChange={(event) => setFormState((prev) => ({ ...prev, changeNote: event.target.value }))}
+              placeholder="예: Slack 안내 송출, 2주 한시 업그레이드"
+              className="rounded-lg border border-border-light bg-background-base px-3 py-2 text-sm text-text-primaryLight focus:border-primary focus:outline-none dark:border-border-dark dark:bg-background-cardDark dark:text-text-primaryDark"
+            />
+            <span className="text-xs text-text-tertiaryLight dark:text-text-tertiaryDark">
+              감사 로그와 알림 히스토리에 함께 남습니다.
+            </span>
+          </label>
+        </div>
+
         <div>
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-text-primaryLight dark:text-text-primaryDark">권한 선택</span>
@@ -356,8 +430,8 @@ export function PlanQuickActionsPanel() {
                       </span>
                     ) : null}
                   </span>
-                  <span className="mt-1 text-xs text-text-tertiaryLight dark:text-text-tertiaryDark">
-                    {option.description}
+                  <span className="mt-1 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                    
                   </span>
                 </label>
               );
@@ -365,33 +439,9 @@ export function PlanQuickActionsPanel() {
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 lg:grid-cols-2">
           <label className="flex flex-col gap-2 text-sm">
-            <span className="font-medium text-text-primaryLight dark:text-text-primaryDark">Actor (운영자)</span>
-            <input
-              type="email"
-              value={formState.actor}
-              onChange={(event) => setFormState((prev) => ({ ...prev, actor: event.target.value }))}
-              placeholder="admin@kfinance.ai"
-              className="rounded-lg border border-border-light bg-background-base px-3 py-2 text-sm focus:border-primary focus:outline-none dark:border-border-dark dark:bg-background-cardDark"
-              required
-            />
-          </label>
-          <label className="flex flex-col gap-2 text-sm">
-            <span className="font-medium text-text-primaryLight dark:text-text-primaryDark">변경 메모 (선택)</span>
-            <input
-              type="text"
-              value={formState.changeNote}
-              onChange={(event) => setFormState((prev) => ({ ...prev, changeNote: event.target.value }))}
-              placeholder="변경 이유 또는 참고 메모"
-              className="rounded-lg border border-border-light bg-background-base px-3 py-2 text-sm focus:border-primary focus:outline-none dark:border-border-dark dark:bg-background-cardDark"
-            />
-          </label>
-        </div>
-
-        <div className="grid gap-4 lg:grid-cols-4">
-          <label className="flex flex-col gap-2 text-sm">
-            <span className="font-medium text-text-primaryLight dark:text-text-primaryDark">일일 채팅 한도</span>
+            <span className="font-medium text-text-primaryLight dark:text-text-primaryDark">Chat 제한(1일)</span>
             <input
               type="number"
               min={0}
@@ -488,6 +538,32 @@ export function PlanQuickActionsPanel() {
           </button>
         </div>
       </form>
+    );
+  }
+
+  return (
+    <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <header className="flex flex-col gap-1 border-b border-border-light pb-4 dark:border-border-dark">
+        <h2 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">플랜 퀵 액션</h2>
+        <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
+          플랜 티어와 권한, 쿼터를 빠르게 조정하고 Toss checkout 상태를 정리합니다. 기본 제공 권한은 티어별로 잠겨 있어요.
+        </p>
+        <a
+          href={auditDownloadUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs font-semibold text-primary hover:underline dark:text-primary"
+        >
+          감사 로그 다운로드 (plan_audit.jsonl)
+        </a>
+        {adminSession ? (
+          <p className="text-xs text-text-tertiaryLight dark:text-text-tertiaryDark">
+            확인된 운영 계정:{" "}
+            <span className="font-semibold text-text-primaryLight dark:text-text-primaryDark">{adminSession.actor}</span>
+          </p>
+        ) : null}
+      </header>
+      {content}
     </section>
   );
 }

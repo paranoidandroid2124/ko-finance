@@ -12,6 +12,7 @@ from typing import Any, Dict, Literal, Mapping, MutableMapping, Optional, Sequen
 from fastapi import Request
 
 from core.env import env_str
+from services.admin_audit import append_audit_log
 
 logger = logging.getLogger(__name__)
 
@@ -473,6 +474,22 @@ def update_plan_context(
             tier,
             settings.updated_by or "unknown",
         )
+
+    append_audit_log(
+        filename="plan_audit.jsonl",
+        actor=settings.updated_by or "unknown-admin",
+        action="plan_update",
+        payload={
+            "planTier": settings.plan_tier,
+            "entitlements": list(settings.entitlements),
+            "quota": settings.quota.to_dict(),
+            "expiresAt": settings.expires_at.isoformat() if settings.expires_at else None,
+            "changeNote": settings.change_note,
+            "triggerCheckout": trigger_checkout,
+            "forceCheckoutRequested": force_checkout_requested,
+            "checkoutRequested": settings.checkout_requested,
+        },
+    )
 
     _load_plan_settings(reload=True)
     return _build_plan_context()

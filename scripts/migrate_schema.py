@@ -250,6 +250,8 @@ def _add_columns() -> None:
         '"why" TEXT',
         '"insight" TEXT',
         '"confidence_score" DOUBLE PRECISION',
+        '"sentiment_label" TEXT',
+        '"sentiment_reason" TEXT',
         '"created_at" TIMESTAMPTZ DEFAULT NOW()',
         '"updated_at" TIMESTAMPTZ DEFAULT NOW()',
     ]

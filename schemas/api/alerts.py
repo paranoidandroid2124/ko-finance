@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 AlertChannelType = Literal["email", "telegram", "slack", "webhook", "pagerduty"]
 AlertConditionType = Literal["filing", "news"]
@@ -18,7 +18,7 @@ class AlertChannelSchema(BaseModel):
     template: Optional[str] = Field(default=None, description="Template identifier to override the default payload.")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Channel-specific configuration metadata.")
 
-    @validator("target", "label", "template", pre=True)
+    @field_validator("target", "label", "template", mode="before")
     def _strip_optional(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
@@ -27,7 +27,7 @@ class AlertChannelSchema(BaseModel):
             return trimmed or None
         return value
 
-    @validator("targets", pre=True)
+    @field_validator("targets", mode="before")
     def _normalize_targets(cls, value: Any) -> List[str]:
         if value is None:
             return []
@@ -45,7 +45,7 @@ class AlertChannelSchema(BaseModel):
             return [stripped] if stripped else []
         return []
 
-    @validator("metadata", pre=True)
+    @field_validator("metadata", mode="before")
     def _ensure_metadata_dict(cls, value: Any) -> Dict[str, Any]:
         if isinstance(value, dict):
             return value
@@ -87,10 +87,15 @@ class AlertConditionSchema(BaseModel):
         description="뉴스 감성 임계값 (type=news에만 적용).",
     )
 
-    @validator("tickers", "categories", "sectors", pre=True, each_item=True)
-    def _strip_values(cls, value: str) -> str:
+    @field_validator("tickers", "categories", "sectors", mode="before")
+    def _strip_values(cls, value: Any):
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            return [item.strip() if isinstance(item, str) else item for item in value]
         if isinstance(value, str):
-            return value.strip()
+            stripped = value.strip()
+            return [stripped] if stripped else []
         return value
 
 

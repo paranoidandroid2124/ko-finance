@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Text, ForeignKey, Float, DateTime
+from sqlalchemy import Column, Text, ForeignKey, Float, DateTime, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
@@ -19,6 +19,8 @@ class Summary(Base):
     why = Column(Text, nullable=True)
     insight = Column(Text, nullable=True)
     confidence_score = Column(Float, nullable=True)
+    sentiment_label = Column(String, nullable=True)
+    sentiment_reason = Column(Text, nullable=True)
 
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

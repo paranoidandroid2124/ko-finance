@@ -39,6 +39,16 @@ vi.mock("@/hooks/useAdminQuickActions", () => ({
   useTossWebhookAudit: vi.fn(),
 }));
 
+vi.mock("@/hooks/useAdminSession", () => ({
+  useAdminSession: () => ({
+    data: { actor: "ops@kfinance.ai", issuedAt: new Date().toISOString(), tokenHint: null },
+    isLoading: false,
+    isUnauthorized: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
+}));
+
 describe("PlanQuickActionsPanel", () => {
   beforeEach(() => {
     usePlanStore.setState(initialState, true);
@@ -65,21 +75,21 @@ describe("PlanQuickActionsPanel", () => {
   it("locks base entitlements for the selected tier", () => {
     renderWithProviders(<PlanQuickActionsPanel />);
 
-    const compareCheckbox = screen.getByLabelText("?? ??") as HTMLInputElement;
+    const compareCheckbox = screen.getByLabelText(/비교 검색/) as HTMLInputElement;
     expect(compareCheckbox).toBeChecked();
     expect(compareCheckbox).toBeDisabled();
 
-    const exportCheckbox = screen.getByLabelText("??? ????") as HTMLInputElement;
+    const exportCheckbox = screen.getByLabelText(/데이터 내보내기/) as HTMLInputElement;
     expect(exportCheckbox).toBeDisabled();
   });
 
   it("adds enterprise entitlements and locks them when tier changes", () => {
     renderWithProviders(<PlanQuickActionsPanel />);
 
-    const tierSelect = screen.getByLabelText("??? ?? ??");
+    const tierSelect = screen.getByLabelText("적용할 플랜 티어");
     fireEvent.change(tierSelect, { target: { value: "enterprise" } });
 
-    const exportCheckbox = screen.getByLabelText("??? ????") as HTMLInputElement;
+    const exportCheckbox = screen.getByLabelText(/데이터 내보내기/) as HTMLInputElement;
     expect(exportCheckbox).toBeChecked();
     expect(exportCheckbox).toBeDisabled();
   });

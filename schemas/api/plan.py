@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 PlanTier = Literal["free", "pro", "enterprise"]
 
@@ -63,7 +63,7 @@ class PlanContextUpdateRequest(BaseModel):
         description="Set true to begin Toss Payments checkout after saving.",
     )
 
-    @validator("entitlements", pre=True)
+    @field_validator("entitlements", mode="before")
     def _normalize_entitlements(cls, value: Optional[list[str]]) -> list[str]:
         if not value:
             return []

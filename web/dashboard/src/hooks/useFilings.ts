@@ -56,6 +56,8 @@ type ApiSummary = {
   who?: string | null;
   when?: string | null;
   where?: string | null;
+  sentiment?: FilingSentiment | null;
+  sentiment_reason?: string | null;
 };
 
 type ApiFact = {

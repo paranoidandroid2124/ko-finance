@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  AdminUnauthorizedError,
   applyPlanQuickAdjust,
   fetchTossWebhookAudit,
   type PlanQuickAdjustPayload,
@@ -12,11 +13,22 @@ import { usePlanStore, type PlanContextPayload } from "@/store/planStore";
 
 const TOSS_WEBHOOK_AUDIT_KEY = ["admin", "webhooks", "toss", "events"];
 
-export const useTossWebhookAudit = (limit = 50) =>
-  useQuery<WebhookAuditEntry[]>({
+type TossWebhookAuditOptions = {
+  enabled?: boolean;
+};
+
+export const useTossWebhookAudit = (limit = 50, options?: TossWebhookAuditOptions) =>
+  useQuery<WebhookAuditEntry[], Error>({
     queryKey: [...TOSS_WEBHOOK_AUDIT_KEY, limit],
     queryFn: () => fetchTossWebhookAudit(limit),
     staleTime: 30_000,
+    enabled: options?.enabled ?? true,
+    retry: (failureCount, error) => {
+      if (error instanceof AdminUnauthorizedError) {
+        return false;
+      }
+      return failureCount < 2;
+    },
   });
 
 export const usePlanQuickAdjust = () => {

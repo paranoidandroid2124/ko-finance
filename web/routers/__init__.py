@@ -1,7 +1,23 @@
 from importlib import import_module
 from typing import Optional
 
-from . import admin, alerts, chat, company, dashboard, news, payments, plan, rag, search, sectors  # noqa: F401
+from . import (  # noqa: F401
+    admin,
+    admin_llm,
+    admin_ops,
+    admin_rag,
+    admin_ui,
+    alerts,
+    chat,
+    company,
+    dashboard,
+    news,
+    payments,
+    plan,
+    rag,
+    search,
+    sectors,
+)
 
 _filing_module: Optional[object] = None
 try:  # pragma: no cover - optional dependency guard
@@ -15,6 +31,22 @@ except ModuleNotFoundError:
 
 filing = _filing_module  # expose for FastAPI router registration
 
-__all__ = ["admin", "alerts", "chat", "company", "dashboard", "news", "payments", "plan", "rag", "search", "sectors"]
+__all__ = [
+    "admin",
+    "admin_llm",
+    "admin_ops",
+    "admin_rag",
+    "admin_ui",
+    "alerts",
+    "chat",
+    "company",
+    "dashboard",
+    "news",
+    "payments",
+    "plan",
+    "rag",
+    "search",
+    "sectors",
+]
 if filing is not None:
     __all__.append("filing")

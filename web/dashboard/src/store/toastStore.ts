@@ -11,6 +11,9 @@ export type ToastDescriptor = {
   message: string;
   intent?: ToastIntent;
   duration?: number;
+  actionLabel?: string;
+  actionHref?: string;
+  onAction?: () => void;
 };
 
 export type ToastInput = Omit<ToastDescriptor, 'id'> & { id?: string };
@@ -31,7 +34,10 @@ export const useToastStore = create<ToastStoreState>((set, _get) => ({
       title: toast.title,
       message: toast.message,
       intent: toast.intent ?? 'info',
-      duration: toast.duration ?? 5000
+      duration: toast.duration ?? 5000,
+      actionLabel: toast.actionLabel,
+      actionHref: toast.actionHref,
+      onAction: toast.onAction
     };
     set((state) => ({
       toasts: [...state.toasts.filter((item) => item.id !== id), descriptor]

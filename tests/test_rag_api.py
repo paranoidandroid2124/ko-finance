@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import types
 
 sys.modules.setdefault("fitz", types.SimpleNamespace())  # type: ignore
@@ -53,6 +53,11 @@ def test_rag_query_guardrail(monkeypatch):
         "classify_query_intent",
         lambda question: {"decision": "pass", "reason": "", "model_used": "intent-test"},
     )
+    monkeypatch.setattr(
+        llm_service,
+        "assess_query_risk",
+        lambda question: {"decision": "pass", "rag_mode": "vector", "reason": None, "model_used": "judge-test"},
+    )
     context = [
         {
             "id": "c1",
@@ -81,7 +86,7 @@ def test_rag_query_guardrail(monkeypatch):
         lambda **_: VectorSearchResult(filing_id="abc", chunks=context, related_filings=[]),
     )
 
-    def fake_answer(question, context_chunks):
+    def fake_answer(question, context_chunks, **_kwargs):
         return {
             "answer": SAFE_MESSAGE,
             "context": context_chunks,
@@ -91,9 +96,10 @@ def test_rag_query_guardrail(monkeypatch):
             "error": "guardrail_violation:buy\\s+this\\s+stock",
             "original_answer": "Buy this stock now (p.1)",
             "model_used": "test-model",
+            "rag_mode": "vector",
         }
 
-    monkeypatch.setattr(llm_service, "answer_with_rag", fake_answer)
+    monkeypatch.setattr(llm_service, "generate_rag_answer", fake_answer)
     monkeypatch.setattr(rag, "run_rag_self_check", DummyTask())
     monkeypatch.setattr(rag, "snapshot_evidence_diff", DummyTask())
     monkeypatch.setattr(rag, "attach_diff_metadata", fake_diff_metadata)
@@ -106,6 +112,7 @@ def test_rag_query_guardrail(monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["rag_mode"] == "vector"
     assert payload["error"].startswith("guardrail_violation")
     assert payload["original_answer"] == "Buy this stock now (p.1)"
     assert payload["model_used"] == "test-model"
@@ -133,6 +140,11 @@ def test_rag_query_no_context(monkeypatch):
         lambda question: {"decision": "pass", "reason": "", "model_used": "intent-test"},
     )
     monkeypatch.setattr(
+        llm_service,
+        "assess_query_risk",
+        lambda question: {"decision": "pass", "rag_mode": "vector", "reason": None, "model_used": "judge-test"},
+    )
+    monkeypatch.setattr(
         vector_service,
         "query_vector_store",
         lambda **_: VectorSearchResult(filing_id="abc", chunks=[], related_filings=[]),
@@ -152,6 +164,7 @@ def test_rag_query_no_context(monkeypatch):
     assert payload["warnings"] == ["no_context"]
     assert payload["context"] == []
     assert payload["answer"] == rag.NO_CONTEXT_ANSWER
+    assert payload["rag_mode"] == "vector"
     assert payload["meta"]["evidence_diff"] == {"enabled": False, "removed": []}
 
 
@@ -167,7 +180,7 @@ def test_rag_query_intent_semipass(monkeypatch):
         raise AssertionError("vector search should not be called")
 
     monkeypatch.setattr(vector_service, "query_vector_store", fail_query)
-    monkeypatch.setattr(llm_service, "answer_with_rag", fail_query)
+    monkeypatch.setattr(llm_service, "generate_rag_answer", fail_query)
     monkeypatch.setattr(rag, "run_rag_self_check", DummyTask())
     monkeypatch.setattr(rag, "snapshot_evidence_diff", DummyTask())
     monkeypatch.setattr(rag, "attach_diff_metadata", fake_diff_metadata)
@@ -214,11 +227,12 @@ def test_rag_query_intent_semipass(monkeypatch):
 
     response = client.post(
         "/api/v1/rag/query",
-        json={"question": "ë„ˆëŠ” ëˆ„êµ¬ë‹ˆ?"},
+        json={"question": "?? ????"},
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["warnings"] == ["intent_filter:semi_pass"]
     assert payload["answer"] == rag.INTENT_GENERAL_MESSAGE
+    assert payload["rag_mode"] == "none"
     assert payload["meta"]["evidence_diff"] == {"enabled": False, "removed": []}

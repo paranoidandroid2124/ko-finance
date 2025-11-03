@@ -12,6 +12,34 @@ export type CompanySearchResult = {
   highlight?: string | null;
 };
 
+const toOptionalString = (value: unknown): string | null => {
+  if (typeof value === "string") {
+    return value || null;
+  }
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return null;
+};
+
+export const normalizeCompanySearchResult = (input: unknown): CompanySearchResult => {
+  if (!input || typeof input !== "object") {
+    return {};
+  }
+  const record = input as Record<string, unknown>;
+  return {
+    corpCode: toOptionalString(record.corpCode ?? record.corp_code),
+    ticker: toOptionalString(record.ticker),
+    corpName: toOptionalString(record.corpName ?? record.corp_name),
+    latestReportName: toOptionalString(record.latestReportName ?? record.latest_report_name),
+    latestFiledAt: toOptionalString(record.latestFiledAt ?? record.latest_filed_at),
+    highlight: toOptionalString(record.highlight),
+  };
+};
+
 const fetchCompanySearch = async (query: string, limit: number): Promise<CompanySearchResult[]> => {
   const baseUrl = resolveApiBase();
   const params = new URLSearchParams({ q: query, limit: limit.toString() });
@@ -27,7 +55,7 @@ const fetchCompanySearch = async (query: string, limit: number): Promise<Company
   if (!Array.isArray(payload)) {
     return [];
   }
-  return payload;
+  return payload.map((item) => normalizeCompanySearchResult(item));
 };
 
 export function useCompanySearch(query: string, limit = 8) {

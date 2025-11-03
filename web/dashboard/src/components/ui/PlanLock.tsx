@@ -4,7 +4,7 @@ import clsx from "classnames";
 import { Crown, Lock, Sparkles } from "lucide-react";
 import { useEffect, useMemo, type ComponentType } from "react";
 import { logEvent } from "@/lib/telemetry";
-import { isTierAtLeast, nextTier, planTierRank, type PlanTier, usePlanTier } from "@/store/planStore";
+import { isTierAtLeast, nextTier, type PlanTier, usePlanTier } from "@/store/planStore";
 
 type PlanLockProps = {
   requiredTier: PlanTier;

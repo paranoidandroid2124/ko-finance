@@ -10,7 +10,7 @@ import { KeyMetricsGrid } from "@/components/company/KeyMetricsGrid";
 import { MajorEventsList } from "@/components/company/MajorEventsList";
 import { NewsSignalCards } from "@/components/company/NewsSignalCards";
 import { useCompanySnapshot } from "@/hooks/useCompanySnapshot";
-import type { CompanySearchResult } from "@/hooks/useCompanySearch";
+import { normalizeCompanySearchResult, type CompanySearchResult } from "@/hooks/useCompanySearch";
 
 const RECENT_COMPANIES_KEY = "kofilot_recent_companies";
 
@@ -43,15 +43,18 @@ export default function CompanySnapshotPage({ params }: CompanySnapshotPageProps
 
     try {
       const stored = window.localStorage.getItem(RECENT_COMPANIES_KEY);
-      const parsed: CompanySearchResult[] = stored ? JSON.parse(stored) : [];
-      const filtered = Array.isArray(parsed)
-        ? parsed.filter((item) => {
-            if (!item) return false;
-            if (entry.ticker && item.ticker && item.ticker === entry.ticker) return false;
-            if (!entry.ticker && item.corpCode && entry.corpCode && item.corpCode === entry.corpCode) return false;
-            return true;
-          })
+      const parsedRaw: unknown = stored ? JSON.parse(stored) : [];
+      const parsed: CompanySearchResult[] = Array.isArray(parsedRaw)
+        ? parsedRaw.map((item) => normalizeCompanySearchResult(item))
         : [];
+      const filtered = parsed.filter((item) => {
+        if (!item) return false;
+        const candidateTicker = item.ticker ?? null;
+        const candidateCorpCode = item.corpCode ?? null;
+        if (entry.ticker && candidateTicker && candidateTicker === entry.ticker) return false;
+        if (!entry.ticker && entry.corpCode && candidateCorpCode && candidateCorpCode === entry.corpCode) return false;
+        return true;
+      });
       const next = [entry, ...filtered].slice(0, 6);
       window.localStorage.setItem(RECENT_COMPANIES_KEY, JSON.stringify(next));
     } catch {

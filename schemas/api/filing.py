@@ -26,6 +26,8 @@ class SummaryResponse(BaseModel):
     why: Optional[str] = None
     insight: Optional[str] = None
     confidence_score: Optional[float] = None
+    sentiment: Optional[str] = None
+    sentiment_reason: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

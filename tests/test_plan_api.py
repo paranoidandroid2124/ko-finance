@@ -8,6 +8,9 @@ from fastapi.testclient import TestClient
 
 from web.routers.plan import router as plan_router
 
+ADMIN_TOKEN = "test-admin-token"
+ADMIN_AUTH_HEADER = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
+
 
 @pytest.fixture()
 def plan_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -25,6 +28,8 @@ def plan_api_client(plan_env: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator
     monkeypatch.setenv("DEFAULT_PLAN_EXPIRES_AT", "2025-12-31T00:00:00+00:00")
     # ensure override quota env is not set unless tests need it
     monkeypatch.delenv("DEFAULT_PLAN_QUOTA", raising=False)
+    monkeypatch.setenv("ADMIN_API_TOKEN", ADMIN_TOKEN)
+    monkeypatch.delenv("ADMIN_API_TOKENS", raising=False)
 
     app = FastAPI()
     app.include_router(plan_router, prefix="/api/v1")
@@ -38,7 +43,7 @@ def plan_api_client(plan_env: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator
 
 def test_plan_context_uses_environment_defaults(plan_api_client: TestClient):
     response = plan_api_client.get("/api/v1/plan/context")
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
 
     payload = response.json()
     assert payload["planTier"] == "pro"
@@ -70,7 +75,7 @@ def test_plan_context_respects_request_headers(monkeypatch: pytest.MonkeyPatch):
             "x-plan-quota": "chatRequestsPerDay=42,ragTopK=2,selfCheckEnabled=false,peerExportRowLimit=75",
         }
         response = client.get("/api/v1/plan/context", headers=headers)
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
 
         payload = response.json()
         assert payload["planTier"] == "enterprise"
@@ -106,8 +111,8 @@ def test_plan_context_patch_updates_defaults(plan_api_client: TestClient, plan_e
         "changeNote": "고객 요청에 따라 Enterprise 가이드로 맞춤 적용",
         "triggerCheckout": True,
     }
-    response = plan_api_client.patch("/api/v1/plan/context", json=payload, headers={"x-admin-role": "admin"})
-    assert response.status_code == 200
+    response = plan_api_client.patch("/api/v1/plan/context", json=payload, headers=ADMIN_AUTH_HEADER)
+    assert response.status_code == 200, response.text
 
     saved = json.loads(plan_env.read_text(encoding="utf-8"))
     assert saved["planTier"] == "enterprise"
@@ -123,7 +128,7 @@ def test_plan_context_patch_updates_defaults(plan_api_client: TestClient, plan_e
     assert "timeline.full" in body["entitlements"]
 
     reread = plan_api_client.get("/api/v1/plan/context")
-    assert reread.status_code == 200
+    assert reread.status_code == 200, reread.text
     reread_body = reread.json()
     assert reread_body["planTier"] == "enterprise"
     assert reread_body["quota"]["ragTopK"] == 12
@@ -145,7 +150,7 @@ def test_plan_context_patch_requires_admin(plan_api_client: TestClient):
             },
         },
     )
-    assert response.status_code == 403
+    assert response.status_code == 403, response.text
     detail = response.json()["detail"]
     assert detail["code"] == "plan.unauthorized"
 
@@ -153,7 +158,7 @@ def test_plan_context_patch_requires_admin(plan_api_client: TestClient):
 def test_plan_context_patch_rejects_invalid_quota(plan_api_client: TestClient):
     response = plan_api_client.patch(
         "/api/v1/plan/context",
-        headers={"x-admin-role": "admin"},
+        headers=ADMIN_AUTH_HEADER,
         json={
             "planTier": "pro",
             "entitlements": [],
@@ -165,6 +170,6 @@ def test_plan_context_patch_rejects_invalid_quota(plan_api_client: TestClient):
             },
         },
     )
-    assert response.status_code == 400
+    assert response.status_code == 400, response.text
     detail = response.json()["detail"]
     assert detail["code"] == "plan.invalid_payload"

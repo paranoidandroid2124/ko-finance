@@ -85,6 +85,8 @@ NEGATIVE_CATEGORIES = {
     "정정 공시",
 }
 
+SUMMARY_SENTIMENT_LABELS = {"positive", "neutral", "negative"}
+
 POSITIVE_KEYWORDS = {
     "increase",
     "surge",
@@ -152,6 +154,12 @@ def _collect_summary_text(summary: Optional[Summary]) -> str:
 def _derive_sentiment(filing: Filing, summary: Optional[Summary]) -> Tuple[str, str]:
     if filing.analysis_status.upper() != "ANALYZED":
         return ("neutral", "분석이 아직 진행 중입니다.")
+
+    if summary and summary.sentiment_label:
+        label = summary.sentiment_label.strip().lower()
+        if label in SUMMARY_SENTIMENT_LABELS:
+            reason = summary.sentiment_reason or "요약 모델이 공시 내용을 검토한 결과예요."
+            return (label, reason)
 
     category_label = _normalize_category_label(filing.category)
     if category_label in POSITIVE_CATEGORIES:

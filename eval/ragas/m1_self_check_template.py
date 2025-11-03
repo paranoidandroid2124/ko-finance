@@ -41,7 +41,7 @@ def run_ragas_evaluation(filing_id: str, question: str, top_k: int = 5):
         logger.error("No context returned from vector store.")
         return None
 
-    answer_payload = llm_service.answer_with_rag(question, context_chunks)
+    answer_payload = llm_service.generate_rag_answer(question, context_chunks)
     if answer_payload.get("error"):
         logger.error("RAG answer failed: %s", answer_payload["error"])
         return None
