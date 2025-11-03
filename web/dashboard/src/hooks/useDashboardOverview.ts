@@ -1,5 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
+import { resolveApiBase } from "@/lib/apiBase";
+
 export type DashboardTrend = "up" | "down" | "flat";
 
 export type DashboardMetric = {
@@ -32,14 +34,6 @@ type DashboardOverview = {
   metrics: DashboardMetric[];
   alerts: DashboardAlert[];
   news: DashboardNewsItem[];
-};
-
-const resolveApiBase = () => {
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!base) {
-    return "";
-  }
-  return base.endsWith("/") ? base.slice(0, -1) : base;
 };
 
 const fetchDashboardOverview = async (): Promise<DashboardOverview> => {

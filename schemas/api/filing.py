@@ -27,9 +27,10 @@ class SummaryResponse(BaseModel):
     insight: Optional[str] = None
     confidence_score: Optional[float] = None
     sentiment: Optional[str] = None
+    sentiment_label: Optional[str] = None
     sentiment_reason: Optional[str] = None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class FilingBriefResponse(BaseModel):

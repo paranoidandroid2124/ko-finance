@@ -1,6 +1,6 @@
 import classNames from "classnames";
 import { useMemo, useState } from "react";
-import type { FilingListItem } from "@/hooks/useFilings";
+import type { FilingListItem, FilingSentimentFilter } from "@/hooks/useFilings";
 
 type Props = {
   filings: FilingListItem[];
@@ -8,6 +8,8 @@ type Props = {
   onSelect?: (id: string) => void;
   days: number;
   onDaysChange?: (days: number) => void;
+  sentimentFilter: FilingSentimentFilter;
+  onSentimentFilterChange?: (value: FilingSentimentFilter) => void;
   isLoading?: boolean;
 };
 
@@ -18,8 +20,28 @@ const sentimentBadge: Record<FilingListItem["sentiment"], string> = {
 };
 
 const DAY_OPTIONS = [7, 30, 90];
+const SENTIMENT_OPTIONS: Array<{ value: FilingSentimentFilter; label: string }> = [
+  { value: "all", label: "전체" },
+  { value: "positive", label: "긍정" },
+  { value: "negative", label: "부정" }
+];
 
-export function FilingSelector({ filings, selectedId, onSelect, days, onDaysChange, isLoading }: Props) {
+const activeSentimentClass: Record<FilingSentimentFilter, string> = {
+  all: "bg-primary text-white",
+  positive: "bg-accent-positive/20 text-accent-positive border border-accent-positive/40 dark:text-accent-positive",
+  negative: "bg-accent-negative/20 text-accent-negative border border-accent-negative/40 dark:text-accent-negative"
+};
+
+export function FilingSelector({
+  filings,
+  selectedId,
+  onSelect,
+  days,
+  onDaysChange,
+  sentimentFilter,
+  onSentimentFilterChange,
+  isLoading
+}: Props) {
   const [searchTerm, setSearchTerm] = useState("");
 
   const filteredFilings = useMemo(() => {
@@ -43,27 +65,48 @@ export function FilingSelector({ filings, selectedId, onSelect, days, onDaysChan
 
   return (
     <aside className="flex h-full max-h-[calc(100vh-160px)] min-h-0 flex-col overflow-hidden rounded-xl border border-border-light bg-background-cardLight shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
-      <header className="flex items-center justify-between border-b border-border-light px-4 py-3 dark:border-border-dark">
-        <div>
-          <p className="text-xs font-semibold uppercase text-text-secondaryLight dark:text-text-secondaryDark">최근 공시</p>
-          <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">최근 {days}일 이내</p>
-        </div>
-        <div className="flex gap-1">
-          {DAY_OPTIONS.map((option) => (
-            <button
-              key={option}
-              type="button"
-              onClick={() => onDaysChange?.(option)}
-              className={classNames(
-                "rounded-md px-3 py-1 text-xs font-semibold transition-colors",
-                option === days
-                  ? "bg-primary text-white"
-                  : "border border-border-light text-text-secondaryLight hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary.dark dark:hover:text-primary.dark"
-              )}
-            >
-              {option}일
-            </button>
-          ))}
+      <header className="border-b border-border-light px-4 py-3 dark:border-border-dark">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase text-text-secondaryLight dark:text-text-secondaryDark">최근 공시</p>
+            <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">최근 {days}일 이내</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex gap-1">
+              {DAY_OPTIONS.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => onDaysChange?.(option)}
+                  className={classNames(
+                    "rounded-md px-3 py-1 text-xs font-semibold transition-colors",
+                    option === days
+                      ? "bg-primary text-white"
+                      : "border border-border-light text-text-secondaryLight hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary.dark dark:hover:text-primary.dark"
+                  )}
+                >
+                  {option}일
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-1">
+              {SENTIMENT_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => onSentimentFilterChange?.(option.value)}
+                  className={classNames(
+                    "rounded-md px-3 py-1 text-xs font-semibold transition-colors",
+                    option.value === sentimentFilter
+                      ? activeSentimentClass[option.value]
+                      : "border border-border-light text-text-secondaryLight hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary.dark dark:hover:text-primary.dark"
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </header>
 
@@ -77,7 +120,7 @@ export function FilingSelector({ filings, selectedId, onSelect, days, onDaysChan
         />
       </div>
 
-      <div className="flex-1 overflow-y-auto pr-1 min-h-0">
+      <div className="flex-1 min-h-0 overflow-y-auto pr-1">
         {isLoading ? (
           <div className="flex h-full items-center justify-center text-sm text-text-secondaryLight dark:text-text-secondaryDark">
             불러오는 중...

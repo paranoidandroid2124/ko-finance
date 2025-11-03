@@ -1,5 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
+import { resolveApiBase } from "@/lib/apiBase";
+
 export type FilingTrendPoint = {
   date: string;
   count: number;
@@ -8,14 +10,6 @@ export type FilingTrendPoint = {
 
 type FilingTrendResponse = {
   points: FilingTrendPoint[];
-};
-
-const resolveApiBase = () => {
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!base) {
-    return "";
-  }
-  return base.endsWith("/") ? base.slice(0, -1) : base;
 };
 
 const fetchFilingTrend = async (): Promise<FilingTrendPoint[]> => {

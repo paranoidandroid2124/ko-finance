@@ -4,13 +4,14 @@ import type { Meta, StoryObj } from "@storybook/react";
 import { AlertBuilder } from "@/components/alerts/AlertBuilder";
 import { createAlertRuleFixture, AlertStoryProviders, proPlanInfo, freePlanInfo, enterprisePlanInfo } from "@/testing/fixtures/alerts";
 import type { AlertPlanInfo } from "@/lib/alertsApi";
+import type { PlanTier } from "@/store/planStore";
 
 type Story = StoryObj<typeof AlertBuilder>;
 
 type StoryRenderer = () => JSX.Element;
 
 const wrapWithProviders = (plan?: AlertPlanInfo) => {
-  const tier = plan?.planTier ?? "pro";
+  const tier = resolvePlanTier(plan);
   const Decorator = (StoryComponent: StoryRenderer) => (
     <AlertStoryProviders planTier={tier}>
       <div className="min-h-screen bg-surface-subtle px-8 py-10">
@@ -22,6 +23,14 @@ const wrapWithProviders = (plan?: AlertPlanInfo) => {
   );
   Decorator.displayName = "AlertBuilderStoryDecorator";
   return Decorator;
+};
+
+const resolvePlanTier = (plan?: AlertPlanInfo): PlanTier => {
+  const tier = plan?.planTier;
+  if (tier === "free" || tier === "pro" || tier === "enterprise") {
+    return tier;
+  }
+  return "pro";
 };
 
 const meta: Meta<typeof AlertBuilder> = {

@@ -57,6 +57,7 @@ logger.setLevel(logging.INFO)
 _OCR_MIN_TEXT_LENGTH = env_int("OCR_TRIGGER_MIN_TEXT_LENGTH", 400, minimum=0)
 _OCR_ENABLE_LOG = env_bool("OCR_LOG_DECISIONS", True)
 _OCR_PAGE_LIMIT = env_int("OCR_TRIGGER_MAX_PAGES", 15, minimum=1)
+TELEGRAM_NOTIFY_POS_NEG_ONLY = env_bool("TELEGRAM_NOTIFY_POS_NEG_ONLY", True)
 
 
 @dataclass
@@ -70,6 +71,23 @@ class StageResult:
 def _snapshot_hash(payload: Dict[str, Any]) -> str:
     normalized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+_SENTIMENT_ALIASES: Dict[str, str] = {
+    "positive": "positive",
+    "\uae09\uc815": "positive",  # 긍정
+    "negative": "negative",
+    "\ubd80\uc815": "negative",  # 부정
+    "neutral": "neutral",
+    "\uc911\ub9bd": "neutral",  # 중립
+}
+
+
+def _normalize_sentiment(value: Any) -> Optional[str]:
+    if isinstance(value, str):
+        candidate = value.strip().lower()
+        return _SENTIMENT_ALIASES.get(candidate)
+    return None
 
 
 def _persist_evidence_snapshot(
@@ -413,20 +431,9 @@ def _save_summary(filing: Filing, summary: Dict[str, Any], db: Session) -> None:
     record.why = summary.get("why")
     record.insight = summary.get("insight")
     record.confidence_score = summary.get("confidence_score")
-    sentiment_label = summary.get("sentiment")
+    sentiment_label = summary.get("sentiment") or summary.get("sentiment_label")
     sentiment_reason = summary.get("sentiment_reason")
-    normalized_label: Optional[str] = None
-    sentiment_aliases = {
-        "positive": "positive",
-        "긍정": "positive",
-        "negative": "negative",
-        "부정": "negative",
-        "neutral": "neutral",
-        "중립": "neutral",
-    }
-    if isinstance(sentiment_label, str):
-        candidate = sentiment_label.strip().lower()
-        normalized_label = sentiment_aliases.get(candidate)
+    normalized_label = _normalize_sentiment(sentiment_label)
     normalized_reason: Optional[str] = None
     if isinstance(sentiment_reason, str):
         stripped = sentiment_reason.strip()
@@ -597,6 +604,16 @@ def process_filing(filing_id: str) -> str:
                 raise RuntimeError("Summary payload is not a dictionary.")
 
             _save_summary(filing, summary, db)
+            normalized_sentiment = _normalize_sentiment(
+                summary.get("sentiment") or summary.get("sentiment_label")
+            )
+            if TELEGRAM_NOTIFY_POS_NEG_ONLY and normalized_sentiment not in {"positive", "negative"}:
+                logger.info(
+                    "Telegram alert skipped for %s (sentiment=%s)",
+                    filing.id,
+                    normalized_sentiment or summary.get("sentiment"),
+                )
+                return
             message = _format_notification(filing, summary)
             try:
                 send_telegram_alert(message)

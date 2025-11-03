@@ -1,5 +1,7 @@
 "use client";
 
+import type { ComponentProps } from "react";
+
 import clsx from "classnames";
 import Link from "next/link";
 
@@ -23,6 +25,8 @@ export type PaymentResultCardProps = {
     external?: boolean;
   };
 };
+
+const toInternalHref = (path: string) => path as ComponentProps<typeof Link>["href"];
 
 const STATUS_CLASSNAME: Record<PaymentResultCardProps["status"], string> = {
   success:
@@ -87,7 +91,7 @@ export function PaymentResultCard({
           </button>
         ) : (
           <Link
-            href={actionHref ?? "#"}
+            href={toInternalHref(actionHref ?? "/settings")}
             className={clsx(
               "inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2",
               status === "error"
@@ -99,14 +103,23 @@ export function PaymentResultCard({
           </Link>
         )}
         {secondaryAction ? (
-          <Link
-            href={secondaryAction.href}
-            target={secondaryAction.external ? "_blank" : undefined}
-            rel={secondaryAction.external ? "noreferrer" : undefined}
-            className="inline-flex items-center justify-center rounded-lg border border-border-light px-4 py-2 text-sm font-semibold text-text-secondaryLight transition hover:bg-border-light/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-light dark:border-border-dark dark:text-text-secondaryDark dark:hover:bg-border-dark/30 dark:focus-visible:outline-border-dark"
-          >
-            {secondaryAction.label}
-          </Link>
+          secondaryAction.external ? (
+            <a
+              href={secondaryAction.href}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center justify-center rounded-lg border border-border-light px-4 py-2 text-sm font-semibold text-text-secondaryLight transition hover:bg-border-light/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-light dark:border-border-dark dark:text-text-secondaryDark dark:hover:bg-border-dark/30 dark:focus-visible:outline-border-dark"
+            >
+              {secondaryAction.label}
+            </a>
+          ) : (
+            <Link
+              href={toInternalHref(secondaryAction.href)}
+              className="inline-flex items-center justify-center rounded-lg border border-border-light px-4 py-2 text-sm font-semibold text-text-secondaryLight transition hover:bg-border-light/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-light dark:border-border-dark dark:text-text-secondaryDark dark:hover:bg-border-dark/30 dark:focus-visible:outline-border-dark"
+            >
+              {secondaryAction.label}
+            </Link>
+          )
         ) : null}
       </div>
     </div>

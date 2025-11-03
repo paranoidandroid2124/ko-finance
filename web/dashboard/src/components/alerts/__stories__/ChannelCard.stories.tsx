@@ -1,5 +1,4 @@
 import type { Meta, StoryObj } from "@storybook/react";
-import { fn } from "@storybook/test";
 
 import { ChannelCard } from "@/components/alerts/ChannelCard";
 import type { ChannelConfigState } from "@/components/alerts/channelForm";
@@ -38,12 +37,12 @@ const meta: Meta<typeof ChannelCard> = {
       template: "digest",
     }),
     errors: undefined,
-    onToggle: fn(),
-    onTargetChange: fn(),
-    onTemplateChange: fn(),
-    onMetadataChange: fn(),
+    onToggle: () => {},
+    onTargetChange: () => {},
+    onTemplateChange: () => {},
+    onMetadataChange: () => {},
     autoFocusTarget: false,
-    onAutoFocusHandled: fn(),
+    onAutoFocusHandled: () => {},
   },
   parameters: {
     layout: "centered",

@@ -9,13 +9,22 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { useFilings, useFilingDetail } from "@/hooks/useFilings";
+import type { FilingSentimentFilter } from "@/hooks/useFilings";
 
 export default function FilingsPage() {
   const searchParams = useSearchParams();
   const initialFilingId = searchParams?.get("filingId");
 
   const [days, setDays] = useState(30);
-  const filingQuery = useMemo(() => ({ days, limit: 200 }), [days]);
+  const [sentimentFilter, setSentimentFilter] = useState<FilingSentimentFilter>("all");
+  const filingQuery = useMemo(
+    () => ({
+      days,
+      limit: 200,
+      sentiment: sentimentFilter
+    }),
+    [days, sentimentFilter]
+  );
 
   const {
     data: filings = [],
@@ -48,6 +57,9 @@ export default function FilingsPage() {
   const handleDaysChange = useCallback((value: number) => {
     setDays(value);
   }, []);
+  const handleSentimentChange = useCallback((value: FilingSentimentFilter) => {
+    setSentimentFilter(value);
+  }, []);
 
   const hasFilings = filings.length > 0;
   const isListLoading = isLoading || isFetching;
@@ -72,6 +84,8 @@ export default function FilingsPage() {
             onSelect={setSelectedId}
             days={days}
             onDaysChange={handleDaysChange}
+            sentimentFilter={sentimentFilter}
+            onSentimentFilterChange={handleSentimentChange}
             isLoading={isListLoading}
           />
           {isDetailError ? (

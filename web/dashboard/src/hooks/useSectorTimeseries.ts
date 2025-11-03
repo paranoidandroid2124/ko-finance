@@ -1,4 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
+
+import { resolveApiBase } from "@/lib/apiBase";
 import type { SectorRef } from "./useSectorSignals";
 
 export type SectorTimeseriesPoint = {
@@ -16,14 +18,6 @@ export type SectorTimeseriesResponse = {
   sector: SectorRef;
   series: SectorTimeseriesPoint[];
   current: SectorCurrentSnapshot;
-};
-
-const resolveApiBase = () => {
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!base) {
-    return "";
-  }
-  return base.endsWith("/") ? base.slice(0, -1) : base;
 };
 
 async function fetchSectorTimeseries(sectorId: number, days: number): Promise<SectorTimeseriesResponse> {

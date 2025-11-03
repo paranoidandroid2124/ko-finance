@@ -2,7 +2,7 @@ import uuid
 import tempfile
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple
 from urllib.parse import urlparse
 
 import httpx
@@ -244,6 +244,10 @@ def list_filings(
     days: int = Query(30, ge=1, le=365, description="Look-back window in days when start_date is not provided."),
     start_date: date | None = Query(None, description="Start date (inclusive) in YYYY-MM-DD format."),
     end_date: date | None = Query(None, description="End date (inclusive) in YYYY-MM-DD format."),
+    sentiment: Literal["positive", "negative"] | None = Query(
+        None,
+        description="Filter by summary sentiment label (positive or negative).",
+    ),
     db: Session = Depends(get_db),
 ):
     """List filings with optional ticker, corp_code, and date range filters."""
@@ -263,6 +267,9 @@ def list_filings(
     window_end = datetime.combine(window_end_date, time.max)
 
     query = query.filter(Filing.filed_at.isnot(None))
+    if sentiment:
+        query = query.join(Summary, Summary.filing_id == Filing.id)
+        query = query.filter(Summary.sentiment_label == sentiment)
     query = query.filter(Filing.filed_at >= window_start, Filing.filed_at <= window_end)
 
     filings = (
@@ -309,9 +316,12 @@ def get_filing_details(filing_id: uuid.UUID, db: Session = Depends(get_db)):
     summary = db.query(Summary).filter(Summary.filing_id == filing_id).first()
     facts = db.query(ExtractedFact).filter(ExtractedFact.filing_id == filing_id).all()
 
-    summary_payload = (
-        SummaryResponse.model_validate(summary, from_attributes=True) if summary else None
-    )
+    summary_payload = None
+    if summary:
+        summary_payload = SummaryResponse.model_validate(summary, from_attributes=True)
+        summary_payload.sentiment = summary.sentiment_label
+        summary_payload.sentiment_label = summary.sentiment_label
+        summary_payload.sentiment_reason = summary.sentiment_reason
     facts_payload = [
         FactResponse.model_validate(fact, from_attributes=True) for fact in facts
     ]

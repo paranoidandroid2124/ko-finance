@@ -6,11 +6,11 @@ import logging
 import os
 import time
 import uuid
-import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import litellm
+from litellm.exceptions import ContextWindowExceededError
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient, models
 
@@ -27,6 +27,8 @@ QDRANT_CONNECT_RETRIES = int(os.getenv("QDRANT_CONNECT_RETRIES", "3"))
 QDRANT_RETRY_DELAY_SEC = float(os.getenv("QDRANT_RETRY_DELAY_SEC", "1.5"))
 
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+EMBEDDING_BATCH_SIZE = max(1, int(os.getenv("EMBEDDING_BATCH_SIZE", "32")))
+EMBEDDING_MAX_CONTENT_CHARS = max(1024, int(os.getenv("EMBEDDING_MAX_CONTENT_CHARS", "12000")))
 VECTOR_DIMENSION = 1536
 COLLECTION_NAME = "k-finance-rag-collection"
 
@@ -125,19 +127,67 @@ def store_chunk_vectors(
     contents: List[str] = []
     for chunk in chunks:
         raw_content = chunk.get("content", "")
-        contents.append(raw_content if isinstance(raw_content, str) else str(raw_content))
+        text = raw_content if isinstance(raw_content, str) else str(raw_content)
+        if len(text) > EMBEDDING_MAX_CONTENT_CHARS:
+            logger.debug(
+                "Truncating chunk content for filing %s (chars=%d -> %d).",
+                filing_id,
+                len(text),
+                EMBEDDING_MAX_CONTENT_CHARS,
+            )
+            text = text[:EMBEDDING_MAX_CONTENT_CHARS]
+        contents.append(text)
 
     if not any(contents):
         logger.warning("All chunk contents are empty for filing %s.", filing_id)
         return
 
-    try:
-        embedding_response = litellm.embedding(model=EMBEDDING_MODEL, input=contents)
-    except Exception as exc:
-        logger.error("Embedding generation failed: %s", exc, exc_info=True)
-        raise
+    vectors: List[List[float]] = []
+    index = 0
+    batch_size = EMBEDDING_BATCH_SIZE
+    total = len(contents)
+    while index < total:
+        end = min(total, index + batch_size)
+        batch = contents[index:end]
+        try:
+            embedding_response = litellm.embedding(model=EMBEDDING_MODEL, input=batch)
+        except ContextWindowExceededError as exc:
+            if len(batch) == 1:
+                original_text = contents[index]
+                if len(original_text) > 1024:
+                    new_length = max(1024, len(original_text) // 2)
+                    clipped = original_text[:new_length]
+                    logger.warning(
+                        "Embedding chunk exceeded context limit for filing %s (chars=%d). "
+                        "Retrying with truncated content (%d chars).",
+                        filing_id,
+                        len(original_text),
+                        len(clipped),
+                    )
+                    contents[index] = clipped
+                    continue
+                logger.error(
+                    "Embedding chunk still exceeds context limit for filing %s after truncation.",
+                    filing_id,
+                    exc_info=True,
+                )
+                raise
+            prev_batch = batch_size
+            batch_size = max(1, batch_size // 2)
+            logger.debug(
+                "Reducing embedding batch size for filing %s: %d -> %d items (context limit hit).",
+                filing_id,
+                prev_batch,
+                batch_size,
+            )
+            continue
+        except Exception as exc:
+            logger.error("Embedding generation failed for filing %s: %s", filing_id, exc, exc_info=True)
+            raise
 
-    vectors = [item["embedding"] for item in embedding_response.data]
+        vectors.extend(item["embedding"] for item in embedding_response.data)
+        index = end
+        batch_size = EMBEDDING_BATCH_SIZE
     points: List[models.PointStruct] = []
     for idx, chunk in enumerate(chunks):
         payload = {

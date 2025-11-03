@@ -1,5 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
+import { resolveApiBase } from "@/lib/apiBase";
+
 export type HeatmapBucket = {
   label: string;
   start: string;
@@ -29,14 +31,6 @@ export type NewsHeatmapData = {
   sectors: string[];
   buckets: HeatmapBucket[];
   points: HeatmapPoint[];
-};
-
-const resolveApiBase = () => {
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!base) {
-    return "";
-  }
-  return base.endsWith("/") ? base.slice(0, -1) : base;
 };
 
 type HeatmapParams = {

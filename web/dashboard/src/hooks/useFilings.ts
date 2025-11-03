@@ -1,5 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 
+import { resolveApiBase } from "@/lib/apiBase";
+import { formatKoreanDateTime } from "@/lib/datetime";
+
+export type FilingSentimentFilter = "all" | "positive" | "negative";
+
 type FilingListParams = {
   days?: number;
   limit?: number;
@@ -7,6 +12,7 @@ type FilingListParams = {
   corpCode?: string;
   startDate?: string;
   endDate?: string;
+  sentiment?: FilingSentimentFilter;
 };
 
 export type FilingSentiment = "positive" | "neutral" | "negative";
@@ -132,32 +138,6 @@ const normalizeCategoryLabel = (raw?: string | null): string | undefined => {
   return CATEGORY_TRANSLATIONS[lower] ?? CATEGORY_TRANSLATIONS[trimmed] ?? trimmed;
 };
 
-const resolveApiBase = () => {
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!base) {
-    return "";
-  }
-  return base.replace(/\/+$/, "");
-};
-
-const formatDateTime = (isoDate?: string | null) => {
-  if (!isoDate) {
-    return "날짜 미상";
-  }
-  const parsed = new Date(isoDate);
-  if (Number.isNaN(parsed.getTime())) {
-    return "날짜 미상";
-  }
-  return new Intl.DateTimeFormat("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false
-  }).format(parsed);
-};
-
 const deriveSentiment = (analysisStatus?: string, category?: string | null): FilingSentiment => {
   const normalizedStatus = (analysisStatus ?? "").toUpperCase();
   if (normalizedStatus === "FAILED" || normalizedStatus === "ERROR") {
@@ -182,7 +162,7 @@ const toListItem = (item: ApiFilingBrief): FilingListItem => {
     company: item.corp_name || item.ticker || "미확인 기업",
     title: item.report_name || item.title || "제목 미정",
     type: categoryLabel || item.report_name || item.title || "분류 없음",
-    filedAt: formatDateTime(item.filed_at),
+    filedAt: formatKoreanDateTime(item.filed_at, { fallback: "날짜 미상", keepInvalid: false }),
     sentiment: item.sentiment ?? deriveSentiment(item.analysis_status, item.category),
     sentimentReason: item.sentiment_reason ?? undefined,
   };
@@ -258,6 +238,9 @@ const buildQueryString = (params: FilingListParams) => {
   }
   if (params.endDate) {
     search.set("end_date", params.endDate);
+  }
+  if (params.sentiment && params.sentiment !== "all") {
+    search.set("sentiment", params.sentiment);
   }
   return search.toString();
 };

@@ -1,5 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
+import { resolveApiBase } from "@/lib/apiBase";
+
 export type NewsSentiment = "positive" | "negative" | "neutral";
 
 export type NewsItem = {
@@ -36,14 +38,6 @@ export type NewsFilterOptions = {
   negativeOnly: boolean;
   excludeNeutral: boolean;
   window: "1h" | "24h" | "7d";
-};
-
-const resolveApiBase = () => {
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!base) {
-    return "";
-  }
-  return base.endsWith("/") ? base.slice(0, -1) : base;
 };
 
 const windowToHours: Record<NewsFilterOptions["window"], number> = {

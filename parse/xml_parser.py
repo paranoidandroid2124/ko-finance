@@ -101,14 +101,28 @@ def extract_chunks_from_xml(xml_paths: List[str]) -> List[Dict[str, object]]:
             for table_index, table_tag in enumerate(soup.find_all(TABLE_TAGS), start=1):
                 rows: List[List[str]] = []
                 for row in table_tag.find_all("tr"):
-                    cells = [
-                        normalize_text(cell.get_text(" ", strip=True))
-                        for cell in row.find_all(["th", "td"])
+                    cell_candidates = [
+                        child
+                        for child in row.find_all(recursive=False)
+                        if isinstance(child, Tag)
                     ]
-                    if any(cells):
-                        rows.append(cells)
+                    if not cell_candidates:
+                        cell_candidates = row.find_all(["th", "td", "te", "tu", "ts", "tf", "tc", "tds"])
 
-                table_text = "\n".join(" \t ".join(r) for r in rows if any(r))
+                    cell_texts: List[str] = []
+                    for cell in cell_candidates:
+                        parts = [normalize_text(part) for part in cell.stripped_strings if part]
+                        cell_text = " ".join(parts)
+                        if not cell_text:
+                            cell_text = normalize_text(cell.get_text(" ", strip=True))
+                        cell_texts.append(cell_text)
+
+                    if any(text.strip() for text in cell_texts):
+                        rows.append(cell_texts)
+
+                table_text = "\n".join(" \t ".join(r) for r in rows if any(text.strip() for text in r))
+                if not table_text:
+                    table_text = normalize_text(table_tag.get_text(" ", strip=True))
                 chunks.append(
                     build_chunk(
                         f"{base_id}-table-{table_index}",

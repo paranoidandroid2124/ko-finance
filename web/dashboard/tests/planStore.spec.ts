@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { usePlanStore, type PlanContextPayload } from "@/store/planStore";
+import { usePlanStore, type PlanContextPayload, type PlanFeatureFlags } from "@/store/planStore";
 
 vi.mock("@/lib/telemetry", () => ({
   logEvent: vi.fn(),
@@ -40,14 +40,19 @@ describe("planStore", () => {
 
   it("merges feature flags and quota when hydrating from server payload", () => {
     const { setPlanFromServer } = usePlanStore.getState();
+    const mergedFlags: PlanFeatureFlags = {
+      searchCompare: false,
+      searchAlerts: false,
+      searchExport: true,
+      evidenceInlinePdf: false,
+      evidenceDiff: false,
+      timelineFull: true,
+    };
     setPlanFromServer({
       planTier: "enterprise",
       expiresAt: "2026-02-01T00:00:00+00:00",
       entitlements: ["alerts.force_webhook"],
-      featureFlags: {
-        searchExport: true,
-        timelineFull: true,
-      },
+      featureFlags: mergedFlags,
       quota: {
         chatRequestsPerDay: null,
         ragTopK: 12,

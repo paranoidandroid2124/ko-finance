@@ -10,7 +10,7 @@ import { useToastStore } from "@/store/toastStore";
 import { planTierLabel } from "@/constants/planPricing";
 import { PaymentResultCard } from "@/components/payments/PaymentResultCard";
 
-type Status = "idle" | "confirming" | "success" | "error";
+type Status = "confirming" | "success" | "error";
 
 const isPlanTier = (value: string | null): value is PlanTier =>
   value === "free" || value === "pro" || value === "enterprise";

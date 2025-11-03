@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+
+import { resolveApiBase } from "@/lib/apiBase";
 import type { RagEvidenceItem } from "@/store/chatStore";
 
 type XmlDocument = {
@@ -13,11 +15,6 @@ type FilingXmlViewerProps = {
   filingId?: string;
   evidenceItems: RagEvidenceItem[];
   activeEvidenceId?: string;
-};
-
-const resolveApiBase = () => {
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ?? "";
-  return base.endsWith("/") ? base.slice(0, -1) : base;
 };
 
 const HIGHLIGHT_CLASS = "xml-highlight-active";
@@ -269,4 +266,3 @@ export function FilingXmlViewer({ filingId, evidenceItems, activeEvidenceId }: F
     </section>
   );
 }
-

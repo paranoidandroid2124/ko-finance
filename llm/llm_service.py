@@ -85,14 +85,14 @@ if os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"):
         logger.error("Failed to initialise Langfuse client: %s", exc, exc_info=True)
         LANGFUSE_CLIENT = None
 
-CLASSIFICATION_MODEL = os.getenv("LLM_CLASSIFICATION_MODEL", "gemini_flash_lite")
-SUMMARY_MODEL = os.getenv("LLM_SUMMARY_MODEL", "gemini_flash_lite")
-EXTRACTION_MODEL = os.getenv("LLM_EXTRACTION_MODEL", "gemini_flash_lite")
-SELF_CHECK_MODEL = os.getenv("LLM_SELF_CHECK_MODEL", "gemini_flash_lite")
-NEWS_ANALYSIS_MODEL = os.getenv("LLM_NEWS_MODEL", "gemini_flash_lite")
-RAG_MODEL = os.getenv("LLM_RAG_MODEL", "gemini_flash_lite")
-QUALITY_FALLBACK_MODEL = os.getenv("LLM_QUALITY_FALLBACK_MODEL", "gpt-5-chat")
-JUDGE_MODEL = os.getenv("LLM_GUARD_JUDGE_MODEL", "gpt-4o-mini")
+CLASSIFICATION_MODEL = os.getenv("LLM_CLASSIFICATION_MODEL", "baseline")
+SUMMARY_MODEL = os.getenv("LLM_SUMMARY_MODEL", "baseline")
+EXTRACTION_MODEL = os.getenv("LLM_EXTRACTION_MODEL", "baseline")
+SELF_CHECK_MODEL = os.getenv("LLM_SELF_CHECK_MODEL", "baseline")
+NEWS_ANALYSIS_MODEL = os.getenv("LLM_NEWS_MODEL", "baseline")
+RAG_MODEL = os.getenv("LLM_RAG_MODEL", "baseline")
+QUALITY_FALLBACK_MODEL = os.getenv("LLM_QUALITY_FALLBACK_MODEL", "fallback_model")
+JUDGE_MODEL = os.getenv("LLM_GUARD_JUDGE_MODEL", "judge_model")
 INTENT_MODEL = os.getenv("LLM_INTENT_MODEL", QUALITY_FALLBACK_MODEL)
 
 CITATION_PAGE_RE = re.compile(r"\(p\.\s*\d+\)", re.IGNORECASE)

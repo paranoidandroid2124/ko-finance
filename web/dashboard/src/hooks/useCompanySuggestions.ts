@@ -1,15 +1,9 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { normalizeCompanySearchResult, type CompanySearchResult } from "./useCompanySearch";
 
-const resolveApiBase = () => {
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!base) {
-    return "";
-  }
-  return base.endsWith("/") ? base.slice(0, -1) : base;
-};
+import { resolveApiBase } from "@/lib/apiBase";
+import { normalizeCompanySearchResult, type CompanySearchResult } from "./useCompanySearch";
 
 export type CompanySuggestions = {
   recentFilings: CompanySearchResult[];

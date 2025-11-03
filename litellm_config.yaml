@@ -1,20 +1,20 @@
 # SSoT(3, 4) 기반 LiteLLM 설정 파일
-# - 기본 모델: Gemini Flash-Lite (gemini_flash_lite)
-# - 품질 승격 모델: GPT-5 (gpt-5-chat)
+# - 기본 모델: Gemini Flash-Lite (baseline)
+# - 품질 승격 모델: GPT-5 (fallback_model)
 # - 로컬 감성 분석 모델: 주석 처리 (vllm-sentiment)
 
 model_list:
-  - model_name: gemini_flash_lite  # Default fast model for summarization
+  - model_name: baseline  # Default fast model for summarization
     litellm_params:
       model: "gemini/gemini-2.5-flash-lite-preview-09-2025"
       api_key: ${GEMINI_API_KEY}
 
-  - model_name: gpt-5-chat  # High-quality fallback model
+  - model_name: fallback_model  # High-quality fallback model
     litellm_params:
       model: "openai/gpt-5-chat-latest"
       api_key: ${OPENAI_API_KEY}
 
-  - model_name: gpt-4o-mini  # Guard judge model for compliance checks
+  - model_name: judge_model  # Guard judge model for compliance checks
     litellm_params:
       model: "openai/gpt-4o-mini"
       api_key: ${OPENAI_API_KEY}

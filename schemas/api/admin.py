@@ -75,11 +75,44 @@ class AdminGuardrailEvaluateRequest(AdminBaseModel):
     channels: Optional[List[str]] = Field(default=None, description="적용할 채널 목록. 미지정 시 기본 채널 사용.")
 
 
+class AdminGuardrailDiffLineSchema(AdminBaseModel):
+    kind: Literal["added", "removed", "same"] = Field(..., description="라인 diff 유형(+|-|=).")
+    text: str = Field(..., description="라인 내용.")
+
+
 class AdminGuardrailEvaluateResponse(AdminBaseModel):
     result: str = Field(..., description="평가 결괏값(summary|pass|fail 등).")
     details: Dict[str, Any] = Field(default_factory=dict, description="judge 모델 또는 규칙 기반 평가 상세.")
     loggedAt: str = Field(..., description="감사 로그에 기록된 시각(ISO8601).")
     auditFile: str = Field(..., description="감사 로그 파일명.")
+    sampleId: Optional[str] = Field(default=None, description="저장된 평가 샘플 식별자.")
+    lineDiff: List[AdminGuardrailDiffLineSchema] = Field(default_factory=list, description="라인 단위 diff 결과.")
+
+
+class AdminGuardrailSampleSchema(AdminBaseModel):
+    sampleId: str = Field(..., description="저장된 Guardrail 평가 샘플 ID.")
+    result: str = Field(..., description="평가 결과(pass|blocked|warn 등).")
+    channels: List[str] = Field(default_factory=list, description="적용된 채널 목록.")
+    matchedRules: List[str] = Field(default_factory=list, description="매칭된 규칙 또는 블록리스트 항목.")
+    judgeDecision: Optional[str] = Field(default=None, description="Judge 모델이 반환한 결정.")
+    evaluatedAt: str = Field(..., description="평가 시각(ISO8601).")
+    actor: str = Field(..., description="평가를 실행한 운영자.")
+    bookmarked: bool = Field(default=False, description="북마크 여부.")
+    sample: str = Field(..., description="평가 대상 원본 샘플.")
+    sanitizedSample: str = Field(..., description="필요 시 정제된 샘플.")
+    auditFile: Optional[str] = Field(default=None, description="연결된 감사 로그 파일명.")
+    note: Optional[str] = Field(default=None, description="운영자 메모.")
+    lineDiff: List[AdminGuardrailDiffLineSchema] = Field(default_factory=list, description="라인 단위 diff 결과.")
+
+
+class AdminGuardrailSampleListResponse(AdminBaseModel):
+    items: List[AdminGuardrailSampleSchema] = Field(default_factory=list, description="저장된 평가 샘플 목록.")
+    hasMore: bool = Field(default=False, description="추가 페이지 존재 여부.")
+    nextCursor: Optional[str] = Field(default=None, description="다음 페이지 조회용 커서.")
+
+
+class AdminGuardrailBookmarkRequest(AdminBaseModel):
+    bookmarked: bool = Field(..., description="설정할 북마크 상태.")
 
 
 class AdminUiUxThemeSchema(AdminBaseModel):
@@ -174,6 +207,13 @@ class AdminRagReindexResponse(AdminBaseModel):
     status: str = Field(..., description="재색인 상태(queued|running|completed|failed).")
 
 
+class AdminRagEvidenceFieldDiffSchema(AdminBaseModel):
+    field: str = Field(..., description="비교한 필드 이름.")
+    before: Optional[str] = Field(default=None, description="변경 전 값.")
+    after: Optional[str] = Field(default=None, description="변경 후 값.")
+    lineDiff: List[str] = Field(default_factory=list, description="라인 단위 diff 결과(+- 기호 포함).")
+
+
 class AdminRagEvidenceDiffItemSchema(AdminBaseModel):
     urnId: Optional[str] = Field(default=None, description="변경된 Evidence의 URN ID.")
     diffType: str = Field(..., description="변경 유형(created|updated|removed|unchanged).")
@@ -182,6 +222,7 @@ class AdminRagEvidenceDiffItemSchema(AdminBaseModel):
     quote: Optional[str] = Field(default=None, description="주요 인용문 요약.")
     chunkId: Optional[str] = Field(default=None, description="벡터 청크 ID.")
     updatedAt: Optional[str] = Field(default=None, description="스냅샷이 저장된 시각.")
+    changes: List[AdminRagEvidenceFieldDiffSchema] = Field(default_factory=list, description="필드별 변경 요약.")
 
 
 class AdminRagEvidenceDiffSchema(AdminBaseModel):
@@ -213,8 +254,31 @@ class AdminRagReindexRecordSchema(AdminBaseModel):
     scopeDetail: Optional[List[str]] = Field(default=None, description="정규화된 재색인 소스 목록.")
 
 
+class AdminRagReindexHistorySummary(AdminBaseModel):
+    totalRuns: int = Field(..., description="집계된 전체 재색인 실행 횟수.")
+    completed: int = Field(..., description="완료된 실행 수.")
+    failed: int = Field(..., description="실패한 실행 수.")
+    traced: int = Field(..., description="Langfuse trace가 연결된 실행 수.")
+    missingTraces: int = Field(..., description="Langfuse trace가 누락된 실행 수.")
+    averageDurationMs: Optional[int] = Field(default=None, description="평균 처리 시간(ms).")
+    latestTraceUrls: List[str] = Field(default_factory=list, description="최근 Langfuse trace URL 목록.")
+    modeUsage: Dict[str, int] = Field(default_factory=dict, description="rag_mode별 실행 횟수.")
+    lastRunAt: Optional[str] = Field(default=None, description="가장 최근 실행 시각.")
+
+
 class AdminRagReindexHistoryResponse(AdminBaseModel):
     runs: List[AdminRagReindexRecordSchema] = Field(default_factory=list, description="최근 재색인 실행 이력.")
+    summary: Optional[AdminRagReindexHistorySummary] = Field(default=None, description="Langfuse 및 실행 현황 요약.")
+
+
+class AdminRagReindexQueueSummary(AdminBaseModel):
+    totalEntries: int = Field(..., description="큐에 남아 있는 전체 항목 수.")
+    ready: int = Field(..., description="즉시 실행 가능한 항목 수.")
+    coolingDown: int = Field(..., description="자동 재시도 대기 중인 항목 수.")
+    autoMode: int = Field(..., description="자동 재시도 모드 항목 수.")
+    manualMode: int = Field(..., description="수동 재시도 모드 항목 수.")
+    nextAutoRetryAt: Optional[str] = Field(default=None, description="다음 자동 재시도 예정 시각.")
+    stalled: int = Field(..., description="재시도 제한에 도달한 항목 수.")
 
 
 class AdminRagReindexQueueEntrySchema(AdminBaseModel):
@@ -241,6 +305,7 @@ class AdminRagReindexQueueEntrySchema(AdminBaseModel):
 
 class AdminRagReindexQueueResponse(AdminBaseModel):
     entries: List[AdminRagReindexQueueEntrySchema] = Field(default_factory=list, description="재시도 큐 목록.")
+    summary: Optional[AdminRagReindexQueueSummary] = Field(default=None, description="자동 재시도 흐름 요약.")
 
 
 class AdminRagReindexRetryRequest(AdminBaseModel):
@@ -317,15 +382,43 @@ class AdminOpsApiKeySchema(AdminBaseModel):
     )
 
 
+class AdminOpsLangfuseEnvironmentSchema(AdminBaseModel):
+    name: str = Field(..., description="환경 이름(예: production, staging).")
+    enabled: bool = Field(default=True, description="환경 활성화 여부.")
+    host: Optional[str] = Field(default=None, description="Langfuse 호스트 URL.")
+    publicKey: Optional[str] = Field(default=None, description="노출 가능한 Public Key.")
+    maskedPublicKey: Optional[str] = Field(default=None, description="마스킹된 Public Key.")
+    secretKey: Optional[str] = Field(default=None, description="실제 Secret Key.")
+    maskedSecretKey: Optional[str] = Field(default=None, description="마스킹된 Secret Key.")
+    expiresAt: Optional[str] = Field(default=None, description="만료 예정 시각(ISO8601).")
+    warningThresholdDays: Optional[int] = Field(default=None, description="만료 경고 임계값(일 단위).")
+    lastRotatedAt: Optional[str] = Field(default=None, description="최근 회전 시각(ISO8601).")
+    rotationHistory: List[AdminOpsApiKeyRotationSchema] = Field(default_factory=list, description="환경별 회전 이력.")
+    note: Optional[str] = Field(default=None, description="환경 관련 메모.")
+
+
+class AdminOpsLangfuseConfigSchema(AdminBaseModel):
+    defaultEnvironment: str = Field(..., description="기본 선택 환경.")
+    environments: List[AdminOpsLangfuseEnvironmentSchema] = Field(default_factory=list, description="등록된 환경 목록.")
+
+
 class AdminOpsApiKeyCollection(AdminBaseModel):
-    langfuse: Dict[str, Any] = Field(default_factory=dict, description="Langfuse 토글/키 정보.")
+    langfuse: AdminOpsLangfuseConfigSchema = Field(..., description="Langfuse 토큰/키 정보(다중 환경).")
     externalApis: List[AdminOpsApiKeySchema] = Field(default_factory=list, description="기타 외부 API 목록.")
+
+
+class AdminOpsTokenAlertSchema(AdminBaseModel):
+    source: str = Field(..., description="알림 출처(예: langfuse:production).")
+    severity: Literal["info", "warning", "critical"] = Field(..., description="알림 심각도.")
+    message: str = Field(..., description="요약 메시지.")
+    detail: Optional[str] = Field(default=None, description="추가 설명.")
 
 
 class AdminOpsApiKeyResponse(AdminBaseModel):
     secrets: AdminOpsApiKeyCollection = Field(..., description="운영 API 키 설정.")
     updatedAt: Optional[str] = Field(default=None, description="최근 변경 시각.")
     updatedBy: Optional[str] = Field(default=None, description="변경 운영자.")
+    alerts: List[AdminOpsTokenAlertSchema] = Field(default_factory=list, description="토큰/세션 만료 안내.")
 
 
 class AdminOpsApiKeyUpdateRequest(AdminOpsApiKeyCollection):
@@ -428,6 +521,30 @@ class AdminOpsAlertChannelPreviewResponse(AdminBaseModel):
     actor: str = Field(..., description="미리보기를 실행한 운영자.")
 
 
+class AdminOpsTemplateSchema(AdminBaseModel):
+    key: str = Field(..., description="템플릿 고유 키.")
+    label: str = Field(..., description="템플릿 표시 이름.")
+    channelType: str = Field(..., description="적용 가능한 채널 유형.")
+    template: Optional[str] = Field(default=None, description="템플릿 식별자 또는 형식.")
+    messageTemplate: Optional[str] = Field(default=None, description="메시지 텍스트 템플릿.")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="기본 제공 메타데이터.")
+    description: Optional[str] = Field(default=None, description="템플릿 설명.")
+
+
+class AdminOpsTemplateListResponse(AdminBaseModel):
+    templates: List[AdminOpsTemplateSchema] = Field(default_factory=list, description="사용 가능한 템플릿 목록.")
+
+
+class AdminOpsSampleMetadataRequest(AdminBaseModel):
+    channelType: str = Field(..., description="샘플 메타데이터를 생성할 채널 유형.")
+    template: Optional[str] = Field(default=None, description="선택적으로 적용할 템플릿 키.")
+
+
+class AdminOpsSampleMetadataResponse(AdminBaseModel):
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="자동 생성된 샘플 메타데이터.")
+    generatedAt: str = Field(..., description="생성 시각(ISO8601).")
+
+
 class AdminAuditLogEntrySchema(AdminBaseModel):
     timestamp: str = Field(..., description="이벤트 발생 시각(ISO8601).")
     actor: str = Field(..., description="변경 주체.")
@@ -438,6 +555,8 @@ class AdminAuditLogEntrySchema(AdminBaseModel):
 
 class AdminAuditLogListResponse(AdminBaseModel):
     items: List[AdminAuditLogEntrySchema] = Field(default_factory=list, description="감사 로그 목록.")
+    hasMore: bool = Field(default=False, description="추가 로그가 더 존재하는지 여부.")
+    nextCursor: Optional[str] = Field(default=None, description="다음 페이지 조회용 커서.")
 
 
 class AdminOpsRunRecordSchema(AdminBaseModel):

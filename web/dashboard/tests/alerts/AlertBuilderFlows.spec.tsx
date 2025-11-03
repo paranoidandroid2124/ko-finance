@@ -5,10 +5,10 @@ import { screen, act, fireEvent, waitFor } from "@testing-library/react";
 
 import { AlertBuilder } from "@/components/alerts/AlertBuilder";
 import { proPlanInfo, createAlertRuleFixture, resetAlertStores, loadPlanContext } from "@/testing/fixtures/alerts";
-import type { AlertRuleCreatePayload } from "@/lib/alertsApi";
+import type { AlertRule, AlertRuleCreatePayload } from "@/lib/alertsApi";
 import { useToastStore } from "@/store/toastStore";
 
-const mockCreateMutation = vi.fn<Promise<unknown>, [AlertRuleCreatePayload]>();
+const mockCreateMutation = vi.fn<[AlertRuleCreatePayload], Promise<AlertRule>>();
 const mockUpdateMutation = vi.fn();
 
 const mockChannelSchema = {
