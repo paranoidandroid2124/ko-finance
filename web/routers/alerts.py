@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from typing import Optional
+from datetime import datetime, timezone, timedelta
+from typing import Optional, List
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -14,6 +15,10 @@ from schemas.api.alerts import (
     AlertRuleResponse,
     AlertRuleUpdateRequest,
     AlertPlanInfo,
+    WatchlistDispatchRequest,
+    WatchlistDispatchResponse,
+    WatchlistRadarResponse,
+    WatchlistRuleDetailResponse,
 )
 from services.alert_service import (
     PlanQuotaError,
@@ -27,6 +32,7 @@ from services.alert_service import (
     archive_alert_rule,
 )
 from services.alert_channel_registry import list_channel_definitions
+from services import watchlist_service
 from services.plan_service import PlanContext
 from web.deps import get_plan_context
 
@@ -40,6 +46,39 @@ def _parse_uuid(value: Optional[str]) -> Optional[uuid.UUID]:
         return uuid.UUID(value)
     except (ValueError, TypeError):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="잘못된 UUID 형식입니다.")
+
+
+def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "alerts.invalid_window", "message": "잘못된 시간 형식입니다."},
+        ) from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _normalize_query_list(values: Optional[List[str]]) -> List[str]:
+    normalized: List[str] = []
+    if not values:
+        return normalized
+    for raw in values:
+        if not isinstance(raw, str):
+            continue
+        for part in raw.split(","):
+            trimmed = part.strip()
+            if trimmed and trimmed not in normalized:
+                normalized.append(trimmed)
+    return normalized
 
 
 def _owner_filters(user_id: Optional[uuid.UUID], org_id: Optional[uuid.UUID]) -> dict:
@@ -163,6 +202,143 @@ def delete_rule(
         )
     archive_alert_rule(db, rule=rule)
     db.commit()
+
+
+@router.get("/watchlist/radar", response_model=WatchlistRadarResponse)
+def watchlist_radar(
+    window_minutes: int = 1440,
+    limit: int = 100,
+    channels: Optional[List[str]] = Query(default=None, description="채널 필터 (중복 지정 가능)"),
+    event_types: Optional[List[str]] = Query(default=None, description="이벤트 유형 필터 (filing/news)"),
+    tickers: Optional[List[str]] = Query(default=None, description="티커 필터"),
+    rule_tags: Optional[List[str]] = Query(default=None, description="룰 태그 필터"),
+    min_sentiment: Optional[float] = Query(default=None, description="감성 최소값 (-1.0 ~ 1.0)"),
+    max_sentiment: Optional[float] = Query(default=None, description="감성 최대값 (-1.0 ~ 1.0)"),
+    query: Optional[str] = Query(default=None, description="메시지/룰/티커 검색어"),
+    window_start: Optional[str] = Query(default=None, description="ISO8601 시작 시각"),
+    window_end: Optional[str] = Query(default=None, description="ISO8601 종료 시각"),
+    x_user_id: Optional[str] = Header(default=None),
+    x_org_id: Optional[str] = Header(default=None),
+    plan: PlanContext = Depends(get_plan_context),
+    db: Session = Depends(get_db),
+) -> WatchlistRadarResponse:
+    window_minutes = max(min(int(window_minutes or 1440), 7 * 24 * 60), 5)
+    limit = max(min(int(limit or 100), 200), 1)
+    user_id = _parse_uuid(x_user_id)
+    org_id = _parse_uuid(x_org_id)
+    owner_filters = _owner_filters(user_id, org_id)
+    tenant_token = str(org_id) if org_id else None
+    user_token = str(user_id) if user_id else None
+    session_key = f"watchlist:radar:{tenant_token or user_token or 'global'}"
+    plan_memory_enabled = plan.tier in {"pro", "enterprise"}
+    parsed_channels = _normalize_query_list(channels)
+    parsed_event_types = _normalize_query_list(event_types)
+    parsed_tickers = _normalize_query_list(tickers)
+    parsed_rule_tags = _normalize_query_list(rule_tags)
+    start_dt = _parse_iso_datetime(window_start)
+    end_dt = _parse_iso_datetime(window_end)
+    comparison_end = end_dt or datetime.now(timezone.utc)
+    comparison_start = start_dt or (comparison_end - timedelta(minutes=window_minutes))
+    if (comparison_end - comparison_start).total_seconds() > 7 * 24 * 60 * 60:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "alerts.window_too_large", "message": "검색 구간은 최대 7일까지 지원합니다."},
+        )
+    payload = watchlist_service.collect_watchlist_alerts(
+        db,
+        window_minutes=window_minutes,
+        limit=limit,
+        channels=parsed_channels,
+        event_types=parsed_event_types,
+        tickers=parsed_tickers,
+        rule_tags=parsed_rule_tags,
+        min_sentiment=min_sentiment,
+        max_sentiment=max_sentiment,
+        query=query,
+        window_start=start_dt,
+        window_end=end_dt,
+        owner_filters=owner_filters,
+        plan_memory_enabled=plan_memory_enabled,
+        session_id=session_key,
+        tenant_id=tenant_token,
+        user_id_hint=user_token,
+    )
+    return WatchlistRadarResponse.model_validate(payload)
+
+
+@router.post("/watchlist/dispatch", response_model=WatchlistDispatchResponse)
+def watchlist_dispatch(
+    payload: WatchlistDispatchRequest,
+    x_user_id: Optional[str] = Header(default=None),
+    x_org_id: Optional[str] = Header(default=None),
+    plan: PlanContext = Depends(get_plan_context),
+    db: Session = Depends(get_db),
+) -> WatchlistDispatchResponse:
+    window_minutes = max(min(int(payload.windowMinutes or 1440), 7 * 24 * 60), 5)
+    limit = max(min(int(payload.limit or 20), 200), 1)
+    user_id = _parse_uuid(x_user_id)
+    org_id = _parse_uuid(x_org_id)
+    owner_filters = _owner_filters(user_id, org_id)
+    tenant_token = str(org_id) if org_id else None
+    user_token = str(user_id) if user_id else None
+    session_key = f"watchlist:dispatch:{tenant_token or user_token or 'global'}"
+    plan_memory_enabled = plan.tier in {"pro", "enterprise"}
+    result = watchlist_service.dispatch_watchlist_digest(
+        db,
+        window_minutes=window_minutes,
+        limit=limit,
+        slack_targets=payload.slackTargets or [],
+        email_targets=payload.emailTargets or [],
+        owner_filters=owner_filters,
+        plan_memory_enabled=plan_memory_enabled,
+        session_id=session_key,
+        tenant_id=tenant_token,
+        user_id_hint=user_token,
+    )
+    summary_payload = result.get("payload", {}).get("summary") or {}
+    response = WatchlistDispatchResponse.model_validate(
+        {
+            "summary": summary_payload,
+            "results": result.get("results") or [],
+        }
+    )
+    return response
+
+
+@router.get("/watchlist/rules/{rule_id}/detail", response_model=WatchlistRuleDetailResponse)
+def watchlist_rule_detail(
+    rule_id: uuid.UUID,
+    recent_limit: int = Query(default=5, ge=1, le=50),
+    x_user_id: Optional[str] = Header(default=None),
+    x_org_id: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+) -> WatchlistRuleDetailResponse:
+    user_id = _parse_uuid(x_user_id)
+    org_id = _parse_uuid(x_org_id)
+    owner_filters = _owner_filters(user_id, org_id)
+    try:
+        payload = watchlist_service.collect_watchlist_rule_detail(
+            db,
+            rule_id=rule_id,
+            owner_filters=owner_filters,
+            recent_limit=recent_limit,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail == "watchlist.rule_not_found":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "alerts.rule_not_found", "message": "워치리스트 룰을 찾을 수 없습니다."},
+            )
+        if detail == "watchlist.rule_not_watchlist":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "alerts.invalid_rule", "message": "워치리스트 룰이 아닙니다."},
+            )
+        raise
+    return WatchlistRuleDetailResponse.model_validate(payload)
+
+
 @router.get("/channels/schema", response_model=AlertChannelSchemaResponse)
 def channel_schema(
     plan: PlanContext = Depends(get_plan_context),

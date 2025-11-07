@@ -30,3 +30,26 @@
 - 토큰 로그인 UI (쿠키 설정) 초안 작성 → 운영팀이 브라우저에서 직접 토큰을 입력해 세션을 개설할 수 있도록 준비.
 - 관리자 세션 훅을 활용한 Admin 페이지 E2E (Playwright) 시나리오 작성.
 - `terraform/` 혹은 `ops/` 폴더에 Cloud Run 이중 서비스(메인 API, Admin API) 샘플 정의 초안 추가.
+
+## 감사 로그 & 재색인 Trace BigQuery/GCS 싱크
+- **필요 설정**
+  - `BIGQUERY_PROJECT_ID`, `BIGQUERY_LOCATION`(기본 `asia-northeast3`)
+  - `BIGQUERY_AUDIT_DATASET`, `BIGQUERY_AUDIT_TABLE`, `BIGQUERY_REINDEX_TABLE`
+  - `GCS_BUCKET_NAME`, `GCS_AUDIT_ARCHIVE_PREFIX`, `GCS_REINDEX_ARCHIVE_PREFIX`
+  - `STORAGE_PROVIDER=gcs` 또는 `auto` (GCS 우선 적용)
+- **실행 스크립트**
+  ```bash
+  python scripts/sync_audit_traces.py               # BigQuery + GCS 동시 실행
+  python scripts/sync_audit_traces.py --skip-archive  # BigQuery 전용
+  python scripts/sync_audit_traces.py --skip-bigquery # GCS 아카이브 전용
+  ```
+- `.state/` 폴더에 offset을 저장하므로 반복 실행 시 신규 로그만 동기화됩니다. 로그 파일이 재생성되면 offset이 자동으로 리셋됩니다.
+- BigQuery 테이블이 없다면 스크립트가 자동으로 생성하며, `timestamp` 필드를 기준으로 시간 파티셔닝합니다.
+- GCS 아카이브 파일은 `compliance/audit`·`compliance/reindex` (환경 변수 수정 가능) 경로에 `*.jsonl`로 업로드됩니다.
+- 모든 CLI 스크립트는 `core.env_utils.load_dotenv_if_available()`로 `.env`를 자동 로드하며, `require_env_vars([...])`가 필수 환경 변수 누락 시 즉시 오류를 발생시킵니다. Secret Manager를 통해 환경 변수를 주입한 배포 환경에서는 `.env`가 없어도 안전하게 동작합니다.
+
+### SLA 모니터링 대시보드
+- Admin 콘솔 > RAG 패널에 **BigQuery 기반 SLA 추세** 카드와 **최근 SLA 초과 목록**이 추가되었습니다.
+- `scripts/sync_audit_traces.py`가 BigQuery 및 GCS로 재색인 로그를 싱크해야 그래프·목록이 채워집니다. (연동이 끊기면 패널 상단에 BigQuery 구성 안내가 표시됩니다.)
+- 재색인 실행·큐 재시도·큐 삭제 시 React Query가 `ADMIN_RAG_SLA_SUMMARY_KEY`를 자동 무효화해 최신 통계를 불러옵니다.
+- SLA 카드의 만족률·p95 지표는 BigQuery 값을 우선 사용하고, 동기화가 되지 않은 경우 기존 SQLite 요약(임시)으로 폴백합니다.

@@ -15,6 +15,12 @@ export type PlanFeatureFlags = {
   timelineFull: boolean;
 };
 
+export type PlanMemoryFlags = {
+  watchlist: boolean;
+  digest: boolean;
+  chat: boolean;
+};
+
 export type PlanQuota = {
   chatRequestsPerDay: number | null;
   ragTopK: number | null;
@@ -27,6 +33,7 @@ export type PlanContextPayload = {
   expiresAt?: string | null;
   entitlements: string[];
   featureFlags: PlanFeatureFlags;
+  memoryFlags: PlanMemoryFlags;
   quota: PlanQuota;
   updatedAt?: string | null;
   updatedBy?: string | null;
@@ -38,6 +45,7 @@ export type PlanContextUpdateInput = {
   planTier: PlanTier;
   expiresAt?: string | null;
   entitlements: string[];
+  memoryFlags: PlanMemoryFlags;
   quota: PlanQuota;
   updatedBy?: string | null;
   changeNote?: string | null;
@@ -49,6 +57,7 @@ type PlanStoreState = {
   expiresAt?: string | null;
   entitlements: string[];
   featureFlags: PlanFeatureFlags;
+  memoryFlags: PlanMemoryFlags;
   quota: PlanQuota;
   updatedAt?: string | null;
   updatedBy?: string | null;
@@ -79,6 +88,12 @@ const DEFAULT_FEATURE_FLAGS: PlanFeatureFlags = {
   timelineFull: false,
 };
 
+const DEFAULT_MEMORY_FLAGS: PlanMemoryFlags = {
+  watchlist: false,
+  digest: false,
+  chat: false,
+};
+
 const DEFAULT_QUOTA: PlanQuota = {
   chatRequestsPerDay: 20,
   ragTopK: 4,
@@ -91,6 +106,7 @@ const DEFAULT_PLAN_PAYLOAD: PlanContextPayload = {
   expiresAt: null,
   entitlements: [],
   featureFlags: DEFAULT_FEATURE_FLAGS,
+  memoryFlags: DEFAULT_MEMORY_FLAGS,
   quota: DEFAULT_QUOTA,
   updatedAt: null,
   updatedBy: null,
@@ -100,6 +116,10 @@ const DEFAULT_PLAN_PAYLOAD: PlanContextPayload = {
 
 function mergeFeatureFlags(flags?: PlanFeatureFlags): PlanFeatureFlags {
   return { ...DEFAULT_FEATURE_FLAGS, ...(flags ?? {}) };
+}
+
+function mergeMemoryFlags(flags?: PlanMemoryFlags): PlanMemoryFlags {
+  return { ...DEFAULT_MEMORY_FLAGS, ...(flags ?? {}) };
 }
 
 function mergeQuota(quota?: PlanQuota): PlanQuota {
@@ -320,9 +340,6 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
 }));
 
 export const usePlanTier = () => usePlanStore((state) => state.planTier);
-export const usePlanFeatureFlag = <K extends keyof PlanFeatureFlags>(flag: K) =>
-  usePlanStore((state) => state.featureFlags[flag]);
-
 export const planTierRank = (tier: PlanTier): number => PLAN_TIER_ORDER[tier] ?? 0;
 export const isTierAtLeast = (tier: PlanTier, required: PlanTier): boolean =>
   planTierRank(tier) >= planTierRank(required);

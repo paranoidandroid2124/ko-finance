@@ -5,8 +5,6 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List
-import html
-import re
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -27,6 +25,7 @@ from services.aggregation.sector_classifier import (
     SECTOR_DEFINITIONS,
     resolve_sector_slug,
 )
+from services.news_summary_service import get_or_generate_summary
 from web.routers.dashboard import format_timespan, map_sentiment
 
 router = APIRouter(prefix="/news", tags=["News"])
@@ -217,6 +216,7 @@ def _build_news_insights(
 
         filtered_signals.append((entry, sector, sentiment_label))
         if len(news_items) < limit:
+            summary_text = get_or_generate_summary(entry)
             news_items.append(
                 NewsListItem(
                     id=entry.id,
@@ -228,7 +228,9 @@ def _build_news_insights(
                     sentimentScore=entry.sentiment,
                     publishedAtIso=entry.published_at.isoformat() if entry.published_at else "",
                     url=entry.url,
-                    summary=_sanitize_summary(entry.summary),
+                    summary=summary_text,
+                    licenseType=getattr(entry, "license_type", None),
+                    licenseUrl=getattr(entry, "license_url", None),
                 )
             )
 
@@ -332,24 +334,3 @@ def read_news_insights(
         exclude_neutral=exclude_neutral,
         window_hours=window_hours,
     )
-
-
-
-
-
-
-
-
-
-
-_SUMMARY_TAG_RE = re.compile(r"<[^>]+>")
-
-
-def _sanitize_summary(summary: str | None) -> str | None:
-    if not summary:
-        return None
-    text = _SUMMARY_TAG_RE.sub(" ", summary)
-    text = html.unescape(text)
-    text = re.sub(r"\s+", " ", text)
-    cleaned = text.strip()
-    return cleaned or None

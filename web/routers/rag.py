@@ -27,10 +27,13 @@ from schemas.api.rag import (
     RelatedFiling,
     SelfCheckResult,
 )
-from services import chat_service, vector_service
+from services import chat_service, vector_service, date_range_parser
 from services.rag_shared import build_anchor_payload, normalize_reliability, safe_float, safe_int
 from services.evidence_service import attach_diff_metadata
 from models.chat import ChatMessage, ChatSession
+from services.memory.facade import MEMORY_SERVICE
+from services.plan_service import PlanContext
+from web.deps import get_plan_context
 
 
 def _extract_anchor(chunk: Dict[str, Any]) -> Optional[EvidenceAnchor]:
@@ -112,6 +115,184 @@ def _build_evidence_payload(chunks: Iterable[Dict[str, Any]]) -> List[Dict[str, 
             evidence_model.model_dump(mode="json", exclude_none=True, exclude_unset=True)
         )
     return evidence
+
+
+def _plan_memory_enabled(plan: PlanContext) -> bool:
+    return plan.tier in {"pro", "enterprise"}
+
+
+def _memory_subject_ids(
+    session: ChatSession,
+    user_id: Optional[uuid.UUID],
+    org_id: Optional[uuid.UUID],
+) -> Tuple[Optional[str], Optional[str]]:
+    tenant_candidate = org_id or session.org_id or session.user_id or user_id
+    user_candidate = session.user_id or user_id or org_id or tenant_candidate
+    tenant_value = str(tenant_candidate) if tenant_candidate else None
+    user_value = str(user_candidate) if user_candidate else None
+    if tenant_value and not user_value:
+        user_value = tenant_value
+    if user_value and not tenant_value:
+        tenant_value = user_value
+    return tenant_value, user_value
+
+
+def merge_lightmem_context(
+    question: str,
+    conversation_memory: Optional[Dict[str, Any]],
+    *,
+    session_key: str,
+    tenant_id: Optional[str],
+    user_id: Optional[str],
+    plan_memory_enabled: bool,
+) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+    info: Dict[str, Any] = {
+        "enabled": MEMORY_SERVICE.is_enabled(plan_memory_enabled=plan_memory_enabled),
+        "session_summaries": 0,
+        "long_term_records": 0,
+        "applied": False,
+        "captured": False,
+    }
+    if not info["enabled"]:
+        return conversation_memory, info
+    if not tenant_id or not user_id:
+        info["reason"] = "missing_subject"
+        return conversation_memory, info
+
+    snippets: List[str] = []
+    base_memory = conversation_memory or {}
+    recent_turns = base_memory.get("recent_turns") if isinstance(base_memory, dict) else None
+    if isinstance(recent_turns, list):
+        for turn in recent_turns[-3:]:
+            if not isinstance(turn, dict):
+                continue
+            content = str(turn.get("content") or "").strip()
+            if content:
+                snippets.append(content)
+
+    try:
+        composition = MEMORY_SERVICE.compose_prompt(
+            base_prompt=question,
+            session_id=session_key,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            rag_snippets=snippets[:3],
+            plan_memory_enabled=plan_memory_enabled,
+        )
+    except Exception:
+        logger.debug("LightMem compose_prompt failed for session %s", session_key, exc_info=True)
+        info["reason"] = "compose_failed"
+        return conversation_memory, info
+
+    info["session_summaries"] = len(composition.session_summaries)
+    info["long_term_records"] = len(composition.long_term_records)
+    info["compressed_chars"] = len(composition.compressed_prompt.text or "")
+
+    summary_lines: List[str] = []
+    for entry in composition.session_summaries:
+        highlight = "; ".join(entry.highlights) if entry.highlights else ""
+        text = f"{entry.topic}: {highlight}" if highlight else entry.topic
+        line = text.strip()
+        if line:
+            summary_lines.append(line)
+    for record in composition.long_term_records:
+        topic = (record.topic or "").strip()
+        summary = (record.summary or "").strip()
+        if summary and topic:
+            summary_lines.append(f"{topic}: {summary}")
+        elif summary:
+            summary_lines.append(summary)
+        elif topic:
+            summary_lines.append(topic)
+
+    if not summary_lines:
+        return conversation_memory, info
+
+    merged: Dict[str, Any] = dict(base_memory) if isinstance(base_memory, dict) else {}
+    existing_summary = (merged.get("summary") or "").strip()
+    summary_parts: List[str] = []
+    if existing_summary:
+        summary_parts.extend(existing_summary.splitlines())
+    seen_summary = {part.strip() for part in summary_parts if part.strip()}
+    for line in summary_lines:
+        if line not in seen_summary:
+            summary_parts.append(line)
+            seen_summary.add(line)
+    if summary_parts:
+        merged["summary"] = "\n".join(summary_parts)
+
+    if composition.long_term_records:
+        citations = list(merged.get("citations") or [])
+        seen_citations = {str(item) for item in citations}
+        for record in composition.long_term_records:
+            topic = str(record.topic or "").strip()
+            if topic and topic not in seen_citations:
+                citations.append(topic)
+                seen_citations.add(topic)
+        if citations:
+            merged["citations"] = citations
+
+    info["applied"] = True
+    return merged, info
+
+
+def store_lightmem_summary(
+    *,
+    question: str,
+    answer: str,
+    session: ChatSession,
+    turn_id: uuid.UUID,
+    session_key: str,
+    tenant_id: Optional[str],
+    user_id: Optional[str],
+    plan_memory_enabled: bool,
+    rag_mode: Optional[str],
+    filing_id: Optional[str],
+) -> bool:
+    if not MEMORY_SERVICE.is_enabled(plan_memory_enabled=plan_memory_enabled):
+        return False
+    if not tenant_id or not user_id:
+        return False
+
+    question_preview = chat_service.trim_preview(question)
+    answer_preview = chat_service.trim_preview(answer)
+    highlights: List[str] = []
+    if question_preview:
+        highlights.append(f"Q: {question_preview}")
+    if answer_preview:
+        highlights.append(f"A: {answer_preview}")
+    if not highlights:
+        return False
+
+    total_len = len(question_preview) + len(answer_preview)
+    importance = 0.45 + min(total_len, 600) / 1000.0
+    metadata: Dict[str, str] = {
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "session_uuid": str(session.id),
+        "turn_id": str(turn_id),
+        "importance_score": f"{min(0.95, importance):.2f}",
+    }
+    if session.context_type:
+        metadata["context_type"] = str(session.context_type)
+    if session.context_id:
+        metadata["context_id"] = str(session.context_id)
+    if filing_id:
+        metadata["filing_id"] = str(filing_id)
+    if rag_mode:
+        metadata["rag_mode"] = str(rag_mode)
+
+    try:
+        MEMORY_SERVICE.save_session_summary(
+            session_id=session_key,
+            topic=f"chat.{session.context_type or 'rag'}",
+            highlights=highlights,
+            metadata=metadata,
+        )
+        return True
+    except Exception:
+        logger.debug("LightMem session summary capture failed for %s", session_key, exc_info=True)
+        return False
 
 
 def _attach_evidence_diff(
@@ -226,6 +407,69 @@ def _prepare_vector_filters(filters: FilingFilter) -> Dict[str, Any]:
     if max_ts is not None:
         vector_filters['max_published_at_ts'] = max_ts
     return vector_filters
+
+
+RELATIVE_LABEL_DISPLAY = {
+    "today": "오늘",
+    "yesterday": "어제",
+    "two_days_ago": "그제",
+    "this_week": "이번 주",
+    "last_week": "지난 주",
+    "this_month": "이번 달",
+    "last_month": "지난 달",
+}
+
+
+def _apply_relative_date_filters(
+    question: str,
+    filters: Optional[Dict[str, Any]] = None,
+    *,
+    range_hint: Optional[date_range_parser.RelativeDateRange] = None,
+) -> Tuple[Dict[str, Any], Optional[date_range_parser.RelativeDateRange]]:
+    updated_filters = dict(filters or {})
+    relative_range = range_hint or date_range_parser.parse_relative_date_range(question)
+    if not relative_range:
+        return updated_filters, None
+
+    min_ts = relative_range.start.timestamp()
+    max_ts = relative_range.end.timestamp()
+
+    existing_min = safe_float(updated_filters.get("min_published_at_ts"))
+    existing_max = safe_float(updated_filters.get("max_published_at_ts"))
+
+    if existing_min is None or (min_ts is not None and min_ts > existing_min):
+        updated_filters["min_published_at_ts"] = min_ts
+    if existing_max is None or (max_ts is not None and max_ts < existing_max):
+        updated_filters["max_published_at_ts"] = max_ts
+
+    return updated_filters, relative_range
+
+
+def _build_prompt_metadata(
+    relative_range: Optional[date_range_parser.RelativeDateRange],
+) -> Dict[str, Any]:
+    now_utc = datetime.now(timezone.utc)
+    now_local = now_utc.astimezone(date_range_parser.KST)
+    metadata: Dict[str, Any] = {
+        "current_datetime_utc": now_utc.isoformat(),
+        "current_datetime_local": now_local.isoformat(),
+        "current_date_local": now_local.strftime("%Y-%m-%d"),
+    }
+
+    if relative_range:
+        start_local = relative_range.start.astimezone(date_range_parser.KST)
+        end_local = relative_range.end.astimezone(date_range_parser.KST)
+        label_display = RELATIVE_LABEL_DISPLAY.get(relative_range.label, relative_range.label)
+        metadata["relative_date_range"] = {
+            "label": relative_range.label,
+            "label_display": label_display,
+            "start_utc": relative_range.start.isoformat(),
+            "end_utc": relative_range.end.isoformat(),
+            "start_local": start_local.isoformat(),
+            "end_local": end_local.isoformat(),
+        }
+
+    return metadata
 
 
 
@@ -431,10 +675,18 @@ def build_basic_reply(
     top_k: int,
     run_self_check: bool,
     filters: Optional[Dict[str, Any]] = None,
+    relative_range: Optional[date_range_parser.RelativeDateRange] = None,
 ) -> RAGQueryResponse:
     judge_result = llm_service.assess_query_risk(question)
     judge_decision = (judge_result.get("decision") or "unknown") if judge_result else "unknown"
     rag_mode = (judge_result.get("rag_mode") or "vector") if judge_result else "vector"
+
+    filters, relative_range = _apply_relative_date_filters(
+        question,
+        filters,
+        range_hint=relative_range,
+    )
+    prompt_metadata = _build_prompt_metadata(relative_range)
 
     should_retrieve = rag_mode != "none" and judge_decision in {"pass", "unknown"}
     retrieval: Optional[vector_service.VectorSearchResult] = None
@@ -499,7 +751,12 @@ def build_basic_reply(
                 rag_mode=rag_mode,
             )
 
-    payload = llm_service.generate_rag_answer(question, context_chunks, judge_result=judge_result)
+    payload = llm_service.generate_rag_answer(
+        question,
+        context_chunks,
+        judge_result=judge_result,
+        prompt_metadata=prompt_metadata,
+    )
     payload_rag_mode = payload.get("rag_mode") or rag_mode
     meta_payload = dict(payload.get("meta", {}))
     retrieval_meta = dict(meta_payload.get("retrieval") or {})
@@ -513,6 +770,8 @@ def build_basic_reply(
     guard_meta.setdefault("reason", payload.get("judge_reason"))
     guard_meta["rag_mode"] = payload_rag_mode
     meta_payload["guardrail"] = guard_meta
+    if prompt_metadata:
+        meta_payload.setdefault("prompt", prompt_metadata)
 
     evidence_context = _build_evidence_payload(payload.get("context") or context_chunks)
     snapshot_payload = deepcopy(evidence_context)
@@ -684,11 +943,14 @@ def query_rag(
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
     idempotency_key_header: Optional[str] = Header(default=None, convert_underscores=False, alias="Idempotency-Key"),
+    plan: PlanContext = Depends(get_plan_context),
     db: Session = Depends(get_db),
 ) -> RAGQueryResponse:
     question = request.question.strip()
     filing_id = request.filing_id.strip() if request.filing_id else None
     filter_payload = _prepare_vector_filters(request.filters)
+    filter_payload, relative_range = _apply_relative_date_filters(question, filter_payload)
+    prompt_metadata = _build_prompt_metadata(relative_range)
     max_filings = request.max_filings
     trace_id = str(uuid.uuid4())
 
@@ -698,6 +960,7 @@ def query_rag(
     idempotency_key = request.idempotency_key or idempotency_key_header
 
     user_meta = dict(request.meta or {})
+    plan_memory_enabled = _plan_memory_enabled(plan)
 
     try:
         session = _resolve_session(
@@ -727,6 +990,16 @@ def query_rag(
         )
 
         conversation_memory = chat_service.build_conversation_memory(db, session)
+        memory_session_key = f"chat:{session.id}"
+        tenant_id_value, user_id_value = _memory_subject_ids(session, user_id, org_id)
+        conversation_memory, memory_info = merge_lightmem_context(
+            question,
+            conversation_memory,
+            session_key=memory_session_key,
+            tenant_id=tenant_id_value,
+            user_id=user_id_value,
+            plan_memory_enabled=plan_memory_enabled,
+        )
         intent_result = llm_service.classify_query_intent(question)
         intent_decision = (intent_result.get("decision") or "pass").lower()
         intent_reason = intent_result.get("reason")
@@ -746,6 +1019,10 @@ def query_rag(
                 model_used=intent_model,
                 conversation_memory=conversation_memory,
             )
+            response.meta = {
+                **(response.meta or {}),
+                "memory": dict(memory_info),
+            }
             db.commit()
             if needs_summary:
                 chat_service.enqueue_session_summary(session.id)
@@ -799,6 +1076,10 @@ def query_rag(
                     conversation_memory=conversation_memory,
                     related_filings=related_filings,
                 )
+                response.meta = {
+                    **(response.meta or {}),
+                    "memory": dict(memory_info),
+                }
                 db.commit()
                 if needs_summary:
                     chat_service.enqueue_session_summary(session.id)
@@ -806,7 +1087,13 @@ def query_rag(
 
         selected_filing_id = active_filing_id
         started_at = datetime.now(timezone.utc)
-        result = llm_service.generate_rag_answer(question, context_chunks, judge_result=judge_result)
+        result = llm_service.generate_rag_answer(
+            question,
+            context_chunks,
+            conversation_memory=conversation_memory,
+            judge_result=judge_result,
+            prompt_metadata=prompt_metadata,
+        )
         payload_rag_mode = result.get("rag_mode") or rag_mode
         latency_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
 
@@ -871,8 +1158,25 @@ def query_rag(
             "intent_reason": intent_reason,
             "intent_model": intent_result.get("model_used"),
         }
+        if prompt_metadata:
+            meta_payload["prompt"] = prompt_metadata
         meta_payload["evidence_version"] = "v2"
         meta_payload["evidence_diff"] = diff_meta
+        summary_captured = store_lightmem_summary(
+            question=question,
+            answer=answer_text,
+            session=session,
+            turn_id=turn_id,
+            session_key=memory_session_key,
+            tenant_id=tenant_id_value,
+            user_id=user_id_value,
+            plan_memory_enabled=plan_memory_enabled,
+            rag_mode=payload_rag_mode,
+            filing_id=selected_filing_id,
+        )
+        if summary_captured:
+            memory_info["captured"] = True
+        meta_payload["memory"] = dict(memory_info)
         chat_service.update_message_state(
             db,
             message_id=assistant_message.id,
@@ -952,6 +1256,7 @@ def query_rag(
             top_k=request.top_k,
             run_self_check=request.run_self_check,
             filters=filter_payload,
+            relative_range=relative_range,
         )
     except Exception as exc:
         db.rollback()
@@ -964,11 +1269,14 @@ def query_rag_stream(
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
     idempotency_key_header: Optional[str] = Header(default=None, convert_underscores=False, alias="Idempotency-Key"),
+    plan: PlanContext = Depends(get_plan_context),
     db: Session = Depends(get_db),
 ):
     question = request.question.strip()
     filing_id = request.filing_id.strip() if request.filing_id else None
     filter_payload = _prepare_vector_filters(request.filters)
+    filter_payload, relative_range = _apply_relative_date_filters(question, filter_payload)
+    prompt_metadata = _build_prompt_metadata(relative_range)
     max_filings = request.max_filings
     trace_id = str(uuid.uuid4())
 
@@ -976,6 +1284,8 @@ def query_rag_stream(
     org_id = _parse_uuid(x_org_id)
     turn_id = _coerce_uuid(request.turn_id)
     idempotency_key = request.idempotency_key or idempotency_key_header
+
+    plan_memory_enabled = _plan_memory_enabled(plan)
 
     try:
         session = _resolve_session(
@@ -1004,6 +1314,16 @@ def query_rag_stream(
             initial_state="pending",
         )
         conversation_memory = chat_service.build_conversation_memory(db, session)
+        memory_session_key = f"chat:{session.id}"
+        tenant_id_value, user_id_value = _memory_subject_ids(session, user_id, org_id)
+        conversation_memory, memory_info = merge_lightmem_context(
+            question,
+            conversation_memory,
+            session_key=memory_session_key,
+            tenant_id=tenant_id_value,
+            user_id=user_id_value,
+            plan_memory_enabled=plan_memory_enabled,
+        )
         intent_result = llm_service.classify_query_intent(question)
         intent_decision = (intent_result.get("decision") or "pass").lower()
         intent_reason = intent_result.get("reason")
@@ -1023,6 +1343,10 @@ def query_rag_stream(
                 model_used=intent_model,
                 conversation_memory=conversation_memory,
             )
+            response.meta = {
+                **(response.meta or {}),
+                "memory": dict(memory_info),
+            }
             db.commit()
             if needs_summary:
                 chat_service.enqueue_session_summary(session.id)
@@ -1127,6 +1451,9 @@ def query_rag_stream(
                     "rag_mode": rag_mode,
                 },
             }
+            if prompt_metadata:
+                initial_meta["prompt"] = prompt_metadata
+            initial_meta["memory"] = dict(memory_info)
             yield json.dumps(
                 {
                     "event": "metadata",
@@ -1141,7 +1468,9 @@ def query_rag_stream(
                 for event in llm_service.stream_rag_answer(
                     question,
                     context_chunks,
+                    conversation_memory=conversation_memory,
                     judge_result=judge_result,
+                    prompt_metadata=prompt_metadata,
                 ):
                     if event.get("type") == "token":
                         token = event.get("text") or ""
@@ -1204,8 +1533,25 @@ def query_rag_stream(
                     "selected_filing_id": selected_filing_id,
                     "related_filings": related_meta,
                 }
+                if prompt_metadata:
+                    meta_payload["prompt"] = prompt_metadata
                 meta_payload["evidence_version"] = "v2"
                 meta_payload["evidence_diff"] = diff_meta
+                summary_captured = store_lightmem_summary(
+                    question=question,
+                    answer=answer_text,
+                    session=session,
+                    turn_id=turn_id,
+                    session_key=memory_session_key,
+                    tenant_id=tenant_id_value,
+                    user_id=user_id_value,
+                    plan_memory_enabled=plan_memory_enabled,
+                    rag_mode=payload_rag_mode,
+                    filing_id=selected_filing_id,
+                )
+                if summary_captured:
+                    memory_info["captured"] = True
+                meta_payload["memory"] = dict(memory_info)
 
                 state_value = "error" if error else "ready"
                 chat_service.update_message_state(

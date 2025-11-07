@@ -54,6 +54,22 @@ class PlanQuota:
         }
 
 
+@dataclass(slots=True)
+class PlanMemoryFlags:
+    """Fine-grained LightMem feature toggles stored with the plan."""
+
+    watchlist_enabled: bool = False
+    digest_enabled: bool = False
+    chat_enabled: bool = False
+
+    def to_dict(self) -> Dict[str, bool]:
+        return {
+            "watchlist": self.watchlist_enabled,
+            "digest": self.digest_enabled,
+            "chat": self.chat_enabled,
+        }
+
+
 PLAN_QUOTA_PRESETS: Mapping[str, PlanQuota] = {
     "free": PlanQuota(chat_requests_per_day=20, rag_top_k=4, self_check_enabled=False, peer_export_row_limit=0),
     "pro": PlanQuota(chat_requests_per_day=500, rag_top_k=6, self_check_enabled=True, peer_export_row_limit=100),
@@ -78,6 +94,7 @@ class PersistedPlanSettings:
     updated_by: Optional[str]
     change_note: Optional[str]
     checkout_requested: bool = False
+    memory_flags: PlanMemoryFlags = PlanMemoryFlags()
 
 
 @dataclass(slots=True)
@@ -92,6 +109,9 @@ class PlanContext:
     updated_by: Optional[str] = None
     change_note: Optional[str] = None
     checkout_requested: bool = False
+    memory_watchlist_enabled: bool = False
+    memory_digest_enabled: bool = False
+    memory_chat_enabled: bool = False
 
     def allows(self, entitlement: str) -> bool:
         return entitlement in self.entitlements
@@ -105,6 +125,13 @@ class PlanContext:
             "evidence.inline_pdf": self.allows("evidence.inline_pdf"),
             "evidence.diff": self.allows("evidence.diff"),
             "timeline.full": self.allows("timeline.full"),
+        }
+
+    def memory_flags(self) -> Mapping[str, bool]:
+        return {
+            "watchlist": self.memory_watchlist_enabled,
+            "digest": self.memory_digest_enabled,
+            "chat": self.memory_chat_enabled,
         }
 
 
@@ -138,6 +165,16 @@ def _parse_entitlements(raw: Optional[str]) -> set[str]:
         return set()
     items = {item.strip() for item in raw.split(",")}
     return {item for item in items if item}
+
+
+def _parse_memory_flags(payload: Optional[Mapping[str, Any]]) -> PlanMemoryFlags:
+    if not isinstance(payload, Mapping):
+        return PlanMemoryFlags()
+    return PlanMemoryFlags(
+        watchlist_enabled=bool(payload.get("watchlist")),
+        digest_enabled=bool(payload.get("digest")),
+        chat_enabled=bool(payload.get("chat")),
+    )
 
 
 def _plan_settings_path() -> Path:
@@ -300,6 +337,8 @@ def _load_plan_settings(*, reload: bool = False) -> Optional[PersistedPlanSettin
         strict=False,
     )
 
+    memory_flags = _parse_memory_flags(payload.get("memoryFlags"))
+
     settings = PersistedPlanSettings(
         plan_tier=tier,
         entitlements=tuple(entitlements),
@@ -309,6 +348,7 @@ def _load_plan_settings(*, reload: bool = False) -> Optional[PersistedPlanSettin
         updated_by=_normalize_actor(payload.get("updatedBy")),
         change_note=_normalize_note(payload.get("changeNote")),
         checkout_requested=payload.get("checkoutRequested") is True,
+        memory_flags=memory_flags,
     )
     _PLAN_SETTINGS_CACHE = settings
     return settings
@@ -325,6 +365,7 @@ def _store_plan_settings(settings: PersistedPlanSettings) -> None:
         "updatedBy": settings.updated_by,
         "changeNote": settings.change_note,
         "checkoutRequested": settings.checkout_requested,
+        "memoryFlags": settings.memory_flags.to_dict(),
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -389,6 +430,8 @@ def _build_plan_context(
     updated_by = settings.updated_by if settings else None
     change_note = settings.change_note if settings else None
 
+    memory_flags = settings.memory_flags if settings else PlanMemoryFlags()
+
     return PlanContext(
         tier=tier,
         expires_at=expires_at,
@@ -398,6 +441,9 @@ def _build_plan_context(
         updated_by=updated_by,
         change_note=change_note,
         checkout_requested=settings.checkout_requested if settings else False,
+        memory_watchlist_enabled=memory_flags.watchlist_enabled,
+        memory_digest_enabled=memory_flags.digest_enabled,
+        memory_chat_enabled=memory_flags.chat_enabled,
     )
 
 
@@ -421,6 +467,7 @@ def update_plan_context(
     change_note: Optional[str] = None,
     trigger_checkout: bool = False,
     force_checkout_requested: Optional[bool] = None,
+    memory_flags: Optional[Mapping[str, Any]] = None,
 ) -> PlanContext:
     tier = _normalize_plan_tier(plan_tier)
 
@@ -452,6 +499,8 @@ def update_plan_context(
     elif trigger_checkout:
         checkout_requested = True
 
+    memory_settings = _parse_memory_flags(memory_flags)
+
     settings = PersistedPlanSettings(
         plan_tier=tier,
         entitlements=tuple(cleaned),
@@ -461,6 +510,7 @@ def update_plan_context(
         updated_by=_normalize_actor(updated_by),
         change_note=_normalize_note(change_note),
         checkout_requested=checkout_requested,
+        memory_flags=memory_settings,
     )
 
     try:
@@ -488,6 +538,7 @@ def update_plan_context(
             "triggerCheckout": trigger_checkout,
             "forceCheckoutRequested": force_checkout_requested,
             "checkoutRequested": settings.checkout_requested,
+            "memoryFlags": settings.memory_flags.to_dict(),
         },
     )
 
@@ -524,6 +575,7 @@ def apply_checkout_upgrade(
         change_note=change_note,
         trigger_checkout=False,
         force_checkout_requested=False,
+        memory_flags=existing.memory_flags.to_dict() if existing else None,
     )
 
 
@@ -544,4 +596,5 @@ def clear_checkout_requested(*, updated_by: Optional[str], change_note: Optional
         change_note=change_note,
         trigger_checkout=False,
         force_checkout_requested=False,
+        memory_flags=existing.memory_flags.to_dict(),
     )

@@ -24,6 +24,8 @@ def test_fetch_news_batch(monkeypatch):
         link="https://example.com/news/123",
         description="Sample summary content.",
         published_parsed=time.gmtime(0),
+        rights="KOGL 제1유형 출처표시",
+        links=[{"rel": "license", "href": "https://www.kogl.or.kr/info/licenseType1.do"}],
     )
 
     result = types.SimpleNamespace(
@@ -40,6 +42,8 @@ def test_fetch_news_batch(monkeypatch):
     assert article.headline == "Sample Headline"
     assert article.url == "https://example.com/news/123"
     assert "Sample Headline" in article.original_text
+    assert article.license_type == "KOGL 제1유형 (출처표시)"
+    assert article.license_url == "https://www.kogl.or.kr/info/licenseType1.do"
 
 
 def test_fetch_news_batch_fallback(monkeypatch):
@@ -51,4 +55,3 @@ def test_fetch_news_batch_fallback(monkeypatch):
 
     result = news_fetcher.fetch_news_batch(limit_per_feed=1, use_mock_fallback=True)
     assert result is sentinel
-

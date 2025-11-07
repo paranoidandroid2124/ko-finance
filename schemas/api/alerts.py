@@ -165,3 +165,128 @@ class AlertRuleResponse(BaseModel):
 class AlertRuleListResponse(BaseModel):
     items: List[AlertRuleResponse]
     plan: AlertPlanInfo
+
+
+class WatchlistRadarSummary(BaseModel):
+    totalDeliveries: int
+    totalEvents: int
+    uniqueTickers: int
+    topTickers: List[str] = Field(default_factory=list)
+    topChannels: Dict[str, int] = Field(default_factory=dict)
+    topRules: List[str] = Field(default_factory=list)
+    failedDeliveries: int = 0
+    channelFailures: Dict[str, int] = Field(default_factory=dict)
+    windowStart: Optional[str] = None
+    windowEnd: Optional[str] = None
+
+
+class WatchlistRadarItem(BaseModel):
+    deliveryId: str
+    ruleId: str
+    ruleName: str
+    channel: str
+    eventType: str
+    ruleTags: List[str] = Field(default_factory=list)
+    ruleTickers: List[str] = Field(default_factory=list)
+    deliveryStatus: str
+    deliveryError: Optional[str] = None
+    ruleErrorCount: int = 0
+    ticker: Optional[str] = None
+    company: Optional[str] = None
+    category: Optional[str] = None
+    source: Optional[str] = None
+    headline: Optional[str] = None
+    summary: Optional[str] = None
+    sentiment: Optional[float] = None
+    message: Optional[str] = None
+    deliveredAt: str
+    eventTime: Optional[str] = None
+    url: Optional[str] = None
+
+
+class WatchlistRadarResponse(BaseModel):
+    generatedAt: str
+    windowMinutes: int
+    window: Dict[str, str]
+    summary: WatchlistRadarSummary
+    items: List[WatchlistRadarItem]
+
+
+class WatchlistDispatchResult(BaseModel):
+    channel: str
+    status: str
+    delivered: int
+    failed: int
+    error: Optional[str] = None
+
+
+class WatchlistDispatchResponse(BaseModel):
+    summary: WatchlistRadarSummary
+    results: List[WatchlistDispatchResult]
+
+
+class WatchlistDispatchRequest(BaseModel):
+    windowMinutes: Optional[int] = Field(default=1440, ge=5, le=7 * 24 * 60)
+    limit: Optional[int] = Field(default=20, ge=1, le=200)
+    slackTargets: Optional[List[str]] = Field(default=None)
+    emailTargets: Optional[List[str]] = Field(default=None)
+
+
+class WatchlistRuleChannelSummary(BaseModel):
+    type: str
+    label: Optional[str] = None
+    target: Optional[str] = None
+    targets: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class WatchlistRuleConditionDetail(BaseModel):
+    type: str
+    tickers: List[str] = Field(default_factory=list)
+    categories: List[str] = Field(default_factory=list)
+    sectors: List[str] = Field(default_factory=list)
+    minSentiment: Optional[float] = None
+
+
+class WatchlistDeliveryEventDetail(BaseModel):
+    ticker: Optional[str] = None
+    headline: Optional[str] = None
+    summary: Optional[str] = None
+    sentiment: Optional[float] = None
+    category: Optional[str] = None
+    url: Optional[str] = None
+    eventTime: Optional[str] = None
+
+
+class WatchlistDeliveryLog(BaseModel):
+    deliveryId: str
+    channel: str
+    status: str
+    deliveredAt: str
+    error: Optional[str] = None
+    eventCount: int
+    events: List[WatchlistDeliveryEventDetail] = Field(default_factory=list)
+
+
+class WatchlistRuleDetail(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    status: str
+    evaluationIntervalMinutes: int
+    windowMinutes: int
+    cooldownMinutes: int
+    maxTriggersPerDay: Optional[int] = None
+    condition: WatchlistRuleConditionDetail
+    channels: List[WatchlistRuleChannelSummary] = Field(default_factory=list)
+    extras: Dict[str, Any] = Field(default_factory=dict)
+    lastTriggeredAt: Optional[str] = None
+    lastEvaluatedAt: Optional[str] = None
+    errorCount: int = 0
+
+
+class WatchlistRuleDetailResponse(BaseModel):
+    rule: WatchlistRuleDetail
+    recentDeliveries: List[WatchlistDeliveryLog] = Field(default_factory=list)
+    totalDeliveries: int = 0
+    failedDeliveries: int = 0

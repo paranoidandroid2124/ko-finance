@@ -34,6 +34,12 @@ class PlanFeatureFlagsSchema(BaseModel):
     timelineFull: bool = False
 
 
+class PlanMemoryFlagsSchema(BaseModel):
+    watchlist: bool = False
+    digest: bool = False
+    chat: bool = False
+
+
 class PlanContextUpdateRequest(BaseModel):
     planTier: PlanTier = Field(..., description="Desired default plan tier.")
     expiresAt: Optional[str] = Field(
@@ -61,6 +67,10 @@ class PlanContextUpdateRequest(BaseModel):
     triggerCheckout: bool = Field(
         default=False,
         description="Set true to begin Toss Payments checkout after saving.",
+    )
+    memoryFlags: PlanMemoryFlagsSchema = Field(
+        default_factory=PlanMemoryFlagsSchema,
+        description="LightMem feature toggles applied to the plan tier.",
     )
 
     @field_validator("entitlements", mode="before")
@@ -91,3 +101,47 @@ class PlanContextResponse(BaseModel):
         default=False,
         description="Indicates the caller requested a Toss Payments checkout as part of this response.",
     )
+    memoryFlags: PlanMemoryFlagsSchema = Field(
+        default_factory=PlanMemoryFlagsSchema,
+        description="Resolved LightMem feature toggles for this plan.",
+    )
+
+
+class PlanCatalogPriceSchema(BaseModel):
+    amount: float = Field(default=0.0, description="Numeric price amount for display.")
+    currency: str = Field(default="KRW", description="Currency code (e.g. KRW, USD).")
+    interval: str = Field(default="월", description="Billing interval label (e.g. 월, 연).")
+    note: Optional[str] = Field(default=None, description="Supplementary price note displayed under the amount.")
+
+
+class PlanCatalogFeatureSchema(BaseModel):
+    text: str = Field(..., description="Description copy for the feature.")
+    highlight: Optional[bool] = Field(default=None, description="Whether to style the feature as a highlight.")
+    icon: Optional[str] = Field(default=None, description="Optional icon identifier used by the client.")
+
+
+class PlanCatalogTierSchema(BaseModel):
+    tier: PlanTier = Field(..., description="Plan tier identifier.")
+    title: str = Field(..., description="Display title for marketing cards.")
+    tagline: str = Field(..., description="Short descriptive sentence for the tier.")
+    description: Optional[str] = Field(default=None, description="Longer descriptive body copy.")
+    badge: Optional[str] = Field(default=None, description="Optional badge label (예: Starter, Premium).")
+    price: PlanCatalogPriceSchema = Field(default_factory=PlanCatalogPriceSchema)
+    ctaLabel: str = Field(..., description="CTA button label.")
+    ctaHref: str = Field(..., description="CTA button link path or URL.")
+    features: list[PlanCatalogFeatureSchema] = Field(default_factory=list, description="Feature bullet list.")
+    imageUrl: Optional[str] = Field(default=None, description="Optional marketing image or illustration URL.")
+    supportNote: Optional[str] = Field(default=None, description="Extra footnote (ex. 지원 안내).")
+
+
+class PlanCatalogResponse(BaseModel):
+    tiers: list[PlanCatalogTierSchema] = Field(default_factory=list, description="Plan catalog entries.")
+    updatedAt: Optional[str] = Field(default=None, description="Timestamp of the latest catalog update.")
+    updatedBy: Optional[str] = Field(default=None, description="Actor recorded with the latest catalog update.")
+    note: Optional[str] = Field(default=None, description="Optional note stored with the last catalog update.")
+
+
+class PlanCatalogUpdateRequest(BaseModel):
+    tiers: list[PlanCatalogTierSchema] = Field(default_factory=list, description="Plan catalog tier definitions.")
+    updatedBy: Optional[str] = Field(default=None, description="Operator recorded for the update.")
+    note: Optional[str] = Field(default=None, description="Optional note describing the catalog change.")

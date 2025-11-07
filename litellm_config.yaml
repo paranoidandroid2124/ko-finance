@@ -1,7 +1,8 @@
-# SSoT(3, 4) 기반 LiteLLM 설정 파일
-# - 기본 모델: Gemini Flash-Lite (baseline)
-# - 품질 승격 모델: GPT-5 (fallback_model)
-# - 로컬 감성 분석 모델: 주석 처리 (vllm-sentiment)
+﻿# K-Finance LiteLLM configuration
+# - Default model: Gemini Flash-Lite (baseline)
+# - Fallback model: GPT-5 (fallback_model)
+# - Guardrail judge model: GPT-4o mini (judge_model)
+# Provide GEMINI_API_KEY / OPENAI_API_KEY via environment variables before running.
 
 model_list:
   - model_name: baseline  # Default fast model for summarization
@@ -19,19 +20,10 @@ model_list:
       model: "openai/gpt-4o-mini"
       api_key: ${OPENAI_API_KEY}
 
-  # - model_name: qwen14b_lora_local
-  #   litellm_params:
-  #     model: "qwen/Qwen1.5-14B-Chat-AWQ"
-  #     api_base: "http://vllm-sentiment:8001/v1"
-  #     api_key: "EMPTY"
-
 litellm_settings:
-  # 디버깅 및 로깅 레벨 설정
   set_verbose: True
-  # SSoT(8) Langfuse 연동을 위한 설정 (추후 활성화)
-  # success_callback: ["langfuse"]
-  # failure_callback: ["langfuse"]
+  cache: true
 
 router_settings:
-    enable_health_check: True
-    enable_prometheus: True
+  enable_health_check: True
+  enable_prometheus: True

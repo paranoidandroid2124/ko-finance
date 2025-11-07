@@ -11,14 +11,15 @@ import {
   fetchNewsPipeline,
   fetchOpsApiKeys,
   fetchOpsAlertChannels,
+  fetchAlertTemplates,
+  generateAlertSampleMetadata,
   fetchOpsRunHistory,
   fetchOpsSchedules,
   fetchRagConfig,
   fetchRagReindexHistory,
   fetchRagReindexQueue,
+  fetchRagSlaSummary,
   fetchSystemPrompts,
-  fetchAlertTemplates,
-  generateAlertSampleMetadata,
   fetchUiUxSettings,
   triggerOpsSchedule,
   triggerRagReindex,
@@ -48,9 +49,6 @@ import {
   type AdminLlmProfileUpsertResult,
   type AdminOpsApiKeyResponse,
   type AdminOpsApiKeyUpdatePayload,
-  type AdminOpsTemplateList,
-  type AdminOpsSampleMetadataPayload,
-  type AdminOpsSampleMetadataResult,
   type AdminOpsAlertChannelCreatePayload,
   type AdminOpsAlertChannelResponse,
   type AdminOpsAlertChannelPreviewPayload,
@@ -60,6 +58,9 @@ import {
   type AdminOpsNewsPipelineResponse,
   type AdminOpsNewsPipelineUpdatePayload,
   type AdminOpsRunHistoryResponse,
+  type AdminOpsTemplateList,
+  type AdminOpsSampleMetadataPayload,
+  type AdminOpsSampleMetadataResult,
   type AdminOpsScheduleList,
   type AdminOpsTriggerPayload,
   type AdminOpsTriggerResult,
@@ -74,6 +75,7 @@ import {
   type AdminRagReindexQueue,
   type AdminRagReindexRetryPayload,
   type AdminRagReindexRetryResult,
+  type AdminRagSlaResponse,
   type AdminSystemPrompt,
   type AdminSystemPromptList,
   type AdminSystemPromptUpdatePayload,
@@ -97,6 +99,7 @@ export const ADMIN_RAG_CONFIG_KEY = ["admin", "rag", "config"] as const;
 export const ADMIN_RAG_REINDEX_KEY = ["admin", "rag", "reindex"] as const;
 export const ADMIN_RAG_REINDEX_HISTORY_KEY = ["admin", "rag", "reindexHistory"] as const;
 export const ADMIN_RAG_REINDEX_QUEUE_KEY = ["admin", "rag", "reindexQueue"] as const;
+export const ADMIN_RAG_SLA_SUMMARY_KEY = ["admin", "rag", "slaSummary"] as const;
 export const ADMIN_OPS_SCHEDULES_KEY = ["admin", "ops", "schedules"] as const;
 export const ADMIN_OPS_NEWS_PIPELINE_KEY = ["admin", "ops", "newsPipeline"] as const;
 export const ADMIN_OPS_API_KEYS_KEY = ["admin", "ops", "apiKeys"] as const;
@@ -237,6 +240,7 @@ export const useTriggerRagReindex = () => {
       await queryClient.invalidateQueries({ queryKey: ADMIN_RAG_REINDEX_KEY });
       await queryClient.invalidateQueries({ queryKey: ADMIN_RAG_REINDEX_HISTORY_KEY });
       await queryClient.invalidateQueries({ queryKey: ADMIN_RAG_REINDEX_QUEUE_KEY });
+      await queryClient.invalidateQueries({ queryKey: ADMIN_RAG_SLA_SUMMARY_KEY });
     },
   });
 };
@@ -267,6 +271,16 @@ export const useRagReindexQueue = (
     retry: shouldRetry,
   });
 
+export const useRagSlaSummary = (enabled = true, rangeDays = 7) =>
+  useQuery<AdminRagSlaResponse, Error>({
+    queryKey: [...ADMIN_RAG_SLA_SUMMARY_KEY, rangeDays],
+    queryFn: () => fetchRagSlaSummary(rangeDays),
+    enabled,
+    staleTime: 60_000,
+    refetchInterval: enabled ? 60_000 : false,
+    retry: shouldRetry,
+  });
+
 export const useRetryRagReindexQueue = () => {
   const queryClient = useQueryClient();
   return useMutation<AdminRagReindexRetryResult, Error, AdminRagReindexRetryPayload>({
@@ -275,6 +289,7 @@ export const useRetryRagReindexQueue = () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ADMIN_RAG_REINDEX_HISTORY_KEY }),
         queryClient.invalidateQueries({ queryKey: ADMIN_RAG_REINDEX_QUEUE_KEY }),
+        queryClient.invalidateQueries({ queryKey: ADMIN_RAG_SLA_SUMMARY_KEY }),
       ]);
     },
   });
@@ -288,6 +303,7 @@ export const useRemoveRagQueueEntry = () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ADMIN_RAG_REINDEX_QUEUE_KEY }),
         queryClient.invalidateQueries({ queryKey: ADMIN_RAG_REINDEX_HISTORY_KEY }),
+        queryClient.invalidateQueries({ queryKey: ADMIN_RAG_SLA_SUMMARY_KEY }),
       ]);
     },
   });

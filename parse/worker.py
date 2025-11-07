@@ -42,4 +42,16 @@ app.conf.beat_schedule = {
         "args": (),
         "kwargs": {},
     },
+    "daily-brief-pdf": {
+        "task": "m4.generate_daily_brief",
+        "schedule": crontab(hour=7, minute=30, day_of_week="mon-fri"),
+        "args": (),
+        "kwargs": {},
+    },
+    "lightmem-longterm-update": {
+        "task": "memory.promote_long_term",
+        "schedule": crontab(hour=3, minute=15),
+        "args": (),
+        "kwargs": {},
+    },
 }

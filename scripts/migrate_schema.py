@@ -296,6 +296,9 @@ def _add_columns() -> None:
     logger.info("Ensuring reliability columns on news tables.")
     _execute('ALTER TABLE news_signals ADD COLUMN IF NOT EXISTS "source_reliability" DOUBLE PRECISION;')
     _execute('ALTER TABLE news_window_aggregates ADD COLUMN IF NOT EXISTS "source_reliability" DOUBLE PRECISION;')
+    logger.info("Ensuring news license metadata columns.")
+    _execute('ALTER TABLE news_signals ADD COLUMN IF NOT EXISTS "license_type" TEXT;')
+    _execute('ALTER TABLE news_signals ADD COLUMN IF NOT EXISTS "license_url" TEXT;')
 
 
 def migrate_schema() -> None:

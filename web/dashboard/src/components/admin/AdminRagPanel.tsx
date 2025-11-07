@@ -11,8 +11,10 @@ import {
   useUpdateRagConfig,
   useRetryRagReindexQueue,
   useRemoveRagQueueEntry,
+  useRagSlaSummary,
 } from "@/hooks/useAdminConfig";
 import { AdminActorNoteFields } from "@/components/admin/AdminActorNoteFields";
+import { RagSlaSummaryCard } from "@/components/admin/rag/RagSlaSummaryCard";
 import { useAdminSession } from "@/hooks/useAdminSession";
 import { resolveApiBase } from "@/lib/apiBase";
 import type { AdminRagFilter, AdminRagReindexRecord, AdminRagReindexQueueEntry } from "@/lib/adminApi";
@@ -272,6 +274,86 @@ export function AdminRagPanel() {
   const triggerReindex = useTriggerRagReindex();
   const retryQueueMutation = useRetryRagReindexQueue();
   const removeQueueMutation = useRemoveRagQueueEntry();
+  const {
+    data: ragSlaSummary,
+    isLoading: isSlaSummaryLoading,
+    isFetching: isSlaSummaryFetching,
+  } = useRagSlaSummary(isSessionReady);
+
+  const slaSummaryLoading = isSlaSummaryLoading || isSlaSummaryFetching;
+
+  const slaMetrics = useMemo(() => {
+    if (!ragSlaSummary?.summary) {
+      return null;
+    }
+    const { totalRuns, slaBreaches } = ragSlaSummary.summary;
+    const metCount = Math.max(totalRuns - slaBreaches, 0);
+    const satisfiedRate = totalRuns > 0 ? (metCount / totalRuns) * 100 : null;
+    const toneClass =
+      satisfiedRate === null
+        ? "text-text-secondaryLight dark:text-text-secondaryDark"
+        : satisfiedRate >= 95
+          ? "text-emerald-600 dark:text-emerald-200"
+          : satisfiedRate >= 80
+            ? "text-amber-600 dark:text-amber-200"
+            : "text-rose-600 dark:text-rose-200";
+
+    return {
+      totalRuns,
+      metCount,
+      breachCount: slaBreaches,
+      satisfiedRate,
+      targetMinutes: ragSlaSummary.slaTargetMinutes,
+      toneClass,
+    };
+  }, [ragSlaSummary]);
+
+  const latencyLabels = useMemo(() => {
+    if (!ragSlaSummary?.summary) {
+      return null;
+    }
+    return {
+      p50Duration: formatDuration(ragSlaSummary.summary.p50TotalMs),
+      p95Duration: formatDuration(ragSlaSummary.summary.p95TotalMs),
+      p50Queue: formatDuration(ragSlaSummary.summary.p50QueueMs),
+      p95Queue: formatDuration(ragSlaSummary.summary.p95QueueMs),
+    };
+  }, [ragSlaSummary]);
+
+  const queueSnapshot = useMemo(() => {
+    const summary = reindexQueue?.summary;
+    if (!summary) {
+      return null;
+    }
+    const slaRiskCount = summary.slaRiskCount ?? 0;
+    const ready = summary.ready ?? 0;
+    const toneClass =
+      slaRiskCount > 0
+        ? "text-amber-600 dark:text-amber-200"
+        : ready > 25
+          ? "text-sky-600 dark:text-sky-200"
+          : "text-emerald-600 dark:text-emerald-200";
+    return {
+      toneClass,
+      oldestLabel: summary.oldestQueuedMs ? formatDuration(summary.oldestQueuedMs) : null,
+      cooldownLabel: summary.averageCooldownRemainingMs ? formatDuration(summary.averageCooldownRemainingMs) : null,
+      nextAutoLabel: summary.nextAutoRetryAt ? formatHistoryTimestamp(summary.nextAutoRetryAt) : null,
+    };
+  }, [reindexQueue]);
+
+  const queueSummaryForCard = useMemo(() => {
+    const summary = reindexQueue?.summary;
+    if (!summary) {
+      return null;
+    }
+    return {
+      ready: summary.ready ?? 0,
+      slaRiskCount: summary.slaRiskCount ?? 0,
+      coolingDown: summary.coolingDown ?? 0,
+    };
+  }, [reindexQueue]);
+
+  const slaDataSourceSuffix = ragSlaSummary ? ` · 최근 ${ragSlaSummary.rangeDays}일 집계` : "";
 
   useEffect(() => {
     if (!ragConfig) {
@@ -652,7 +734,7 @@ export function AdminRagPanel() {
 
   if (isAdminSessionLoading) {
     return (
-      <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">관리자 세션을 확인하는 중이에요…</p>
       </section>
     );
@@ -660,7 +742,7 @@ export function AdminRagPanel() {
 
   if (isUnauthorized) {
     return (
-      <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
           RAG 설정을 보려면 관리자 토큰 로그인이 필요해요.
         </p>
@@ -680,8 +762,8 @@ export function AdminRagPanel() {
   }
 
   return (
-    <section className="space-y-6 rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
-      <header className="space-y-2 border-b border-border-light pb-4 dark:border-border-dark">
+    <section className="space-y-4 rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <header className="space-y-1 border-b border-border-light pb-3 dark:border-border-dark">
         <h2 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">RAG 컨텍스트 설정</h2>
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
           데이터 소스, 필터, 임계값을 조정해 근거 패널의 신뢰도를 높여 주세요.
@@ -706,12 +788,22 @@ export function AdminRagPanel() {
         </div>
       ) : null}
 
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-text-secondaryLight dark:text-text-secondaryDark">
-            데이터 소스
-          </h3>
-          <button
+      <RagSlaSummaryCard
+        metrics={slaMetrics}
+        latencyLabels={latencyLabels}
+        queueSnapshot={queueSnapshot}
+        queueSummary={queueSummaryForCard}
+        slaSummaryLoading={slaSummaryLoading}
+        dataSourceSuffix={slaDataSourceSuffix}
+        satisfiedRateDecimals={1}
+      />
+
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-text-secondaryLight dark:text-text-secondaryDark">
+              데이터 소스
+            </h3>
+            <button
             type="button"
             onClick={handleAddSource}
             className="inline-flex items-center rounded-lg border border-border-light px-3 py-1.5 text-sm font-semibold text-text-primaryLight transition hover:bg-border-light/40 dark:border-border-dark dark:text-text-primaryDark dark:hover:bg-border-dark/40"
@@ -720,11 +812,11 @@ export function AdminRagPanel() {
           </button>
         </div>
 
-        <div className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-2">
           {formState.sources.map((source, index) => (
             <article
               key={`rag-source-${index}`}
-              className="rounded-xl border border-border-light bg-background-base p-4 dark:border-border-dark dark:bg-background-cardDark"
+              className="flex h-full flex-col rounded-xl border border-border-light bg-background-base p-4 dark:border-border-dark dark:bg-background-cardDark"
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h4 className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">소스 {index + 1}</h4>
@@ -769,17 +861,16 @@ export function AdminRagPanel() {
                     className="rounded-lg border border-border-light bg-background-base px-3 py-2 text-sm text-text-primaryLight focus:border-primary focus:outline-none dark:border-border-dark dark:bg-background-cardDark dark:text-text-primaryDark"
                   />
                 </label>
+                <label className="md:col-span-2 flex flex-col gap-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                  Metadata (JSON)
+                  <textarea
+                    value={source.metadataText}
+                    onChange={(event) => handleSourceChange(index, "metadataText", event.target.value)}
+                    className="min-h-[140px] rounded-lg border border-border-light bg-background-base px-3 py-2 font-mono text-sm text-text-primaryLight focus:border-primary focus:outline-none dark:border-border-dark dark:bg-background-cardDark dark:text-text-primaryDark"
+                    placeholder='{"language": "ko"}'
+                  />
+                </label>
               </div>
-
-              <label className="mt-3 flex flex-col gap-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-                Metadata (JSON)
-                <textarea
-                  value={source.metadataText}
-                  onChange={(event) => handleSourceChange(index, "metadataText", event.target.value)}
-                  className="min-h-[140px] rounded-lg border border-border-light bg-background-base px-3 py-2 font-mono text-sm text-text-primaryLight focus:border-primary focus:outline-none dark:border-border-dark dark:bg-background-cardDark dark:text-text-primaryDark"
-                  placeholder='{"language": "ko"}'
-                />
-              </label>
             </article>
           ))}
         </div>
@@ -1549,4 +1640,3 @@ export function AdminRagPanel() {
     </section>
   );
 }
-

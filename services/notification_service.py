@@ -266,10 +266,22 @@ def _handle_email(
         "Content-Type": "application/json",
     }
 
-    result = _post_with_backoff("https://api.sendgrid.com/v3/mail/send", payload, headers=headers, success_count=len(recipients), result_metadata={"recipients": recipients})
+    result = _post_with_backoff(
+        "https://api.sendgrid.com/v3/mail/send",
+        payload,
+        headers=headers,
+        success_count=len(recipients),
+        result_metadata={"recipients": recipients},
+    )
     if result.status == "delivered":
         return result
-    return NotificationResult(status=result.status, error=result.error or "이메일 발송 실패", delivered=result.delivered, failed=result.failed or len(recipients), metadata={"recipients": recipients})
+    return NotificationResult(
+        status=result.status,
+        error=result.error or "이메일 발송 실패",
+        delivered=result.delivered,
+        failed=result.failed or len(recipients),
+        metadata={"recipients": recipients},
+    )
 
 
 def _handle_slack(

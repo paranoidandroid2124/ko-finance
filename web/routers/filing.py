@@ -23,7 +23,7 @@ from schemas.api.filing import (
     FilingXmlResponse,
     SummaryResponse,
 )
-from services import minio_service
+from services import storage_service
 
 router = APIRouter(prefix="/filings", tags=["Filings"])
 logger = get_logger(__name__)
@@ -358,9 +358,9 @@ def _load_xml_document(entry: Dict[str, Any], temp_dir: Path, filing_id: uuid.UU
             except OSError as exc:
                 logger.warning("Failed to read XML file for filing %s (%s): %s", filing_id, candidate_path, exc)
 
-    if object_name and minio_service.is_enabled():
+    if object_name and storage_service.is_enabled():
         target_path = temp_dir / Path(object_name).name
-        downloaded = minio_service.download_file(object_name, str(target_path))
+        downloaded = storage_service.download_file(object_name, str(target_path))
         if downloaded:
             try:
                 path_obj = Path(downloaded)

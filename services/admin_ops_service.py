@@ -78,10 +78,12 @@ _ALERT_TEMPLATE_GALLERY: List[Dict[str, object]] = [
             "summary": "핵심 변화를 두 줄로 요약해두었어요. 자세한 근거는 하단 링크에서 살펴보실 수 있어요.",
             "url": "https://k-finance.example.com/evidence/esg-weekly",
             "volume": "12,345주",
-            "markdown": "*{headline}*
-{summary}
-- 거래량: {volume}
-- 바로가기: {url}",
+            "markdown": (
+                "*{headline}*\n"
+                "{summary}\n"
+                "- 거래량: {volume}\n"
+                "- 바로가기: {url}"
+            ),
             "subject": "[K-Finance] 오늘의 따뜻한 금융 브리핑",
         },
         "description": "슬랙 채널에 하루의 시작을 알리는 짧은 요약을 전달할 때 사용해요.",
@@ -94,15 +96,15 @@ _ALERT_TEMPLATE_GALLERY: List[Dict[str, object]] = [
         "messageTemplate": None,
         "metadata": {
             "subject_template": "[K-Finance] {company} 한 주 살펴보기",
-            "body_template": "안녕하세요! {company} 관련 새로 수집한 근거를 따뜻하게 정리해두었어요.
-
-- 주요 이슈: {headline}
-- 추가 자료: {url}
-
-함께 나누고 싶은 의견이 있으면 언제든 답장 주세요!",
-            "company": "한빛에너지",
-            "headline": "재무제표에 반영된 친환경 투자 확대",
-            "url": "https://k-finance.example.com/reports/hanbit",
+            "body_template": (
+                "안녕하세요! {company} 관련 새로 수집한 근거를 따뜻하게 정리해두었어요.\n\n"
+                "- 주요 이슈: {headline}\n"
+                "- 추가 자료: {url}\n\n"
+                "함께 나누고 싶은 의견이 있으면 언제든 답장 주세요!"
+            ),
+            "company": "샘플기업",
+            "headline": "재무 성과와 ESG 전략을 함께 정리했어요",
+            "url": "https://k-finance.example.com/reports/sample",
         },
         "description": "구독자에게 주간 변화를 차분한 어조로 공유하는 이메일 형식이에요.",
     },
@@ -113,7 +115,7 @@ _ALERT_TEMPLATE_GALLERY: List[Dict[str, object]] = [
         "template": None,
         "messageTemplate": "[긴급] {company} 관련 새 소식이 들어왔어요! {message}",
         "metadata": {
-            "company": "빛나은행",
+            "company": "샘플은행",
             "message": "신용평가사가 등급 전망을 상향했어요. 세부 지표를 바로 확인해보세요!",
             "link": "https://k-finance.example.com/alerts/bnn",
         },
@@ -167,6 +169,27 @@ def _normalize_integer(value: Any) -> Optional[int]:
         except ValueError:
             return None
     return None
+
+
+def _normalize_targets(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        candidates = value.replace("\r", "\n").split("\n")
+    elif isinstance(value, (list, tuple, set)):
+        candidates = list(value)
+    else:
+        return []
+
+    result: List[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        text = str(candidate).strip()
+        if not text or text in seen:
+            continue
+        result.append(text)
+        seen.add(text)
+    return result
 
 
 
@@ -552,6 +575,134 @@ def update_api_keys(
     return payload
 
 
+def create_alert_channel(
+    *,
+    channel: Mapping[str, Any],
+    actor: str,
+    note: Optional[str],
+) -> Dict[str, object]:
+    existing_record = load_alert_channels()
+    existing_channels = existing_record.get("channels") if isinstance(existing_record, Mapping) else []
+    existing_keys = {
+        str(item.get("key"))
+        for item in existing_channels or []
+        if isinstance(item, Mapping) and item.get("key")
+    }
+
+    index = len(existing_channels or [])
+    sanitized = _sanitize_alert_channel(channel, index, existing=None)
+
+    base_key = sanitized["key"]
+    candidate = base_key
+    suffix = 1
+    while candidate in existing_keys:
+        candidate = f"{base_key}-{suffix}"
+        suffix += 1
+    sanitized["key"] = candidate
+
+    now = now_iso()
+    sanitized["createdAt"] = now
+    sanitized["updatedAt"] = now
+    if sanitized.get("enabled", True):
+        sanitized["disabledAt"] = None
+        sanitized["disabledBy"] = None
+        sanitized["disabledNote"] = None
+    else:
+        sanitized["disabledAt"] = sanitized.get("disabledAt") or now
+        sanitized["disabledBy"] = sanitized.get("disabledBy") or actor
+        if sanitized.get("disabledNote") is None:
+            sanitized["disabledNote"] = note
+
+    channels: List[Dict[str, Any]] = []
+    if isinstance(existing_channels, Iterable):
+        for entry in existing_channels:
+            if isinstance(entry, Mapping):
+                channels.append(dict(entry))
+    channels.append(sanitized)
+
+    payload = {
+        "channels": channels,
+        "updatedAt": now,
+        "updatedBy": actor,
+        "note": note,
+    }
+    save_alert_channels(payload)
+    append_audit_log(
+        filename="alerts_audit.jsonl",
+        actor=actor,
+        action="alert_channel_create",
+        payload={"note": note, "channel_key": sanitized["key"]},
+    )
+    return payload
+
+
+def update_alert_channels(
+    *,
+    channels: Iterable[Mapping[str, Any]],
+    actor: str,
+    note: Optional[str],
+) -> Dict[str, object]:
+    existing_record = load_alert_channels()
+    existing_channels = existing_record.get("channels") if isinstance(existing_record, Mapping) else []
+    existing_map: Dict[str, Mapping[str, Any]] = {}
+    if isinstance(existing_channels, Iterable):
+        for item in existing_channels:
+            if isinstance(item, Mapping):
+                key = _normalize_text(item.get("key"))
+                if key:
+                    existing_map[key] = item
+
+    sanitized_channels: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    now = now_iso()
+
+    for index, entry in enumerate(channels or []):
+        base_key = _normalize_text(entry.get("key"))
+        existing = existing_map.get(base_key) if base_key else None
+        sanitized = _sanitize_alert_channel(entry, index, existing=existing)
+
+        if existing and existing.get("createdAt"):
+            sanitized["createdAt"] = existing.get("createdAt")
+        else:
+            sanitized["createdAt"] = sanitized.get("createdAt") or now
+        sanitized["updatedAt"] = now
+
+        if sanitized.get("enabled", True):
+            sanitized["disabledAt"] = None
+            sanitized["disabledBy"] = None
+            sanitized["disabledNote"] = None
+        else:
+            sanitized["disabledAt"] = sanitized.get("disabledAt") or now
+            sanitized["disabledBy"] = sanitized.get("disabledBy") or actor
+            if sanitized.get("disabledNote") is None:
+                sanitized["disabledNote"] = note
+
+        original_key = sanitized["key"]
+        candidate = original_key
+        suffix = 1
+        while candidate in seen:
+            candidate = f"{original_key}-{suffix}"
+            suffix += 1
+        sanitized["key"] = candidate
+        seen.add(candidate)
+        sanitized_channels.append(sanitized)
+
+    payload = {
+        "channels": sanitized_channels,
+        "updatedAt": now,
+        "updatedBy": actor,
+        "note": note,
+    }
+    save_alert_channels(payload)
+    append_audit_log(
+        filename="alerts_audit.jsonl",
+        actor=actor,
+        action="alert_channels_update",
+        payload={"note": note, "channel_count": len(sanitized_channels)},
+    )
+    return payload
+
+
 def update_channel_status(
     key: str,
     *,
@@ -807,7 +958,7 @@ def build_sample_metadata(
                 selected = entry
                 break
     metadata = dict(selected.get("metadata") if selected else {})
-    now_iso = now_iso()
+    generated_ts = now_iso()
     if channel_key == "slack":
         metadata.setdefault("headline", "ESG 리포트가 새롭게 공개됐어요")
         metadata.setdefault(
@@ -816,15 +967,15 @@ def build_sample_metadata(
         )
         metadata.setdefault("url", "https://k-finance.example.com/evidence/esg-weekly")
         metadata.setdefault("volume", "12,345주")
-        metadata.setdefault("markdown", "*{headline}*
-{summary}
-- 거래량: {volume}
-- 바로가기: {url}")
+        metadata.setdefault(
+            "markdown",
+            "*{headline}*\n{summary}\n- 거래량: {volume}\n- 바로가기: {url}",
+        )
         metadata.setdefault("subject", "[K-Finance] 오늘의 따뜻한 금융 브리핑")
     elif channel_key == "email":
-        metadata.setdefault("company", "한빛에너지")
-        metadata.setdefault("headline", "재무제표에 반영된 친환경 투자 확대")
-        metadata.setdefault("url", "https://k-finance.example.com/reports/hanbit")
+        metadata.setdefault("company", "샘플기업")
+        metadata.setdefault("headline", "재무 성과와 ESG 전략을 함께 정리했어요")
+        metadata.setdefault("url", "https://k-finance.example.com/reports/sample")
         metadata.setdefault(
             "subject_template",
             "[K-Finance] {company} 한 주 살펴보기",
@@ -834,7 +985,7 @@ def build_sample_metadata(
             "안녕하세요! {company} 관련 새로 수집한 근거를 따뜻하게 정리해두었어요.\n\n- 주요 이슈: {headline}\n- 추가 자료: {url}\n\n함께 나누고 싶은 의견이 있으면 언제든 답장 주세요!",
         )
     elif channel_key == "telegram":
-        metadata.setdefault("company", "빛나은행")
+        metadata.setdefault("company", "샘플은행")
         metadata.setdefault(
             "message",
             "신용평가사가 등급 전망을 상향했어요. 세부 지표를 바로 확인해보세요!",
@@ -842,7 +993,7 @@ def build_sample_metadata(
         metadata.setdefault("link", "https://k-finance.example.com/alerts/bnn")
     else:
         metadata.setdefault("message", "오늘도 투자 여정이 순항 중이에요. 궁금한 점이 생기면 바로 도와드릴게요!")
-    metadata.setdefault("generatedAt", now_iso)
+    metadata.setdefault("generatedAt", generated_ts)
     metadata.setdefault("channel_type", channel_key)
     if selected and selected.get("messageTemplate"):
         metadata.setdefault("message", selected["messageTemplate"].format(company="K-Finance", message="새 알림이 도착했어요."))
@@ -890,3 +1041,128 @@ __all__ = [
     "update_news_pipeline",
     "rotate_langfuse_keys",
 ]
+
+def _sanitize_rotation_history(entries: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    sanitized: List[Dict[str, Any]] = []
+    for item in entries or []:
+        if not isinstance(item, Mapping):
+            continue
+        rotated_at = _normalize_text(item.get("rotatedAt"))
+        if not rotated_at:
+            continue
+        sanitized.append(
+            {
+                "rotatedAt": rotated_at,
+                "actor": _normalize_text(item.get("actor")),
+                "note": _normalize_text(item.get("note")),
+                "maskedKey": _normalize_text(item.get("maskedKey")),
+            }
+        )
+    sanitized.sort(key=lambda entry: entry.get("rotatedAt") or "", reverse=True)
+    return sanitized[:50]
+
+
+def _sanitize_alert_channel(
+    entry: Mapping[str, Any],
+    index: int,
+    existing: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    if not isinstance(entry, Mapping):
+        entry = {}
+
+    now = now_iso()
+    existing_mapping = existing if isinstance(existing, Mapping) else {}
+
+    def fallback(key: str, default: Any = None) -> Any:
+        if isinstance(existing_mapping, Mapping) and key in existing_mapping:
+            return existing_mapping.get(key)
+        return default
+
+    raw_key = _normalize_text(entry.get("key")) or _normalize_text(fallback("key"))
+    if not raw_key:
+        label_seed = _normalize_text(entry.get("label")) or fallback("label") or f"channel-{index + 1}"
+        slug = re.sub(r"[^a-z0-9]+", "-", label_seed.lower()).strip("-") if label_seed else ""
+        raw_key = slug or f"channel-{index + 1}"
+
+    label = _normalize_text(entry.get("label")) or _normalize_text(fallback("label")) or raw_key
+    channel_type = _normalize_text(entry.get("channelType")) or _normalize_text(fallback("channelType")) or "email"
+    enabled = bool(entry.get("enabled", fallback("enabled", True)))
+    targets = _normalize_targets(entry.get("targets")) or _normalize_targets(fallback("targets"))
+    metadata = _sanitize_metadata_map(entry.get("metadata")) or _sanitize_metadata_map(fallback("metadata", {}))
+    template = _normalize_text(entry.get("template")) or _normalize_text(fallback("template"))
+    message_template = _normalize_text(entry.get("messageTemplate")) or _normalize_text(fallback("messageTemplate"))
+    description = _normalize_text(entry.get("description")) or _normalize_text(fallback("description"))
+
+    created_at = _normalize_text(entry.get("createdAt")) or _normalize_text(fallback("createdAt")) or now
+    updated_at = _normalize_text(entry.get("updatedAt")) or now
+    disabled_at = _normalize_text(entry.get("disabledAt")) or _normalize_text(fallback("disabledAt"))
+    disabled_by = _normalize_text(entry.get("disabledBy")) or _normalize_text(fallback("disabledBy"))
+    disabled_note = _normalize_text(entry.get("disabledNote")) or _normalize_text(fallback("disabledNote"))
+
+    if enabled:
+        disabled_at = None
+        disabled_by = None
+        disabled_note = None
+
+    return {
+        "key": raw_key,
+        "label": label,
+        "channelType": channel_type,
+        "enabled": enabled,
+        "targets": targets,
+        "metadata": metadata,
+        "template": template,
+        "messageTemplate": message_template,
+        "description": description,
+        "createdAt": created_at,
+        "updatedAt": updated_at,
+        "disabledAt": disabled_at,
+        "disabledBy": disabled_by,
+        "disabledNote": disabled_note,
+    }
+
+
+def load_alert_channels() -> Dict[str, object]:
+    if _OPS_ALERT_CHANNELS_PATH.exists():
+        try:
+            payload = json.loads(_OPS_ALERT_CHANNELS_PATH.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                channels_raw = payload.get("channels")
+                sanitized_channels: List[Dict[str, Any]] = []
+                seen: set[str] = set()
+                if isinstance(channels_raw, list):
+                    for index, item in enumerate(channels_raw):
+                        if not isinstance(item, Mapping):
+                            continue
+                        sanitized = _sanitize_alert_channel(item, index, existing=item)
+                        original_key = sanitized["key"]
+                        candidate = original_key
+                        suffix = 1
+                        while candidate in seen:
+                            candidate = f"{original_key}-{suffix}"
+                            suffix += 1
+                        sanitized["key"] = candidate
+                        seen.add(candidate)
+                        sanitized_channels.append(sanitized)
+                return {
+                    "channels": sanitized_channels,
+                    "updatedAt": payload.get("updatedAt"),
+                    "updatedBy": payload.get("updatedBy"),
+                    "note": payload.get("note"),
+                }
+        except json.JSONDecodeError as exc:  # pragma: no cover
+            logger.warning("Failed to parse alert channels store: %s", exc)
+
+    default_payload = json.loads(json.dumps(_DEFAULT_ALERT_CHANNELS))
+    return default_payload
+
+
+def save_alert_channels(payload: Dict[str, object]) -> None:
+    ensure_parent_dir(_OPS_ALERT_CHANNELS_PATH, logger)
+    try:
+        _OPS_ALERT_CHANNELS_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"Failed to write alert channels config: {exc}") from exc
+
+
+

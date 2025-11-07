@@ -24,9 +24,12 @@ from schemas.api.admin import (
     AdminRagReindexQueueResponse,
     AdminRagReindexRetryRequest,
     AdminRagReindexRetryResponse,
+    AdminRagSlaResponse,
     AdminRagSourceSchema,
 )
-from services import admin_rag_service, vector_service
+from services import admin_rag_service, event_brief_service, reindex_sla_service, report_renderer, vector_service
+from services.admin_audit import append_audit_log
+from services.evidence_package import PackageResult, make_evidence_bundle
 from core.logging import get_logger
 from web.deps_admin import require_admin_session
 
@@ -38,6 +41,8 @@ router = APIRouter(
 
 _AUDIT_DIR = Path("uploads") / "admin"
 logger = get_logger(__name__)
+DEFAULT_SLA_RANGE_DAYS = reindex_sla_service.DEFAULT_RANGE_DAYS
+DEFAULT_SLA_VIOLATION_LIMIT = reindex_sla_service.DEFAULT_VIOLATION_LIMIT
 
 def _to_config_schema(raw: Dict[str, object]) -> AdminRagConfigSchema:
     sources: List[AdminRagSourceSchema] = []
@@ -148,6 +153,9 @@ def _perform_reindex(
     if queue_id:
         admin_rag_service.update_retry_entry(queue_id, status="retrying")
 
+    queued_at = datetime.now(timezone.utc)
+    queued_at_iso = queued_at.isoformat()
+
     admin_rag_service.append_reindex_history(
         task_id=task_id,
         actor=actor,
@@ -161,9 +169,12 @@ def _perform_reindex(
         retry_mode=retry_mode,
         rag_mode=rag_mode or "vector",
         scope_detail=scope_list,
+        queued_at=queued_at_iso,
+        queue_wait_ms=0,
     )
 
     started_at = datetime.now(timezone.utc)
+    queue_wait_ms = int((started_at - queued_at).total_seconds() * 1000)
     admin_rag_service.append_reindex_history(
         task_id=task_id,
         actor=actor,
@@ -178,6 +189,8 @@ def _perform_reindex(
         retry_mode=retry_mode,
         rag_mode=rag_mode or "vector",
         scope_detail=scope_list,
+        queued_at=queued_at_iso,
+        queue_wait_ms=queue_wait_ms,
     )
 
     if queue_id:
@@ -204,6 +217,7 @@ def _perform_reindex(
     except Exception as exc:
         finished_at = datetime.now(timezone.utc)
         duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+        total_elapsed_ms = int((finished_at - queued_at).total_seconds() * 1000)
         error_code = getattr(exc, "detail", None) if isinstance(exc, HTTPException) else exc.__class__.__name__
         failure_note = f"{note or ''} :: {exc}".strip()
         admin_rag_service.append_reindex_history(
@@ -223,6 +237,9 @@ def _perform_reindex(
             retry_mode=retry_mode,
             rag_mode=rag_mode or "vector",
             scope_detail=scope_list,
+            queued_at=queued_at_iso,
+            queue_wait_ms=queue_wait_ms,
+            total_elapsed_ms=total_elapsed_ms,
         )
         if langfuse_span:
             try:
@@ -262,11 +279,81 @@ def _perform_reindex(
 
     finished_at = datetime.now(timezone.utc)
     duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+    total_elapsed_ms = int((finished_at - queued_at).total_seconds() * 1000)
     evidence_diff = admin_rag_service.collect_evidence_diff(
         started_at=started_at,
         finished_at=finished_at,
         scope_detail=scope_list,
+        langfuse_trace_url=langfuse_trace_url,
+        langfuse_trace_id=langfuse_trace_id,
+        langfuse_span_id=langfuse_span_id,
     )
+
+    bundle_kwargs: Dict[str, Optional[str]] = {}
+    bundle_result: Optional[PackageResult] = None
+    try:
+        brief_document = event_brief_service.make_event_brief(
+            task={
+                "taskId": task_id,
+                "actor": actor,
+                "scope": scope_value,
+                "scopeDetail": scope_list,
+                "status": "completed",
+                "note": note,
+                "durationMs": duration_ms,
+                "queueWaitMs": queue_wait_ms,
+                "totalElapsedMs": total_elapsed_ms,
+                "ragMode": rag_mode or "vector",
+            },
+            diff=evidence_diff,
+            trace={
+                "trace_id": langfuse_trace_id,
+                "trace_url": langfuse_trace_url,
+                "span_id": langfuse_span_id,
+            },
+            audit={
+                "log_key": f"rag_event_brief::{task_id}",
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "actor": actor,
+                "message": note,
+            },
+            sla_target_ms=admin_rag_service.REINDEX_SLA_MINUTES * 60 * 1000,
+        )
+        brief_payload = event_brief_service.event_brief_to_dict(brief_document)
+        pdf_path = report_renderer.render_event_brief(brief_payload)
+        bundle_result = make_evidence_bundle(
+            task_id=task_id,
+            pdf_path=pdf_path,
+            brief_payload=brief_payload,
+            diff_payload=brief_payload.get("diff_summary"),
+            trace_payload=brief_payload.get("trace"),
+            audit_payload=brief_payload.get("audit"),
+        )
+        append_audit_log(
+            filename="rag_audit.jsonl",
+            actor=actor,
+            action="rag_event_brief_generated",
+            payload={
+                "taskId": task_id,
+                "scope": scope_list,
+                "pdfObject": bundle_result.pdf_object,
+                "zipObject": bundle_result.zip_object,
+            },
+        )
+    except Exception as exc:  # pragma: no cover - packaging best-effort
+        logger.error("Event brief packaging failed for %s: %s", task_id, exc, exc_info=True)
+        bundle_result = None
+
+    if bundle_result:
+        bundle_kwargs = {
+            "event_brief_path": str(bundle_result.pdf_path),
+            "event_brief_object": bundle_result.pdf_object,
+            "event_brief_url": bundle_result.pdf_url,
+            "evidence_package_path": str(bundle_result.zip_path),
+            "evidence_package_object": bundle_result.zip_object,
+            "evidence_package_url": bundle_result.zip_url,
+            "evidence_manifest_path": str(bundle_result.manifest_path),
+        }
 
     admin_rag_service.append_reindex_history(
         task_id=task_id,
@@ -285,7 +372,32 @@ def _perform_reindex(
         rag_mode=rag_mode or "vector",
         scope_detail=scope_list,
         evidence_diff=evidence_diff if evidence_diff and evidence_diff.get("totalChanges") else evidence_diff,
+        queued_at=queued_at_iso,
+        queue_wait_ms=queue_wait_ms,
+        total_elapsed_ms=total_elapsed_ms,
+        **bundle_kwargs,
     )
+
+    sla_target_ms = admin_rag_service.REINDEX_SLA_MINUTES * 60 * 1000
+    if total_elapsed_ms > sla_target_ms:
+        try:
+            admin_rag_service.handle_reindex_sla_breach(
+                task_id=task_id,
+                actor=actor,
+                scope=scope_value,
+                scope_detail=scope_list,
+                total_elapsed_ms=total_elapsed_ms,
+                duration_ms=duration_ms,
+                queue_wait_ms=queue_wait_ms,
+                retry_mode=retry_mode,
+                queue_id=queue_id,
+                note=note,
+                langfuse_trace_url=langfuse_trace_url,
+                langfuse_trace_id=langfuse_trace_id,
+                langfuse_span_id=langfuse_span_id,
+            )
+        except Exception as exc:  # pragma: no cover - safeguard
+            logger.error("Failed to dispatch SLA breach handler for %s: %s", task_id, exc, exc_info=True)
 
     if langfuse_span:
         try:
@@ -447,10 +559,43 @@ def read_rag_reindex_queue(
             )
             payload["cooldownUntil"] = cooldown_until.isoformat() if cooldown_until else None
             payload["maxAttempts"] = admin_rag_service.AUTO_RETRY_MAX_ATTEMPTS
+            age_ms = admin_rag_service.compute_retry_entry_age(payload)
+            payload["queueAgeMs"] = age_ms
+            if cooldown_until:
+                remaining = int(max((cooldown_until - datetime.now(timezone.utc)).total_seconds(), 0) * 1000)
+                payload["cooldownRemainingMs"] = remaining
+            else:
+                payload["cooldownRemainingMs"] = None
+            if age_ms is not None:
+                payload["slaBreached"] = age_ms > admin_rag_service.REINDEX_SLA_MINUTES * 60 * 1000
+            else:
+                payload["slaBreached"] = False
             entries.append(AdminRagReindexQueueEntrySchema(**payload))
         except Exception:
             continue
     return AdminRagReindexQueueResponse(entries=entries, summary=summary_payload)
+
+
+@router.get(
+    "/sla/summary",
+    response_model=AdminRagSlaResponse,
+    summary="재색인 SLA 지표를 조회합니다.",
+)
+def read_rag_sla_summary(
+    range_days: int = Query(DEFAULT_SLA_RANGE_DAYS, ge=1, le=90),
+    recent_limit: int = Query(DEFAULT_SLA_VIOLATION_LIMIT, ge=5, le=200),
+) -> AdminRagSlaResponse:
+    try:
+        payload = reindex_sla_service.fetch_reindex_sla_summary(
+            range_days=range_days,
+            violation_limit=recent_limit,
+        )
+    except RuntimeError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "sla.bigquery_unavailable", "message": "BigQuery 구성이 필요합니다."},
+        )
+    return AdminRagSlaResponse(**payload)
 
 
 @router.post(
@@ -513,3 +658,7 @@ def download_rag_audit_log() -> FileResponse:
     if not audit_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="audit_log_not_found")
     return FileResponse(audit_path, media_type="application/json", filename="rag_audit.jsonl")
+
+
+
+

@@ -53,6 +53,13 @@ class MinioClientProtocol(Protocol):
         expires: timedelta,
     ) -> str:
         ...
+    
+    def remove_object(
+        self,
+        bucket_name: str,
+        object_name: str,
+    ) -> None:
+        ...
 
 
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT")
@@ -190,4 +197,17 @@ def get_presigned_url(object_name: str, expiry_seconds: Union[int, float, timede
         return None
 
 
-__all__ = ["is_enabled", "upload_file", "download_file", "get_presigned_url"]
+def delete_object(object_name: str) -> bool:
+    client = _client_instance()
+    if not client:
+        return False
+    try:
+        client.remove_object(bucket_name=MINIO_BUCKET, object_name=object_name)
+        logger.info("Deleted %s from bucket '%s'.", object_name, MINIO_BUCKET)
+        return True
+    except Exception as exc:  # pragma: no cover
+        logger.error("Failed to delete MinIO object %s: %s", object_name, exc, exc_info=True)
+        return False
+
+
+__all__ = ["is_enabled", "upload_file", "download_file", "get_presigned_url", "delete_object"]

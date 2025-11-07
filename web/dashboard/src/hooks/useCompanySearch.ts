@@ -40,7 +40,7 @@ export const normalizeCompanySearchResult = (input: unknown): CompanySearchResul
   };
 };
 
-const fetchCompanySearch = async (query: string, limit: number): Promise<CompanySearchResult[]> => {
+export const fetchCompanySearch = async (query: string, limit: number): Promise<CompanySearchResult[]> => {
   const baseUrl = resolveApiBase();
   const params = new URLSearchParams({ q: query, limit: limit.toString() });
   const response = await fetch(`${baseUrl}/api/v1/companies/search?${params.toString()}`, {
@@ -66,3 +66,23 @@ export function useCompanySearch(query: string, limit = 8) {
     enabled: trimmed.length >= 1
   });
 }
+
+export const resolveCompanyIdentifier = async (identifier: string): Promise<CompanySearchResult | null> => {
+  const trimmed = identifier.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const candidates = await fetchCompanySearch(trimmed, 6);
+  if (candidates.length === 0) {
+    return null;
+  }
+  const upper = trimmed.toUpperCase();
+  const lower = trimmed.toLowerCase();
+  const directMatch = candidates.find((item) => {
+    const ticker = item.ticker?.toUpperCase();
+    const corpCode = item.corpCode?.toUpperCase();
+    const name = item.corpName?.toLowerCase();
+    return ticker === upper || corpCode === upper || name === lower;
+  });
+  return directMatch ?? candidates[0] ?? null;
+};

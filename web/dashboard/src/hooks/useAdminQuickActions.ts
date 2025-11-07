@@ -6,6 +6,10 @@ import {
   AdminUnauthorizedError,
   applyPlanQuickAdjust,
   fetchTossWebhookAudit,
+  triggerQuickAction,
+  type AdminQuickActionId,
+  type AdminQuickActionPayload,
+  type AdminQuickActionResult,
   type PlanQuickAdjustPayload,
   type WebhookAuditEntry,
 } from "@/lib/adminApi";
@@ -45,3 +49,16 @@ export const usePlanQuickAdjust = () => {
     },
   });
 };
+
+type QuickActionMutationInput = AdminQuickActionPayload & {
+  action: AdminQuickActionId;
+};
+
+export const useTriggerQuickAction = () =>
+  useMutation<AdminQuickActionResult, Error, QuickActionMutationInput>({
+    mutationFn: ({ action, actor, note }) =>
+      triggerQuickAction(action, {
+        actor,
+        note: note ?? null,
+      }),
+  });

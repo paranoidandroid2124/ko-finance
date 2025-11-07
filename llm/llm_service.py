@@ -7,7 +7,7 @@ import math
 import os
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import litellm
 from langfuse import Langfuse
@@ -17,6 +17,7 @@ from llm import guardrails
 from llm.prompts import (
     analyze_news,
     chat_summary,
+    daily_brief_trend,
     classify_filing,
     extract_info,
     judge_guard,
@@ -71,6 +72,32 @@ def _apply_litellm_aliases() -> None:
 
 
 _apply_litellm_aliases()
+
+
+def _extract_usage_payload(response: Any) -> Optional[Dict[str, int]]:
+    """Normalize token usage info from various response shapes."""
+
+    def _normalize(raw: Any) -> Optional[Dict[str, int]]:
+        if raw is None:
+            return None
+        if isinstance(raw, dict):
+            data = raw
+        else:
+            data = {key: getattr(raw, key, None) for key in ("prompt_tokens", "completion_tokens", "total_tokens")}
+        cleaned = {key: int(value) for key, value in data.items() if isinstance(value, (int, float))}
+        return cleaned or None
+
+    usage = getattr(response, "usage", None)
+    payload = _normalize(usage)
+    if payload:
+        return payload
+    if hasattr(response, "model_dump"):  # pydantic-style objects
+        dumped = response.model_dump()
+        if isinstance(dumped, dict):
+            return _normalize(dumped.get("usage"))
+    if isinstance(response, dict):
+        return _normalize(response.get("usage"))
+    return None
 
 LANGFUSE_CLIENT: Optional[Langfuse] = None
 if os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"):
@@ -449,6 +476,27 @@ def summarize_filing_content(raw_md: str) -> Dict[str, Any]:
     )
 
 
+def generate_daily_brief_trend(context: Mapping[str, Any]) -> Dict[str, Any]:
+    """Create the headline and summary sentence for the daily brief."""
+    context_json = json.dumps(context, ensure_ascii=False, indent=2)
+    default_headline = str(context.get("date") or "일일 브리프")
+    default_payload = {"headline": default_headline, "summary": ""}
+    result = _run_json_prompt(
+        label="Daily brief trend",
+        model=SUMMARY_MODEL,
+        messages=daily_brief_trend.get_prompt(context_json),
+        fallback_model=QUALITY_FALLBACK_MODEL,
+        default_on_error=default_payload,
+        log_level="warning",
+    )
+    headline = str(result.get("headline") or default_headline).strip()
+    summary = str(result.get("summary") or result.get("overview") or "").strip()
+    normalized = dict(result)
+    normalized["headline"] = headline
+    normalized["summary"] = summary
+    return normalized
+
+
 def _categorize_context(context_chunks: List[Dict[str, Any]]) -> Dict[str, bool]:
     required = {"page": False, "table": False, "footnote": False}
     for chunk in context_chunks:
@@ -567,6 +615,7 @@ def generate_rag_answer(
     *,
     conversation_memory: Optional[Dict[str, Any]] = None,
     judge_result: Optional[Dict[str, Any]] = None,
+    prompt_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     if judge_result is None:
         judge_result = assess_query_risk(question)
@@ -603,13 +652,18 @@ def generate_rag_answer(
         if judge_model_used:
             payload["judge_model_used"] = judge_model_used
         payload["rag_mode"] = rag_mode
+        if prompt_metadata:
+            payload["meta"] = {"prompt": prompt_metadata}
         return payload
 
     builder = _pick_prompt_builder(context_chunks)
+    prompt_mode = "flex" if judge_decision == "pass" else "strict"
     messages = builder.get_prompt(
         question,
         context_chunks,
         conversation_memory=conversation_memory,
+        mode=prompt_mode,
+        meta=prompt_metadata,
     )
     response, model_used = _safe_completion(RAG_MODEL, messages)
     if response is None:
@@ -618,6 +672,10 @@ def generate_rag_answer(
     answer = getattr(response.choices[0].message, "content", "") or ""
     payload = _build_rag_payload(context_chunks, answer, model_used)
     payload["rag_mode"] = rag_mode
+    if prompt_metadata:
+        meta_payload = dict(payload.get("meta") or {})
+        meta_payload.setdefault("prompt", prompt_metadata)
+        payload["meta"] = meta_payload
 
     if judge_result.get("error"):
         payload["warnings"].append("judge_evaluation_failed")
@@ -639,6 +697,7 @@ def stream_rag_answer(
     *,
     conversation_memory: Optional[Dict[str, Any]] = None,
     judge_result: Optional[Dict[str, Any]] = None,
+    prompt_metadata: Optional[Dict[str, Any]] = None,
 ):
     if judge_result is None:
         judge_result = assess_query_risk(question)
@@ -674,14 +733,19 @@ def stream_rag_answer(
         if judge_model_used:
             payload["judge_model_used"] = judge_model_used
         payload["rag_mode"] = rag_mode
+        if prompt_metadata:
+            payload["meta"] = {"prompt": prompt_metadata}
         yield {"type": "final", "payload": payload}
         return
 
     builder = _pick_prompt_builder(context_chunks)
+    prompt_mode = "flex" if judge_decision == "pass" else "strict"
     messages = builder.get_prompt(
         question,
         context_chunks,
         conversation_memory=conversation_memory,
+        mode=prompt_mode,
+        meta=prompt_metadata,
     )
     try:
         stream = litellm.completion(model=RAG_MODEL, messages=messages, stream=True)
@@ -723,6 +787,10 @@ def stream_rag_answer(
     answer = "".join(accumulated_tokens)
     payload = _build_rag_payload(context_chunks, answer, model_used)
     payload["rag_mode"] = rag_mode
+    if prompt_metadata:
+        meta_payload = dict(payload.get("meta") or {})
+        meta_payload.setdefault("prompt", prompt_metadata)
+        payload["meta"] = meta_payload
 
     if judge_result.get("error"):
         payload["warnings"].append("judge_evaluation_failed")
@@ -752,17 +820,121 @@ def summarize_chat_transcript(transcript: List[Dict[str, str]]) -> str:
     return summary_text.strip()
 
 
+def _format_watchlist_digest_context(summary: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> str:
+    lines: List[str] = []
+    lines.append(
+        f"- 경보 {summary.get('totalDeliveries', 0)}건, 이벤트 {summary.get('totalEvents', 0)}건, 감시 종목 {summary.get('uniqueTickers', 0)}개"
+    )
+    top_tickers = summary.get("topTickers") or []
+    if top_tickers:
+        lines.append(f"- Top 종목: {', '.join(map(str, top_tickers[:5]))}")
+    for idx, item in enumerate(items[:5], start=1):
+        ticker = item.get("ticker") or "N/A"
+        rule_name = item.get("ruleName") or ""
+        headline = item.get("headline") or item.get("summary") or item.get("message") or ""
+        sentiment = item.get("sentiment")
+        sentiment_text = (
+            f"(sentiment={sentiment:.2f})" if isinstance(sentiment, (int, float)) else ""
+        )
+        lines.append(f"{idx}. {ticker} {rule_name} - {headline} {sentiment_text}".strip())
+    return "\n".join(lines)
+
+
+def generate_watchlist_digest_overview(
+    summary: Mapping[str, Any],
+    items: Sequence[Mapping[str, Any]],
+) -> str:
+    """LLM으로 Watchlist Digest 상단 요약문을 생성한다."""
+
+    context_block = _format_watchlist_digest_context(summary, items)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "당신은 K-Finance Watchlist Digest를 작성하는 시니어 애널리스트입니다.\n"
+                "- 최근 모멘텀, 수급, 감성 신호를 3~5문장으로 정리하고, 각 문장은 25~60자 사이로 유지합니다.\n"
+                "- 첫 문장은 시장의 긍정적 흐름이나 주요 모멘텀, 두 번째는 핵심 종목/섹터 디테일, 세 번째는 리스크·주의 신호를 언급합니다.\n"
+                "- 필요하면 네 번째 문장으로 향후 관찰 포인트를 제시할 수 있습니다.\n"
+                "- 감탄사나 과도한 조언 없이 사실 기반·전문가 톤을 유지합니다."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "다음 워치리스트 알림 데이터를 읽고 요구사항에 맞는 디테일한 요약을 작성하십시오.\n"
+                "### 데이터\n"
+                f"{context_block}\n\n"
+                "### 출력 지침\n"
+                "1. 문장 수 3~5개, 각 문장은 25~60자.\n"
+                "2. 첫 문장은 모멘텀/수급, 두 번째는 종목·섹터 디테일, 세 번째는 리스크·주의 신호를 다룹니다.\n"
+                "3. 네 번째 문장이 있다면 다음 관찰 포인트를 제시합니다.\n"
+                "4. 불필요한 접두어(예: '요청하신', '다음은')는 제거하고 바로 내용으로 시작합니다."
+            ),
+        },
+    ]
+    response, _ = _safe_completion(SUMMARY_MODEL, messages, fallback_model=QUALITY_FALLBACK_MODEL)
+    if response is None:
+        raise RuntimeError("watchlist_overview_failed")
+    overview = getattr(response.choices[0].message, "content", "") or ""
+    return overview.strip()
+
+
+def generate_watchlist_personal_note(prompt_text: str) -> Tuple[str, Dict[str, Any]]:
+    """사용자 맞춤 워치리스트 코멘트를 생성한다."""
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "당신은 사용자의 워치리스트 히스토리를 이해하는 K-Finance Copilot입니다.\n"
+                "- 개인 메모는 3~5문장으로 구성하며, 각 문장은 25~65자 사이입니다.\n"
+                "- 첫 문장은 관찰된 패턴·이벤트, 두 번째는 해당 종목/섹터의 의미, 세 번째는 리스크·주의 포인트를 설명합니다.\n"
+                "- 네 번째 문장이 있다면 사용자에게 다음 액션(체크포인트, 비교 대상 등)을 제안합니다.\n"
+                "- '투자하세요' 같은 직접 조언이나 감탄사는 금지하고, 중립적이지만 친절한 톤을 유지합니다.\n"
+                "- 이미 prompt에 포함된 문장을 반복하지 말고 새롭게 정리합니다."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "다음 맥락을 참고해 개인화된 워치리스트 메모를 작성해 주세요.\n"
+                "### 사용자 맥락\n"
+                f"{prompt_text}\n\n"
+                "### 출력 지침\n"
+                "1. 문장 수 3~5개, 각 문장은 25~65자.\n"
+                "2. 첫 문장=관찰, 두 번째=의미/맥락, 세 번째=리스크, 네 번째=다음 액션.\n"
+                "3. 존댓말(예: '~하셨습니다', '~확인해보세요')로 작성합니다.\n"
+                "4. 동일한 단어 반복은 피하고, 각 문장은 고유한 정보를 담습니다."
+            ),
+        },
+    ]
+    response, model_used = _safe_completion(SUMMARY_MODEL, messages, fallback_model=QUALITY_FALLBACK_MODEL)
+    if response is None:
+        raise RuntimeError("watchlist_personal_note_failed")
+    note = getattr(response.choices[0].message, "content", "") or ""
+    metadata: Dict[str, Any] = {}
+    if model_used:
+        metadata["model"] = model_used
+    usage_payload = _extract_usage_payload(response)
+    if usage_payload:
+        metadata["usage"] = usage_payload
+    return note.strip(), metadata
+
+
 __all__ = [
     "classify_filing_content",
     "classify_query_intent",
     "extract_structured_info",
     "summarize_filing_content",
+    "generate_daily_brief_trend",
     "self_check_extracted_info",
     "analyze_news_article",
     "validate_news_analysis_result",
     "generate_rag_answer",
     "stream_rag_answer",
     "summarize_chat_transcript",
+    "generate_watchlist_digest_overview",
+    "generate_watchlist_personal_note",
     "set_guardrail_copy",
     "assess_query_risk",
     "JUDGE_BLOCK_MESSAGE",

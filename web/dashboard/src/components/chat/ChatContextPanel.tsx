@@ -46,7 +46,7 @@ export function ChatContextPanel() {
   );
 
   return (
-    <aside className="hidden w-72 flex-none space-y-4 rounded-xl border border-border-light bg-background-cardLight p-4 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark lg:block">
+    <aside className="hidden w-80 flex-none space-y-4 rounded-xl border border-border-light bg-background-cardLight p-4 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark lg:block">
       <section>
         <h3 className="text-sm font-semibold">컨텍스트 하이라이트</h3>
         {contextSummary ? (

@@ -38,6 +38,11 @@
   2. **쿨다운**: 마지막 시도 후 30분 동안은 동일 큐 항목에 대한 자동 재시도를 지연합니다.
   3. **즉시 성공 기록**: 재시도 성공 시 `lastSuccessAt`에 타임스탬프를 남기고, `status`를 `completed`로 업데이트합니다.
   4. **Langfuse 연동**: 자동 재시도로 생성된 작업은 metadata에 `retryMode: "auto"`를 추가하고, 토스트/감사 로그에서도 “자동 재시도” 문구를 사용합니다.
+- **SLA 초과 자동 대응**
+  - `_perform_reindex`는 재색인이 완료된 뒤 총 소요 시간이 `ADMIN_RAG_REINDEX_SLA_MINUTES`(기본 30분)를 넘으면 `handle_reindex_sla_breach`를 호출합니다.
+  - `handle_reindex_sla_breach`는 `dispatch_notification("slack", ...)`을 통해 SLA 초과를 즉시 알리고, 같은 메타를 `rag_audit.jsonl`에 기록합니다.
+  - Slack 발송은 기존 환경 변수 `ALERT_SLACK_WEBHOOK_URL` 또는 채널 메타데이터를 재사용하므로, 운영 환경에서 Webhook URL을 반드시 지정해야 합니다.
+  - 알림 메시지는 총 소요 시간/처리 시간/큐 대기 시간을 포맷팅해 전달하며, Trace URL·Queue ID·메모 등 운영자가 바로 후속 조치할 수 있는 필드를 함께 첨부합니다.
 - **추가 확인 필요**
   - 큐 항목별 사용자 메모(`note`)를 자동 재시도에서 유지할지 업데이트할지 정책 결정.
   - 동일 스코프(all)에서 동시 다발 재색인 시 충돌을 어떻게 방지할지(대기열 락 vs. 병렬 허용) 논의 필요.
@@ -57,6 +62,11 @@
 - [x] 자동 재시도 트리거를 Celery beat 또는 FastAPI 백그라운드 작업으로 구현하는 방안 비교.
 - [ ] Evidence diff 계산에 필요한 스냅샷 포맷을 `schemas/api/admin.py`에 정의.
 - [ ] UI 토스트 문안을 ‘친근한 사회적 기업’ 톤으로 정리(예: “조금 전 재색인을 다시 시도했어요. 결과를 잠시만 기다려 주세요!”).
+
+## 7. 운영 체크포인트
+- 이벤트 브리프 PDF 품질 검증은 `docs/qa/event_brief_pdf_qa.md`를 기준으로 월 1회 이상 수행한다.
+- 재색인 완료 후 후속 절차(Trace 확인, 감사 로그, 첨부 파일 검증, 워치리스트 영향 점검)는 `docs/ops/rag_reindex_run_checklist.md`에 따라 진행하고 로그를 남긴다.
+- Ops 자동화 혹은 Slack 워크플로우 설정 시 위 체크리스트를 원본으로 사용한다.
 
 ---
 다음 단계에서는 위 요구사항을 토대로 API·스토리지·UI 변경 분을 설계도에 반영하고, 자동 재시도 스케줄러와 Evidence diff 뷰 구현에 착수할 예정입니다.

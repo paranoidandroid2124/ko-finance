@@ -32,6 +32,8 @@ class NewsSignal(Base):
     url = Column(String, nullable=False, unique=True, comment="Canonical article URL")
     headline = Column(String, nullable=False, comment="Article headline")
     summary = Column(Text, nullable=True, comment="Optional extractive summary")
+    license_type = Column(String, nullable=True, comment="Normalised license label (e.g. KOGL 유형)")
+    license_url = Column(String, nullable=True, comment="License reference URL")
     published_at = Column(
         DateTime(timezone=True),
         nullable=False,

@@ -37,7 +37,7 @@ docker compose up --build api worker beat litellm redis postgres
 ```
 - `api`: FastAPI app (`web/main.py`)
 - `worker`: Celery worker (`parse.worker`)
-- `beat`: Celery beat scheduling `m1.seed_recent_filings` and `m2.aggregate_news`
+- `beat`: Celery beat scheduling `m1.seed_recent_filings`, `m2.aggregate_news`, `m4.generate_daily_brief`
 - `litellm`: Model gateway for all LLM calls
 
 #### 4.2 Celery (bare metal)

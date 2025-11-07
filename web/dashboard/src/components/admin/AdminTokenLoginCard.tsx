@@ -143,7 +143,7 @@ export function AdminTokenLoginCard() {
   };
 
   return (
-    <section className="mb-6 rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+    <section className="mb-6 rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
       <header className="space-y-2">
         <h2 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">운영 전용 로그인</h2>
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">

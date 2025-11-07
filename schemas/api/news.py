@@ -23,6 +23,8 @@ class NewsSignalResponse(BaseModel):
         None, description="Heuristic reliability score (0~1)"
     )
     topics: List[str] = Field(default_factory=list)
+    license_type: Optional[str] = None
+    license_url: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -102,6 +104,8 @@ class NewsListItem(BaseModel):
     url: str
     summary: Optional[str] = None
     source_reliability: Optional[float] = None
+    licenseType: Optional[str] = None
+    licenseUrl: Optional[str] = None
 
 
 class NewsInsightsResponse(BaseModel):

@@ -30,7 +30,6 @@ from schemas.api.admin import (
     AdminSystemPromptUpdateRequest,
     PromptChannel,
 )
-    PromptChannel,
 from services.admin_audit import append_audit_log
 from web.deps_admin import require_admin_session, AdminSession
 

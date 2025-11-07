@@ -6,7 +6,7 @@ import logging
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -15,7 +15,7 @@ from database import SessionLocal
 from ingest.dart_client import DartClient
 from ingest.file_downloader import fetch_viewer_bundle, parse_filing_bundle
 from models.filing import Filing, STATUS_PENDING
-from services import minio_service
+from services import storage_service
 from services.dart_sync import sync_additional_disclosures
 
 logger = logging.getLogger(__name__)
@@ -24,15 +24,24 @@ logger.setLevel(logging.INFO)
 UPLOAD_DIR = "uploads"
 
 
-def _ensure_minio_copy(receipt_no: str, pdf_path: Optional[str]) -> Optional[str]:
-    if not pdf_path or not minio_service.is_enabled():
-        return None
+def _ensure_storage_copy(receipt_no: str, pdf_path: Optional[str]) -> Dict[str, str]:
+    result: Dict[str, str] = {}
+    if not pdf_path or not storage_service.is_enabled():
+        return result
     object_name = f"{receipt_no}.pdf"
-    uploaded = minio_service.upload_file(pdf_path, object_name=object_name)
+    uploaded = storage_service.upload_file(pdf_path, object_name=object_name)
     if not uploaded:
-        return None
-    presigned = minio_service.get_presigned_url(uploaded)
-    return presigned
+        return result
+    result["storage_object"] = uploaded
+    result["storage_provider"] = storage_service.provider_name()
+    presigned = storage_service.get_presigned_url(uploaded)
+    if presigned:
+        result["storage_url"] = presigned
+    # legacy keys for backwards compatibility with existing consumers
+    result.setdefault("minio_object", uploaded)
+    if presigned:
+        result.setdefault("minio_url", presigned)
+    return result
 
 
 def _enqueue_filing_task(filing_id: uuid.UUID) -> None:
@@ -111,16 +120,17 @@ def seed_recent_filings(
             xml_entries = []
             for xml_path in package_data.get("xml") or []:
                 entry = {"path": xml_path}
-                if minio_service.is_enabled():
+                if storage_service.is_enabled():
                     object_name = f"{receipt_no}/xml/{Path(xml_path).name}"
-                    uploaded_xml = minio_service.upload_file(
+                    uploaded_xml = storage_service.upload_file(
                         xml_path,
                         object_name=object_name,
                         content_type="application/xml",
                     )
                     if uploaded_xml:
-                        entry["storage"] = "minio"
+                        entry["storage"] = storage_service.provider_name()
                         entry["object"] = uploaded_xml
+                        entry["object_name"] = uploaded_xml
                 xml_entries.append(entry)
 
             source_files = {
@@ -165,10 +175,10 @@ def seed_recent_filings(
                 logger.info("Filing %s already exists. Skipping duplicate insert.", receipt_no)
                 continue
 
-            presigned_url = _ensure_minio_copy(receipt_no, pdf_path)
-            if presigned_url:
+            storage_meta = _ensure_storage_copy(receipt_no, pdf_path)
+            if storage_meta:
                 urls = new_filing.urls or {}
-                urls["minio_url"] = presigned_url
+                urls.update(storage_meta)
                 new_filing.urls = urls
                 db.commit()
 

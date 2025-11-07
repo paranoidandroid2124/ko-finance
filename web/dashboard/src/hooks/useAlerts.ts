@@ -6,10 +6,18 @@ import {
   AlertRuleListResponse,
   AlertRuleUpdatePayload,
   createAlertRule,
+  dispatchWatchlistDigest,
   deleteAlertRule,
   fetchAlertRules,
   fetchAlertChannelSchema,
   type AlertChannelSchemaResponse,
+  fetchWatchlistRadar,
+  fetchWatchlistRuleDetail,
+  type WatchlistDispatchRequest,
+  type WatchlistDispatchResponse,
+  type WatchlistRadarResponse,
+  type WatchlistRadarRequest,
+  type WatchlistRuleDetailResponse,
   updateAlertRule,
 } from "@/lib/alertsApi";
 
@@ -58,4 +66,78 @@ export const useAlertChannelSchema = () =>
     queryKey: ALERT_CHANNEL_SCHEMA_QUERY_KEY,
     queryFn: fetchAlertChannelSchema,
     staleTime: 300_000,
+  });
+
+export const useWatchlistRadar = (params: WatchlistRadarRequest = {}) => {
+  const {
+    windowMinutes = 1440,
+    limit = 20,
+    channels = [],
+    eventTypes = [],
+    tickers = [],
+    ruleTags = [],
+    minSentiment = null,
+    maxSentiment = null,
+    query,
+    windowStart,
+    windowEnd,
+  } = params;
+
+  const queryKey = [
+    "watchlist",
+    "radar",
+    windowMinutes,
+    limit,
+    channels.join("|"),
+    eventTypes.join("|"),
+    tickers.join("|"),
+    ruleTags.join("|"),
+    minSentiment ?? "",
+    maxSentiment ?? "",
+    query ?? "",
+    windowStart ?? "",
+    windowEnd ?? "",
+  ];
+
+  const payload: WatchlistRadarRequest = {
+    windowMinutes,
+    limit,
+    channels: [...channels],
+    eventTypes: [...eventTypes],
+    tickers: [...tickers],
+    ruleTags: [...ruleTags],
+    minSentiment,
+    maxSentiment,
+    query,
+    windowStart,
+    windowEnd,
+  };
+
+  return useQuery<WatchlistRadarResponse>({
+    queryKey,
+    queryFn: () => fetchWatchlistRadar(payload),
+    staleTime: 60_000,
+  });
+};
+
+export const useWatchlistRuleDetail = (
+  ruleId: string | null,
+  options: { recentLimit?: number } = {},
+) =>
+  useQuery<WatchlistRuleDetailResponse>({
+    queryKey: ["watchlist", "rule-detail", ruleId, options.recentLimit ?? 5],
+    enabled: Boolean(ruleId),
+    queryFn: () => {
+      if (!ruleId) {
+        // react-query will skip when enabled=false, but guard for type safety.
+        return Promise.reject(new Error("ruleId is required"));
+      }
+      return fetchWatchlistRuleDetail(ruleId, options);
+    },
+    staleTime: 30_000,
+  });
+
+export const useDispatchWatchlistDigest = () =>
+  useMutation<WatchlistDispatchResponse, unknown, WatchlistDispatchRequest>({
+    mutationFn: (payload) => dispatchWatchlistDigest(payload),
   });

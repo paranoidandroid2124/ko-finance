@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from schemas.api.plan import PlanTier
+from schemas.api.plan import PlanTier, PlanMemoryFlagsSchema
 PromptChannel = Literal["chat", "rag", "self_check"]
 
 
@@ -213,6 +213,25 @@ class AdminRagEvidenceFieldDiffSchema(AdminBaseModel):
     after: Optional[str] = Field(default=None, description="변경 후 값.")
     lineDiff: List[str] = Field(default_factory=list, description="라인 단위 diff 결과(+- 기호 포함).")
 
+class AdminRagPdfRectSchema(AdminBaseModel):
+    page: Optional[int] = Field(default=None, ge=1, description="PDF 1-based 페이지 인덱스.")
+    x: Optional[float] = Field(default=None, ge=0, description="하이라이트 X 좌표(포인트 단위).")
+    y: Optional[float] = Field(default=None, ge=0, description="하이라이트 Y 좌표(포인트 단위).")
+    width: Optional[float] = Field(default=None, ge=0, description="하이라이트 영역 너비.")
+    height: Optional[float] = Field(default=None, ge=0, description="하이라이트 영역 높이.")
+
+
+class AdminRagEvidenceAnchorSchema(AdminBaseModel):
+    paragraphId: Optional[str] = Field(default=None, description="문단 식별자.")
+    pdfRect: Optional[AdminRagPdfRectSchema] = Field(default=None, description="PDF 하이라이트 좌표.")
+    similarity: Optional[float] = Field(default=None, ge=0, le=1, description="검색 유사도 점수.")
+
+
+class AdminRagEvidenceSelfCheckSchema(AdminBaseModel):
+    score: Optional[float] = Field(default=None, ge=0, le=1, description="자체 검증 신뢰도 점수.")
+    verdict: Optional[Literal["pass", "warn", "fail"]] = Field(default=None, description="판정 결과.")
+    explanation: Optional[str] = Field(default=None, description="추가 설명.")
+
 
 class AdminRagEvidenceDiffItemSchema(AdminBaseModel):
     urnId: Optional[str] = Field(default=None, description="변경된 Evidence의 URN ID.")
@@ -222,6 +241,28 @@ class AdminRagEvidenceDiffItemSchema(AdminBaseModel):
     quote: Optional[str] = Field(default=None, description="주요 인용문 요약.")
     chunkId: Optional[str] = Field(default=None, description="벡터 청크 ID.")
     updatedAt: Optional[str] = Field(default=None, description="스냅샷이 저장된 시각.")
+    pageNumber: Optional[int] = Field(default=None, ge=1, description="현재 Evidence가 위치한 PDF 페이지 번호.")
+    previousPageNumber: Optional[int] = Field(default=None, ge=1, description="이전 Evidence 페이지 번호.")
+    anchor: Optional[AdminRagEvidenceAnchorSchema] = Field(default=None, description="현재 하이라이트 좌표.")
+    previousAnchor: Optional[AdminRagEvidenceAnchorSchema] = Field(default=None, description="이전 하이라이트 좌표.")
+    selfCheck: Optional[AdminRagEvidenceSelfCheckSchema] = Field(default=None, description="현재 Self Check 결과.")
+    previousSelfCheck: Optional[AdminRagEvidenceSelfCheckSchema] = Field(
+        default=None, description="이전 Self Check 결과."
+    )
+    sourceReliability: Optional[Literal["high", "medium", "low"]] = Field(
+        default=None, description="현재 Evidence의 출처 신뢰도."
+    )
+    previousSourceReliability: Optional[Literal["high", "medium", "low"]] = Field(
+        default=None, description="이전 Evidence 출처 신뢰도."
+    )
+    documentUrl: Optional[str] = Field(default=None, description="원문 문서를 열 수 있는 기본 URL.")
+    viewerUrl: Optional[str] = Field(default=None, description="문서 뷰어 URL.")
+    downloadUrl: Optional[str] = Field(default=None, description="문서를 직접 다운로드할 수 있는 URL.")
+    sourceUrl: Optional[str] = Field(default=None, description="원본 출처 URL.")
+    langfuseTraceUrl: Optional[str] = Field(default=None, description="Langfuse trace 링크.")
+    langfuseTraceId: Optional[str] = Field(default=None, description="Langfuse trace ID.")
+    langfuseSpanId: Optional[str] = Field(default=None, description="Langfuse span ID.")
+    diffChangedFields: Optional[List[str]] = Field(default=None, description="변경된 필드 목록.")
     changes: List[AdminRagEvidenceFieldDiffSchema] = Field(default_factory=list, description="필드별 변경 요약.")
 
 
@@ -252,6 +293,16 @@ class AdminRagReindexRecordSchema(AdminBaseModel):
     retryMode: Optional[str] = Field(default=None, description="재시도 방식(auto|manual).")
     ragMode: Optional[str] = Field(default=None, description="Judge가 판정한 rag_mode 값.")
     scopeDetail: Optional[List[str]] = Field(default=None, description="정규화된 재색인 소스 목록.")
+    queuedAt: Optional[str] = Field(default=None, description="대기열에 등록된 시각(ISO8601).")
+    queueWaitMs: Optional[int] = Field(default=None, description="대기열에서 실제 실행당에 걸린 시간(ms).")
+    totalElapsedMs: Optional[int] = Field(default=None, description="대기 반영 후 종료까지 소요된 총 시간(ms).")
+    eventBriefPath: Optional[str] = Field(default=None, description="생성된 이벤트 브리프 PDF의 로컬 경로.")
+    eventBriefObject: Optional[str] = Field(default=None, description="이벤트 브리프 PDF가 업로드된 MinIO 객체 키.")
+    eventBriefUrl: Optional[str] = Field(default=None, description="이벤트 브리프 PDF presigned URL.")
+    evidencePackagePath: Optional[str] = Field(default=None, description="증거 패키지 ZIP 로컬 경로.")
+    evidencePackageObject: Optional[str] = Field(default=None, description="증거 패키지 ZIP MinIO 객체 키.")
+    evidencePackageUrl: Optional[str] = Field(default=None, description="증거 패키지 ZIP presigned URL.")
+    evidenceManifestPath: Optional[str] = Field(default=None, description="패키지 manifest JSON 로컬 경로.")
 
 
 class AdminRagReindexHistorySummary(AdminBaseModel):
@@ -261,9 +312,16 @@ class AdminRagReindexHistorySummary(AdminBaseModel):
     traced: int = Field(..., description="Langfuse trace가 연결된 실행 수.")
     missingTraces: int = Field(..., description="Langfuse trace가 누락된 실행 수.")
     averageDurationMs: Optional[int] = Field(default=None, description="평균 처리 시간(ms).")
-    latestTraceUrls: List[str] = Field(default_factory=list, description="최근 Langfuse trace URL 목록.")
+    latestTraceUrls: List[str] = Field(default_factory=list, description="최신 Langfuse trace URL 목록.")
     modeUsage: Dict[str, int] = Field(default_factory=dict, description="rag_mode별 실행 횟수.")
     lastRunAt: Optional[str] = Field(default=None, description="가장 최근 실행 시각.")
+    p50DurationMs: Optional[int] = Field(default=None, description="전체 처리 시간 중 50번째 백분위(ms).")
+    p95DurationMs: Optional[int] = Field(default=None, description="전체 처리 시간 중 95번째 백분위(ms).")
+    p50QueueWaitMs: Optional[int] = Field(default=None, description="대기 시간 중 50번째 백분위(ms).")
+    p95QueueWaitMs: Optional[int] = Field(default=None, description="대기 시간 중 95번째 백분위(ms).")
+    slaTargetMs: int = Field(..., description="SLA 목표 시간(ms).")
+    slaBreaches: int = Field(..., description="SLA를 초과한 실행 횟수.")
+    slaMet: int = Field(..., description="SLA를 충족한 실행 횟수.")
 
 
 class AdminRagReindexHistoryResponse(AdminBaseModel):
@@ -279,6 +337,9 @@ class AdminRagReindexQueueSummary(AdminBaseModel):
     manualMode: int = Field(..., description="수동 재시도 모드 항목 수.")
     nextAutoRetryAt: Optional[str] = Field(default=None, description="다음 자동 재시도 예정 시각.")
     stalled: int = Field(..., description="재시도 제한에 도달한 항목 수.")
+    oldestQueuedMs: Optional[int] = Field(default=None, description="가장 오래된 큐 항목의 누적 대기 시간(ms).")
+    averageCooldownRemainingMs: Optional[int] = Field(default=None, description="쿨다운 중인 항목의 평균 남은 시간(ms).")
+    slaRiskCount: int = Field(..., description="SLA 초과 위험이 있는 큐 항목 수.")
 
 
 class AdminRagReindexQueueEntrySchema(AdminBaseModel):
@@ -298,14 +359,65 @@ class AdminRagReindexQueueEntrySchema(AdminBaseModel):
     langfuseSpanId: Optional[str] = Field(default=None, description="Langfuse span ID.")
     createdAt: str = Field(..., description="큐 항목 생성 시각.")
     updatedAt: str = Field(..., description="마지막 업데이트 시각.")
-    retryMode: Optional[str] = Field(default=None, description="자동 또는 수동 재시도 정책 식별자.")
+    retryMode: Optional[str] = Field(default=None, description="자동 또는 수동 재시도 식별자.")
     cooldownUntil: Optional[str] = Field(default=None, description="자동 재시도 대기 종료 시각(ISO8601).")
     maxAttempts: Optional[int] = Field(default=None, description="자동 재시도 최대 허용 횟수.")
+    queueAgeMs: Optional[int] = Field(default=None, description="현재까지 누적 대기 시간(ms).")
+    cooldownRemainingMs: Optional[int] = Field(default=None, description="남아 있는 쿨다운 시간(ms).")
+    slaBreached: bool = Field(default=False, description="SLA 목표를 초과했는지 여부.")
 
 
 class AdminRagReindexQueueResponse(AdminBaseModel):
     entries: List[AdminRagReindexQueueEntrySchema] = Field(default_factory=list, description="재시도 큐 목록.")
     summary: Optional[AdminRagReindexQueueSummary] = Field(default=None, description="자동 재시도 흐름 요약.")
+
+
+class AdminRagSlaSummary(AdminBaseModel):
+    totalRuns: int = Field(..., description="선택한 기간 동안 수행된 총 재색인 횟수.")
+    completedRuns: int = Field(..., description="성공한 재색인 횟수.")
+    failedRuns: int = Field(..., description="실패한 재색인 횟수.")
+    slaBreaches: int = Field(..., description="SLA(30분)를 초과한 횟수.")
+    slaBreachRatio: float = Field(..., description="전체 대비 SLA 초과 비율.")
+    p50TotalMs: Optional[int] = Field(default=None, description="총 소요시간 p50 (ms).")
+    p95TotalMs: Optional[int] = Field(default=None, description="총 소요시간 p95 (ms).")
+    p50QueueMs: Optional[int] = Field(default=None, description="큐 대기시간 p50 (ms).")
+    p95QueueMs: Optional[int] = Field(default=None, description="큐 대기시간 p95 (ms).")
+
+
+class AdminRagSlaTimeseriesPoint(AdminBaseModel):
+    day: str = Field(..., description="일자 (UTC).")
+    totalRuns: int = Field(..., description="해당 일자의 재색인 횟수.")
+    slaBreaches: int = Field(..., description="해당 일자의 SLA 초과 건수.")
+    slaBreachRatio: float = Field(..., description="해당 일자의 SLA 초과 비율.")
+    p50TotalMs: Optional[int] = Field(default=None, description="총 소요시간 p50 (ms).")
+    p95TotalMs: Optional[int] = Field(default=None, description="총 소요시간 p95 (ms).")
+
+
+class AdminRagSlaViolation(AdminBaseModel):
+    timestamp: Optional[str] = Field(default=None, description="재색인 완료 시각.")
+    actor: Optional[str] = Field(default=None, description="실행 주체.")
+    scope: Optional[str] = Field(default=None, description="재색인 적용 범위.")
+    scopeDetail: Optional[List[str]] = Field(default=None, description="재색인 대상 상세.")
+    note: Optional[str] = Field(default=None, description="운영자가 남긴 메모.")
+    status: Optional[str] = Field(default=None, description="최종 상태.")
+    retryMode: Optional[str] = Field(default=None, description="재시도 모드.")
+    ragMode: Optional[str] = Field(default=None, description="RAG 모드.")
+    queueId: Optional[str] = Field(default=None, description="큐 항목 ID.")
+    queueWaitMs: Optional[int] = Field(default=None, description="큐 대기시간 (ms).")
+    totalElapsedMs: Optional[int] = Field(default=None, description="총 소요시간 (ms).")
+    langfuseTraceUrl: Optional[str] = Field(default=None, description="Langfuse Trace URL.")
+    langfuseTraceId: Optional[str] = Field(default=None, description="Langfuse Trace ID.")
+    langfuseSpanId: Optional[str] = Field(default=None, description="Langfuse Span ID.")
+
+
+class AdminRagSlaResponse(AdminBaseModel):
+    generatedAt: str = Field(..., description="데이터 생성 시각 (UTC).")
+    rangeDays: int = Field(..., description="집계 기준 기간(일).")
+    slaTargetMinutes: int = Field(..., description="SLA 목표 시간(분).")
+    slaTargetMs: int = Field(..., description="SLA 목표 시간(ms).")
+    summary: AdminRagSlaSummary = Field(..., description="요약 통계.")
+    timeseries: List[AdminRagSlaTimeseriesPoint] = Field(default_factory=list, description="일자별 추세.")
+    recentViolations: List[AdminRagSlaViolation] = Field(default_factory=list, description="최근 SLA 초과 사례.")
 
 
 class AdminRagReindexRetryRequest(AdminBaseModel):
@@ -342,6 +454,21 @@ class AdminOpsTriggerResponse(AdminBaseModel):
     jobId: str = Field(..., description="트리거된 스케줄 ID.")
     taskId: str = Field(..., description="실제 실행된 작업 ID.")
     status: str = Field(..., description="실행 상태(queued|running).")
+
+
+QuickActionName = Literal["seed-news", "aggregate-sentiment", "rebuild-rag"]
+
+
+class AdminOpsQuickActionRequest(AdminBaseModel):
+    actor: str = Field(..., description="실행을 요청한 운영자.")
+    note: Optional[str] = Field(default=None, description="실행 메모 또는 비고.")
+
+
+class AdminOpsQuickActionResponse(AdminBaseModel):
+    action: QuickActionName = Field(..., description="실행된 퀵 액션 식별자.")
+    status: str = Field(..., description="실행 상태(queued|running 등).")
+    taskId: Optional[str] = Field(default=None, description="백그라운드 작업 ID(해당되는 경우).")
+    message: Optional[str] = Field(default=None, description="사용자에게 표시할 추가 메시지.")
 
 
 class AdminOpsNewsPipelineSchema(AdminBaseModel):
@@ -605,6 +732,10 @@ class PlanQuickAdjustRequest(AdminBaseModel):
         default=None,
         description="checkoutRequested 플래그를 명시적으로 설정/해제할 때 사용합니다.",
     )
+    memoryFlags: Optional[PlanMemoryFlagsSchema] = Field(
+        default=None,
+        description="LightMem 기능 토글을 조정할 때 사용합니다.",
+    )
 
     @field_validator("entitlements", mode="before")
     def _normalize_entitlements(cls, value: Optional[List[str]]) -> List[str]:
@@ -678,6 +809,8 @@ __all__ = [
     "AdminOpsScheduleSchema",
     "AdminOpsTriggerRequest",
     "AdminOpsTriggerResponse",
+    "AdminOpsQuickActionRequest",
+    "AdminOpsQuickActionResponse",
     "AdminRagConfigResponse",
     "AdminRagConfigSchema",
     "AdminRagConfigUpdateRequest",
@@ -686,10 +819,17 @@ __all__ = [
     "AdminRagReindexResponse",
     "AdminRagReindexHistoryResponse",
     "AdminRagEvidenceDiffSchema",
+    "AdminRagPdfRectSchema",
+    "AdminRagEvidenceAnchorSchema",
+    "AdminRagEvidenceSelfCheckSchema",
     "AdminRagEvidenceDiffItemSchema",
     "AdminRagReindexRecordSchema",
     "AdminRagReindexQueueEntrySchema",
     "AdminRagReindexQueueResponse",
+    "AdminRagSlaResponse",
+    "AdminRagSlaSummary",
+    "AdminRagSlaTimeseriesPoint",
+    "AdminRagSlaViolation",
     "AdminRagReindexRetryRequest",
     "AdminRagReindexRetryResponse",
     "AdminRagSourceSchema",

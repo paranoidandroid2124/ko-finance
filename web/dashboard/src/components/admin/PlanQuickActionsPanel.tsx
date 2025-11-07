@@ -542,7 +542,7 @@ export function PlanQuickActionsPanel() {
   }
 
   return (
-    <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+    <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
       <header className="flex flex-col gap-1 border-b border-border-light pb-4 dark:border-border-dark">
         <h2 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">플랜 퀵 액션</h2>
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">

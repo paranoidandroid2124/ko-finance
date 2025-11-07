@@ -18,7 +18,7 @@ export function AdminGuardrailPanel() {
 
   if (isAdminSessionLoading) {
     return (
-      <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">관리자 세션을 확인하는 중이에요…</p>
       </section>
     );
@@ -26,7 +26,7 @@ export function AdminGuardrailPanel() {
 
   if (isUnauthorized) {
     return (
-      <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
           Guardrail 설정을 보려면 관리자 토큰 로그인이 필요해요.
         </p>
@@ -49,8 +49,8 @@ export function AdminGuardrailPanel() {
   const actorPlaceholder = adminSession.actor ?? "";
 
   return (
-    <section className="space-y-6 rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
-      <header className="space-y-2 border-b border-border-light pb-4 dark:border-border-dark">
+    <section className="space-y-4 rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <header className="space-y-1 border-b border-border-light pb-3 dark:border-border-dark">
         <h2 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">Guardrail 정책</h2>
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
           의도 규칙과 금지어, 안내 문구를 조정해 안전망을 강화하고, 샘플 평가로 효과를 즉시 확인하세요.
@@ -65,7 +65,7 @@ export function AdminGuardrailPanel() {
         </a>
       </header>
 
-      <div className="space-y-6">
+      <div className="space-y-4">
         <AdminGuardrailPolicySection
           adminActor={adminSession.actor}
           actorPlaceholder={actorPlaceholder}

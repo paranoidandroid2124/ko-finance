@@ -16,6 +16,13 @@ const toneStyles: Record<DashboardAlert["tone"], string> = {
   neutral: "bg-border-light/60 text-text-secondaryLight dark:bg-border-dark/60 dark:text-text-secondaryDark",
 };
 
+const toneLabelMap: Record<DashboardAlert["tone"], string> = {
+  positive: "긍정",
+  negative: "부정",
+  warning: "주의",
+  neutral: "중립",
+};
+
 export function AlertBellPanel({
   containerId,
   isPinned,
@@ -124,11 +131,11 @@ function AlertsSection({ visibleAlerts, isLoading, isError, onNavigate }: Alerts
                 {alert.tone ? (
                   <span
                     className={clsx(
-                      "rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize",
+                      "inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold",
                       toneStyles[alert.tone],
                     )}
                   >
-                    {alert.tone}
+                    {toneLabelMap[alert.tone] ?? alert.tone}
                   </span>
                 ) : null}
               </div>
@@ -152,7 +159,7 @@ function RulesSection({ builder, planSummary, rules }: RulesSectionProps) {
     <section className="rounded-xl border border-border-light/70 bg-white/70 px-4 py-4 dark:border-border-dark/70 dark:bg-background-cardDark/60">
       <div className="flex items-center justify-between gap-3">
         <div>
-        <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">내가 만든 알림</p>
+          <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">내가 만든 알림</p>
           <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
             {planSummary.alertPlan
               ? builder.mode === "create" && planSummary.builderQuotaReached
@@ -252,7 +259,7 @@ function RulesSection({ builder, planSummary, rules }: RulesSectionProps) {
                           </p>
                           <span
                             className={clsx(
-                              "inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase",
+                              "inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold",
                               statusBadge,
                             )}
                           >

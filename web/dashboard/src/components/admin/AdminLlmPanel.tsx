@@ -1,7 +1,5 @@
 ﻿"use client";
 
-import { useMemo } from "react";
-
 import { useAdminSession } from "@/hooks/useAdminSession";
 import { resolveApiBase } from "@/lib/apiBase";
 import { useToastStore } from "@/store/toastStore";
@@ -20,7 +18,7 @@ export function AdminLlmPanel() {
 
   if (isAdminSessionLoading) {
     return (
-      <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">관리자 세션을 확인하는 중이에요…</p>
       </section>
     );
@@ -28,7 +26,7 @@ export function AdminLlmPanel() {
 
   if (isUnauthorized) {
     return (
-      <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
           LLM 설정을 보려면 관리자 토큰 로그인이 필요해요.
         </p>
@@ -48,11 +46,11 @@ export function AdminLlmPanel() {
   }
 
   const auditDownloadUrl = `${resolveApiBase()}/api/v1/admin/llm/audit/logs`;
-  const actorPlaceholder = useMemo(() => adminSession.actor ?? "", [adminSession.actor]);
+  const actorPlaceholder = adminSession.actor ?? "";
 
   return (
-    <section className="space-y-6 rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
-      <header className="space-y-2 border-b border-border-light pb-4 dark:border-border-dark">
+    <section className="space-y-4 rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <header className="space-y-1 border-b border-border-light pb-3 dark:border-border-dark">
         <h2 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">LLM & 프롬프트 설정</h2>
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
           LiteLLM 프로필과 시스템 프롬프트를 직접 조정하고, 감사 로그를 내려받아 변경 이력을 살펴볼 수 있어요.
@@ -67,7 +65,7 @@ export function AdminLlmPanel() {
         </a>
       </header>
 
-      <div className="space-y-6">
+      <div className="space-y-4">
         <AdminLlmProfilesSection adminActor={adminSession.actor} actorPlaceholder={actorPlaceholder} toast={toast} />
         <AdminSystemPromptsSection adminActor={adminSession.actor} actorPlaceholder={actorPlaceholder} toast={toast} />
       </div>

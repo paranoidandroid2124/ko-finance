@@ -1,7 +1,7 @@
 import os
 import json
 from pathlib import Path
-from typing import Iterator, Tuple
+from typing import Dict, Iterator, Optional, Tuple
 
 import importlib
 import warnings
@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from llm import guardrails, llm_service
 from services import admin_audit, admin_llm_store, admin_ops_service, admin_rag_service, admin_ui_service, vector_service
+from schemas.api.admin import AdminRagReindexResponse
 
 ADMIN_TOKEN = "test-admin-token"
 ADMIN_AUTH_HEADER = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
@@ -202,6 +203,12 @@ def test_rag_config_and_reindex_history(admin_test_client: Tuple[TestClient, Pat
     history_response = client.get("/api/v1/admin/rag/reindex/history", headers=ADMIN_AUTH_HEADER)
     assert history_response.status_code == 200
     history_payload = history_response.json()
+    summary = history_payload.get("summary")
+    assert summary is not None
+    assert "slaTargetMs" in summary
+    assert summary["slaTargetMs"] == admin_rag_service.REINDEX_SLA_MINUTES * 60 * 1000
+    assert "p50DurationMs" in summary
+    assert "p50QueueWaitMs" in summary
     runs = history_payload["runs"]
     assert len(runs) >= 3
     assert any(entry["taskId"] == task_id for entry in runs)
@@ -220,6 +227,20 @@ def test_rag_config_and_reindex_history(admin_test_client: Tuple[TestClient, Pat
     assert latest_entry.get("ragMode") == "vector"
     assert runs[1]["status"] == "running"
     assert runs[2]["status"] == "queued"
+
+
+    queue_response = client.get("/api/v1/admin/rag/reindex/queue", headers=ADMIN_AUTH_HEADER)
+    assert queue_response.status_code == 200
+    queue_payload = queue_response.json()
+    queue_summary = queue_payload.get("summary")
+    assert queue_summary is not None
+    assert "slaRiskCount" in queue_summary
+    assert "oldestQueuedMs" in queue_summary
+    if queue_payload.get("entries"):
+        first_entry = queue_payload["entries"][0]
+        assert "queueAgeMs" in first_entry
+        assert "slaBreached" in first_entry
+        assert "cooldownRemainingMs" in first_entry
 
 
 def test_rag_opt_gap(admin_test_client: Tuple[TestClient, Path, Path]) -> None:
@@ -357,6 +378,74 @@ def test_ops_pipeline_schedule_and_run_history(admin_test_client: Tuple[TestClie
     payload = channels_response.json()
     assert payload["channels"][0]["label"] == "텔레그램 운영 채널"
 
+
+
+def test_quick_action_seed_news(admin_test_client: Tuple[TestClient, Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    client, admin_dir, _ = admin_test_client
+
+    import web.routers.admin_ops as admin_ops_module
+
+    calls: Dict[str, object] = {}
+
+    def fake_dispatch(task_name: str, kwargs: Optional[Dict[str, object]] = None) -> str:
+        calls['task'] = task_name
+        calls['kwargs'] = kwargs or {}
+        return 'qa-task-001'
+
+    monkeypatch.setattr(admin_ops_module, '_dispatch_celery_task', fake_dispatch)
+
+    response = client.post(
+        '/api/v1/admin/ops/quick-actions/seed-news',
+        json={'actor': 'qa-admin@kfinance.ai', 'note': '테스트 실행'},
+        headers=ADMIN_AUTH_HEADER,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['action'] == 'seed-news'
+    assert payload['status'] == 'queued'
+    assert payload['taskId'] == 'qa-task-001'
+    assert calls['task'] == 'm2.seed_news_feeds'
+
+    history = admin_ops_service.list_run_history(limit=5)
+    assert history
+    latest = history[0]
+    assert latest['jobId'] == 'quick-action.seed-news'
+    assert latest['task'] == 'm2.seed_news_feeds'
+    assert latest['note'] == '테스트 실행'
+
+
+def test_quick_action_rebuild_rag(admin_test_client: Tuple[TestClient, Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _, _ = admin_test_client
+
+    import web.routers.admin_ops as admin_ops_module
+
+    monkeypatch.setattr(
+        admin_ops_module,
+        '_perform_reindex',
+        lambda **kwargs: AdminRagReindexResponse(taskId='rag-task-001', status='queued'),
+    )
+
+    response = client.post(
+        '/api/v1/admin/ops/quick-actions/rebuild-rag',
+        json={'actor': 'qa-admin@kfinance.ai'},
+        headers=ADMIN_AUTH_HEADER,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['action'] == 'rebuild-rag'
+    assert payload['taskId'] == 'rag-task-001'
+    assert payload['status'] == 'queued'
+
+
+def test_quick_action_unknown(admin_test_client: Tuple[TestClient, Path, Path]) -> None:
+    client, _, _ = admin_test_client
+
+    response = client.post(
+        '/api/v1/admin/ops/quick-actions/unknown-action',
+        json={'actor': 'qa-admin@kfinance.ai'},
+        headers=ADMIN_AUTH_HEADER,
+    )
+    assert response.status_code == 404
 
 
 def test_alert_channel_audit_aggregation(admin_test_client: Tuple[TestClient, Path, Path]) -> None:

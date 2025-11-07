@@ -37,19 +37,30 @@ from models.filing import (
     ANALYSIS_PARTIAL,
 )
 from models.digest import DailyDigestLog
-from models.news import NewsObservation, NewsSignal
+from models.news import NewsObservation, NewsSignal, NewsWindowAggregate
+from services.memory.offline_pipeline import run_long_term_update
 from models.evidence import EvidenceSnapshot
 from models.summary import Summary
 from parse.pdf_parser import extract_chunks
 from parse.xml_parser import extract_chunks_from_xml
 from schemas.news import NewsArticleCreate
-from services import alert_service, chat_service, minio_service, vector_service, ocr_service
+from services import alert_service, chat_service, storage_service, vector_service, ocr_service
 from services.aggregation.sector_classifier import assign_article_to_sector
 from services.aggregation.sector_metrics import compute_sector_daily_metrics, compute_sector_window_metrics
 from services.aggregation.news_metrics import compute_news_window_metrics
 from services.notification_service import send_telegram_alert
 from services.reliability.source_reliability import score_article as score_source_reliability
 from services.aggregation.news_statistics import summarize_news_signals, build_top_topics
+from services.daily_brief_service import (
+    DAILY_BRIEF_CHANNEL,
+    DAILY_BRIEF_OUTPUT_ROOT,
+    build_daily_brief_payload,
+    cleanup_daily_brief_artifacts,
+    has_brief_been_generated,
+    record_brief_generation,
+    render_daily_brief_document,
+)
+from services.news_text import sanitize_news_summary
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -59,6 +70,23 @@ _OCR_ENABLE_LOG = env_bool("OCR_LOG_DECISIONS", True)
 _OCR_PAGE_LIMIT = env_int("OCR_TRIGGER_MAX_PAGES", 15, minimum=1)
 TELEGRAM_NOTIFY_POS_NEG_ONLY = env_bool("TELEGRAM_NOTIFY_POS_NEG_ONLY", True)
 
+
+@shared_task(name="watchlist.generate_personal_note")
+def generate_watchlist_personal_note_task(prompt_text: str) -> Dict[str, Any]:
+    """Background task to generate personalized watchlist notes via LLM."""
+
+    note, metadata = llm_service.generate_watchlist_personal_note(prompt_text)
+    usage = (metadata or {}).get("usage") or {}
+    logger.info(
+        "watchlist.personal_note.task",
+        extra={
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+            "total_tokens": usage.get("total_tokens"),
+            "model": metadata.get("model") if metadata else None,
+        },
+    )
+    return {"note": note, "meta": metadata or {}}
 
 @dataclass
 class StageResult:
@@ -160,6 +188,8 @@ DIGEST_CHANNEL = "telegram"
 SUMMARY_RECENT_TURNS = env_int("CHAT_MEMORY_RECENT_TURNS", 3, minimum=1)
 SUMMARY_TRIGGER_MESSAGES = env_int("CHAT_SUMMARY_TRIGGER_MESSAGES", 20, minimum=6)
 NEWS_FETCH_LIMIT = env_int("NEWS_FETCH_LIMIT", 5, minimum=1)
+NEWS_SUMMARY_MAX_CHARS = env_int("NEWS_SUMMARY_MAX_CHARS", 480, minimum=120)
+NEWS_RETENTION_DAYS = env_int("NEWS_RETENTION_DAYS", 45, minimum=7)
 
 CATEGORY_TRANSLATIONS: Dict[str, str] = {
     "capital_increase": "증자",
@@ -296,10 +326,14 @@ def _ensure_pdf_path(filing: Filing) -> Optional[str]:
         return pdf_path
 
     urls = filing.urls or {}
-    object_name = urls.get("minio_object") or urls.get("minio_url")
-    if object_name and minio_service.is_enabled():
+    object_name = (
+        urls.get("storage_object")
+        or urls.get("minio_object")
+        or urls.get("object_name")
+    )
+    if object_name and storage_service.is_enabled():
         local_path = Path(UPLOAD_DIR) / f"{filing.receipt_no or filing.id}.pdf"
-        downloaded = minio_service.download_file(object_name, str(local_path))
+        downloaded = storage_service.download_file(object_name, str(local_path))
         if downloaded:
             filing.file_path = downloaded
             return downloaded
@@ -329,7 +363,7 @@ def _load_xml_paths(filing: Filing) -> List[str]:
         elif isinstance(entry, dict):
             raw_path = entry.get("path")
             candidate_path = str(raw_path) if raw_path else None
-            object_name = entry.get("object") or entry.get("minio_object")
+            object_name = entry.get("object") or entry.get("minio_object") or entry.get("object_name")
             remote_url = entry.get("url")
         else:
             continue
@@ -338,9 +372,9 @@ def _load_xml_paths(filing: Filing) -> List[str]:
             resolved_paths.append(candidate_path)
             continue
 
-        if object_name and minio_service.is_enabled():
+        if object_name and storage_service.is_enabled():
             target_path = cache_dir / Path(object_name).name
-            downloaded = minio_service.download_file(object_name, str(target_path))
+            downloaded = storage_service.download_file(object_name, str(target_path))
             if downloaded:
                 resolved_paths.append(downloaded)
                 continue
@@ -607,6 +641,22 @@ def process_filing(filing_id: str) -> str:
             normalized_sentiment = _normalize_sentiment(
                 summary.get("sentiment") or summary.get("sentiment_label")
             )
+            if normalized_sentiment:
+                try:
+                    vector_service.update_filing_metadata(
+                        str(filing.id),
+                        {
+                            "sentiment": normalized_sentiment,
+                            "sentiment_reason": summary.get("sentiment_reason"),
+                        },
+                    )
+                except Exception as exc:  # pragma: no cover - external dependency
+                    logger.warning(
+                        "Vector metadata update failed for filing %s during summary stage: %s",
+                        filing.id,
+                        exc,
+                        exc_info=True,
+                    )
             if TELEGRAM_NOTIFY_POS_NEG_ONLY and normalized_sentiment not in {"positive", "negative"}:
                 logger.info(
                     "Telegram alert skipped for %s (sentiment=%s)",
@@ -743,13 +793,19 @@ def process_news_article(article_payload: Any) -> str:
         evidence = {"rationale": rationale} if rationale else None
 
         reliability = score_source_reliability(article.source, article.url)
+        sanitized_summary = sanitize_news_summary(
+            article.summary,
+            max_chars=max(120, NEWS_SUMMARY_MAX_CHARS),
+        )
 
         news_signal = NewsSignal(
             ticker=article.ticker,
             source=article.source,
             url=article.url,
             headline=article.headline,
-            summary=article.summary,
+            summary=sanitized_summary,
+            license_type=article.license_type,
+            license_url=article.license_url,
             published_at=article.published_at,
             sentiment=sentiment,
             topics=topics,
@@ -910,6 +966,53 @@ def aggregate_news_data(window_end_iso: Optional[str] = None) -> str:
         db.rollback()
         logger.error("Error aggregating news metrics: %s", exc, exc_info=True)
         return "error"
+    finally:
+        db.close()
+
+
+@shared_task(name="m2.cleanup_news_signals")
+def cleanup_news_signals(retention_days: Optional[int] = None) -> Dict[str, int]:
+    """Purge news signals and related aggregates older than the retention window."""
+
+    days = int(retention_days or NEWS_RETENTION_DAYS)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    db = _open_session()
+    try:
+        deleted_signals = (
+            db.query(NewsSignal).filter(NewsSignal.published_at < cutoff).delete(synchronize_session=False)
+        )
+        deleted_observations = (
+            db.query(NewsObservation).filter(NewsObservation.window_end < cutoff).delete(synchronize_session=False)
+        )
+        deleted_windows = (
+            db.query(NewsWindowAggregate)
+            .filter(NewsWindowAggregate.computed_for < cutoff)
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        logger.info(
+            "Cleaned news data older than %s: signals=%d observations=%d windows=%d",
+            cutoff,
+            deleted_signals,
+            deleted_observations,
+            deleted_windows,
+        )
+        return {
+            "deleted_signals": int(deleted_signals),
+            "deleted_observations": int(deleted_observations),
+            "deleted_window_metrics": int(deleted_windows),
+            "cutoff": cutoff.isoformat(),
+        }
+    except Exception as exc:
+        db.rollback()
+        logger.error("Failed to cleanup news data older than %d days: %s", days, exc, exc_info=True)
+        return {
+            "deleted_signals": 0,
+            "deleted_observations": 0,
+            "deleted_window_metrics": 0,
+            "error": str(exc),
+        }
     finally:
         db.close()
 
@@ -1099,6 +1202,76 @@ def send_filing_digest(target_date_iso: Optional[str] = None) -> str:
         db.close()
 
 
+def _parse_reference_date(target_date_iso: Optional[str]) -> date:
+    if target_date_iso:
+        try:
+            parsed = datetime.fromisoformat(target_date_iso)
+            if isinstance(parsed, datetime):
+                return parsed.date()
+        except ValueError:
+            try:
+                return date.fromisoformat(target_date_iso)
+            except ValueError:
+                logger.warning("Invalid target_date_iso '%s'. Using current KST date.", target_date_iso)
+    return datetime.now(ZoneInfo("Asia/Seoul")).date()
+
+
+@shared_task(name="m4.cleanup_daily_briefs")
+def cleanup_daily_briefs(retention_days: int = 30) -> Dict[str, int]:
+    """Cleanup stale daily brief artifacts (local + storage)."""
+
+    db = SessionLocal()
+    try:
+        result = cleanup_daily_brief_artifacts(retention_days=retention_days, session=db)
+        logger.info("Cleaned up daily briefs older than %d days: %s", retention_days, result)
+        return result
+    finally:
+        db.close()
+
+
+@shared_task(name="m4.generate_daily_brief")
+def generate_daily_brief(
+    target_date_iso: Optional[str] = None,
+    compile_pdf: bool = True,
+    force: bool = False,
+) -> str:
+    """Render the daily LaTeX brief and persist generation audit logs."""
+
+    reference_date = _parse_reference_date(target_date_iso)
+    db = SessionLocal()
+    try:
+        if not force and has_brief_been_generated(db, reference_date=reference_date, channel=DAILY_BRIEF_CHANNEL):
+            logger.info("Daily brief already generated for %s.", reference_date.isoformat())
+            return "already_generated"
+
+        payload = build_daily_brief_payload(reference_date=reference_date, session=db)
+        output_dir = DAILY_BRIEF_OUTPUT_ROOT / reference_date.isoformat()
+        tex_name = f"daily_brief_{reference_date.isoformat()}.tex"
+        render_result = render_daily_brief_document(
+            payload=payload,
+            reference_date=reference_date,
+            output_dir=output_dir,
+            tex_name=tex_name,
+            compile_pdf=compile_pdf,
+            session=db,
+        )
+        record_brief_generation(db, reference_date=reference_date, channel=DAILY_BRIEF_CHANNEL)
+
+        outputs = render_result["outputs"]
+        pdf_path = outputs.get("pdf")
+        final_path = pdf_path or outputs.get("tex")
+        if final_path is None:
+            final_path = output_dir / tex_name
+        logger.info("Daily brief generated for %s (output=%s).", reference_date.isoformat(), final_path)
+        return str(final_path)
+    except Exception as exc:
+        db.rollback()
+        logger.error("Daily brief generation failed for %s: %s", reference_date.isoformat(), exc, exc_info=True)
+        raise
+    finally:
+        db.close()
+
+
 def _flatten_citation_entries(meta: Dict[str, Any]) -> List[str]:
     if not isinstance(meta, dict):
         return []
@@ -1267,6 +1440,19 @@ def run_rag_self_check(payload: Dict[str, Any]) -> Dict[str, Any]:
         summary.get("error"),
     )
     return summary
+
+
+@shared_task(name="memory.promote_long_term")
+def promote_long_term_memory() -> Dict[str, Any]:
+    """Nightly job that promotes STM summaries into the long-term memory store."""
+
+    try:
+        persisted = run_long_term_update()
+        logger.info("Promoted %d session summaries into long-term memory.", persisted)
+        return {"persisted": persisted}
+    except Exception as exc:  # pragma: no cover - best-effort promotion
+        logger.error("LightMem long-term promotion failed: %s", exc, exc_info=True)
+        return {"error": str(exc)}
 
 
 @shared_task(name="m3.snapshot_evidence_diff")

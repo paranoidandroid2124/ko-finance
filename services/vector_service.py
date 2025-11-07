@@ -212,6 +212,43 @@ def store_chunk_vectors(
     logger.info("Stored %d vectors for filing %s.", len(points), filing_id)
 
 
+def update_filing_metadata(filing_id: str, metadata: Dict[str, Any]) -> None:
+    """Update payload metadata for all vector chunks belonging to a filing."""
+    if not metadata:
+        return
+
+    cleaned = {key: value for key, value in metadata.items() if value not in (None, "", [], {})}
+    if not cleaned:
+        return
+
+    client = _client()
+    try:
+        init_collection()
+    except Exception as exc:
+        logger.error("Failed to ensure Qdrant collection before metadata update: %s", exc, exc_info=True)
+        raise RuntimeError("Vector collection unavailable.") from exc
+
+    payload_filter = models.Filter(
+        must=[
+            models.FieldCondition(
+                key="filing_id",
+                match=models.MatchValue(value=filing_id),
+            )
+        ]
+    )
+    try:
+        client.set_payload(
+            collection_name=COLLECTION_NAME,
+            payload=cleaned,
+            filter=payload_filter,
+        )
+    except Exception as exc:
+        logger.error("Failed to update vector metadata for filing %s: %s", filing_id, exc, exc_info=True)
+        raise RuntimeError("Vector metadata update failed.") from exc
+    else:
+        logger.info("Updated vector metadata for filing %s with keys: %s.", filing_id, ", ".join(cleaned.keys()))
+
+
 def query_vector_store(
     query_text: str,
     *,
@@ -335,4 +372,10 @@ def query_vector_store(
     )
 
 
-__all__ = ["store_chunk_vectors", "query_vector_store", "init_collection", "VectorSearchResult"]
+__all__ = [
+    "store_chunk_vectors",
+    "update_filing_metadata",
+    "query_vector_store",
+    "init_collection",
+    "VectorSearchResult",
+]

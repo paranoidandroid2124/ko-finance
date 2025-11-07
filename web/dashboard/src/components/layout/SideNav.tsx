@@ -1,6 +1,16 @@
 "use client";
 
-import { Building2, LayoutDashboard, FileText, MessageSquare, Newspaper, Settings, Shield } from "lucide-react";
+import {
+  Building2,
+  CreditCard,
+  LayoutDashboard,
+  FileText,
+  MessageSquare,
+  Newspaper,
+  Radar,
+  Settings,
+  Shield,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { Route } from "next";
@@ -9,10 +19,12 @@ type NavItem = { href: Route; label: string; icon: typeof LayoutDashboard };
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "한눈에 보기", icon: LayoutDashboard },
+  { href: "/watchlist", label: "워치리스트", icon: Radar },
+  { href: "/news", label: "뉴스", icon: Newspaper },
   { href: "/filings", label: "공시 자료", icon: FileText },
   { href: "/company", label: "기업 살펴보기", icon: Building2 },
-  { href: "/news", label: "뉴스", icon: Newspaper },
   { href: "/chat", label: "대화", icon: MessageSquare },
+  { href: "/pricing", label: "플랜 & 가격", icon: CreditCard },
   { href: "/admin", label: "운영 콘솔", icon: Shield },
   { href: "/settings", label: "설정", icon: Settings }
 ];
@@ -54,3 +66,4 @@ export function SideNav() {
     </aside>
   );
 }
+

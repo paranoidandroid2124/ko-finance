@@ -10,14 +10,15 @@ import { AdminAlertChannelsPanel } from "./AdminOpsAlertChannelsPanel";
 import { AdminNewsPipelinePanel } from "./AdminOpsNewsPanel";
 import { AdminOpsIntegrationsPanel } from "./AdminOpsIntegrationsPanel";
 import { AdminOpsSchedulesPanel } from "./AdminOpsSchedulesPanel";
+import { AdminOpsWatchlistPanel } from "./AdminOpsWatchlistPanel";
 
-type OpsSection = "schedules" | "news" | "integrations" | "alerts";
+type OpsSection = "schedules" | "news" | "integrations" | "watchlist" | "alerts";
 
 export interface AdminOpsPanelProps {
   sections?: OpsSection[];
 }
 
-const DEFAULT_SECTIONS: OpsSection[] = ["schedules", "news", "integrations", "alerts"];
+const DEFAULT_SECTIONS: OpsSection[] = ["schedules", "news", "integrations", "watchlist", "alerts"];
 
 const SECTION_COPY: Record<OpsSection, { title: string; description: string }> = {
   schedules: {
@@ -31,6 +32,10 @@ const SECTION_COPY: Record<OpsSection, { title: string; description: string }> =
   integrations: {
     title: "운영 & 접근 제어",
     description: "Langfuse 토큰과 외부 API 키를 최신 상태로 유지해요.",
+  },
+  watchlist: {
+    title: "워치리스트 모니터링",
+    description: "워치리스트 알림 전송 성공률과 실패 기록을 집중적으로 살펴봐요.",
   },
   alerts: {
     title: "알림 채널",
@@ -74,7 +79,7 @@ export function AdminOpsPanel({ sections }: AdminOpsPanelProps) {
 
   if (isAdminSessionLoading) {
     return (
-      <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">관리자 세션을 확인하는 중이에요…</p>
       </section>
     );
@@ -82,7 +87,7 @@ export function AdminOpsPanel({ sections }: AdminOpsPanelProps) {
 
   if (isUnauthorized) {
     return (
-      <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
           운영 설정을 보려면 관리자 토큰 로그인이 필요해요.
         </p>
@@ -104,8 +109,8 @@ export function AdminOpsPanel({ sections }: AdminOpsPanelProps) {
   const auditDownloadUrl = `${resolveApiBase()}/api/v1/admin/ops/audit/logs`;
 
   return (
-    <section className="space-y-6 rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
-      <header className="space-y-2 border-b border-border-light pb-4 dark:border-border-dark">
+    <section className="space-y-4 rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <header className="space-y-1 border-b border-border-light pb-3 dark:border-border-dark">
         <h2 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">{headerTitle}</h2>
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">{headerDescription}</p>
         <a
@@ -118,7 +123,7 @@ export function AdminOpsPanel({ sections }: AdminOpsPanelProps) {
         </a>
       </header>
 
-      <div className="space-y-6">
+      <div className="space-y-4">
         {normalizedSections.includes("schedules") ? (
           <AdminOpsSchedulesPanel adminActor={adminSession.actor} toast={toast} />
         ) : null}
@@ -127,6 +132,9 @@ export function AdminOpsPanel({ sections }: AdminOpsPanelProps) {
         ) : null}
         {normalizedSections.includes("integrations") ? (
           <AdminOpsIntegrationsPanel adminActor={adminSession.actor} toast={toast} />
+        ) : null}
+        {normalizedSections.includes("watchlist") ? (
+          <AdminOpsWatchlistPanel adminActor={adminSession.actor} toast={toast} />
         ) : null}
         {normalizedSections.includes("alerts") ? (
           <AdminAlertChannelsPanel adminActor={adminSession.actor} toast={toast} />

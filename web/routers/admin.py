@@ -15,7 +15,12 @@ from schemas.api.admin import (
     TossWebhookReplayResponse,
     WebhookAuditListResponse,
 )
-from schemas.api.plan import PlanContextResponse, PlanFeatureFlagsSchema, PlanQuotaSchema
+from schemas.api.plan import (
+    PlanContextResponse,
+    PlanFeatureFlagsSchema,
+    PlanMemoryFlagsSchema,
+    PlanQuotaSchema,
+)
 from services.payments.toss_webhook_audit import read_recent_webhook_entries
 from services.payments.toss_webhook_replay import replay_toss_webhook_event
 from services.plan_service import PlanContext, update_plan_context
@@ -94,6 +99,7 @@ def apply_plan_quick_adjust(payload: PlanQuickAdjustRequest) -> PlanContextRespo
             change_note=payload.changeNote,
             trigger_checkout=payload.triggerCheckout,
             force_checkout_requested=payload.forceCheckoutRequested,
+            memory_flags=payload.memoryFlags.model_dump() if payload.memoryFlags else None,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -139,5 +145,10 @@ def _plan_context_to_response(context: PlanContext) -> PlanContextResponse:
             evidenceInlinePdf=feature_flags.get("evidence.inline_pdf", False),
             evidenceDiff=feature_flags.get("evidence.diff", False),
             timelineFull=feature_flags.get("timeline.full", False),
+        ),
+        memoryFlags=PlanMemoryFlagsSchema(
+            watchlist=context.memory_watchlist_enabled,
+            digest=context.memory_digest_enabled,
+            chat=context.memory_chat_enabled,
         ),
     )

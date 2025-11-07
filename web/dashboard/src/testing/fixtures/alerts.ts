@@ -1,4 +1,4 @@
-import { createElement, useEffect, useMemo, useRef, type PropsWithChildren } from "react";
+import { createElement, useEffect, useRef, type PropsWithChildren } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 
 import type { AlertPlanInfo, AlertRule, AlertChannel } from "@/lib/alertsApi";
@@ -72,15 +72,6 @@ export const sampleEmailChannel: AlertChannel = {
   template: "digest",
   metadata: {
     subject_template: "주요 변경 사항 요약",
-  },
-};
-
-export const sampleSlackChannel: AlertChannel = {
-  type: "slack",
-  target: "https://hooks.slack.com/services/XXX/YYY/ZZZ",
-  template: "blocks",
-  metadata: {
-    channel: "#alerts",
   },
 };
 
@@ -163,14 +154,3 @@ export const AlertStoryProviders = ({
 
   return createElement(QueryClientProvider, { client: clientRef.current }, children);
 };
-
-export const useAlertPlanInfo = (tier: PlanTier): AlertPlanInfo =>
-  useMemo(() => {
-    if (tier === "enterprise") {
-      return enterprisePlanInfo;
-    }
-    if (tier === "pro") {
-      return proPlanInfo;
-    }
-    return freePlanInfo;
-  }, [tier]);

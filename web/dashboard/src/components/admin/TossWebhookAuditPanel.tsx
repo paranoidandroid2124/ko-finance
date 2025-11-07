@@ -219,7 +219,7 @@ export function TossWebhookAuditPanel() {
   }
 
   return (
-    <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+    <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
       <div className="flex flex-col gap-3 border-b border-border-light pb-4 dark:border-border-dark lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">Toss 웹훅 감사 로그</h2>

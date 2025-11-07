@@ -18,6 +18,14 @@ class NewsArticleBase(BaseModel):
     headline: str = Field(..., description="Article headline")
     summary: Optional[str] = Field(None, description="Optional extractive summary")
     published_at: datetime = Field(..., description="Published timestamp")
+    license_type: Optional[str] = Field(
+        None,
+        description="Normalised license label (e.g. KOGL 제1유형)",
+    )
+    license_url: Optional[str] = Field(
+        None,
+        description="License reference URL when provided by the source",
+    )
 
 
 class NewsArticleCreate(NewsArticleBase):

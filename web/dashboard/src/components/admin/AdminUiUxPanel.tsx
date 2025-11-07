@@ -242,7 +242,7 @@ export function AdminUiUxPanel() {
 
   if (isAdminSessionLoading) {
     return (
-      <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">관리자 세션을 확인하는 중이에요…</p>
       </section>
     );
@@ -250,7 +250,7 @@ export function AdminUiUxPanel() {
 
   if (isUnauthorized) {
     return (
-      <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
           UI·UX 설정을 보려면 관리자 토큰 로그인이 필요해요.
         </p>
@@ -271,15 +271,15 @@ export function AdminUiUxPanel() {
 
   if (isSettingsLoading && !uiSettingsResponse) {
     return (
-      <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">UI·UX 설정을 불러오는 중이에요…</p>
       </section>
     );
   }
 
   return (
-    <section className="space-y-6 rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
-      <header className="space-y-2 border-b border-border-light pb-4 dark:border-border-dark">
+    <section className="space-y-4 rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <header className="space-y-1 border-b border-border-light pb-3 dark:border-border-dark">
         <h2 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">UI & UX 기본값</h2>
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
           대시보드의 색상, 첫 화면, 환영 문구를 다듬어 연구원들에게 따뜻한 경험을 전해 주세요.

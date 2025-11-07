@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { Loader2 } from "lucide-react";
 
 import { AdminGuardrailPanel } from "@/components/admin/AdminGuardrailPanel";
 import { AdminLlmPanel } from "@/components/admin/AdminLlmPanel";
 import { AdminOpsPanel } from "@/components/admin/AdminOpsPanel";
 import { AdminRagPanel } from "@/components/admin/AdminRagPanel";
+import { AdminReportsPanel } from "@/components/admin/AdminReportsPanel";
 import { AdminUiUxPanel } from "@/components/admin/AdminUiUxPanel";
 import { AdminTokenLoginCard } from "@/components/admin/AdminTokenLoginCard";
 import { PlanQuickActionsPanel } from "@/components/admin/PlanQuickActionsPanel";
@@ -15,6 +17,10 @@ import { PlanAlertOverview } from "@/components/plan/PlanAlertOverview";
 import { PlanSummaryCard } from "@/components/plan/PlanSummaryCard";
 import { PlanTierPreview } from "@/components/plan/PlanTierPreview";
 import { useAlertRules } from "@/hooks/useAlerts";
+import { useAdminSession } from "@/hooks/useAdminSession";
+import { useTriggerQuickAction } from "@/hooks/useAdminQuickActions";
+import { useToastStore } from "@/store/toastStore";
+import type { AdminQuickActionId } from "@/lib/adminApi";
 
 type Section = {
   id: string;
@@ -25,7 +31,7 @@ type Section = {
 };
 
 type QuickAction = {
-  id: string;
+  id: AdminQuickActionId;
   label: string;
   description: string;
 };
@@ -77,11 +83,25 @@ const OPERATIONS_SECTIONS: Section[] = [
     actionLabel: "스케줄 관리",
   },
   {
+    id: "reports",
+    title: "리포트 & PDF",
+    description: "데일리 브리프 PDF 생성 이력을 살피고 필요한 시점에 재생성해요.",
+    bullets: ["생성 히스토리", "PDF·TeX 다운로드", "수동 재생성"],
+    actionLabel: "리포트 관리",
+  },
+  {
     id: "operations",
     title: "운영 & 접근 제어",
     description: "Langfuse 토글과 외부 API 키를 최신 상태로 유지해요.",
     bullets: ["Langfuse 설정", "외부 API", "운영 모드"],
     actionLabel: "운영 설정 열기",
+  },
+  {
+    id: "watchlist",
+    title: "워치리스트 모니터링",
+    description: "워치리스트 알림 전송 성공률과 실패 기록을 집중적으로 살펴봐요.",
+    bullets: ["전송 실패 로그", "채널별 통계", "재전송 워크플로"],
+    actionLabel: "워치리스트 살펴보기",
   },
   {
     id: "alerts",
@@ -95,18 +115,18 @@ const OPERATIONS_SECTIONS: Section[] = [
 const QUICK_ACTIONS: QuickAction[] = [
   {
     id: "seed-news",
-    label: "Seed news feeds",
-    description: "Queue the `m2.seed_news_feeds` task to fetch the latest RSS content.",
+    label: "뉴스 피드 수집",
+    description: "`m2.seed_news_feeds` 태스크를 실행해 최신 RSS 뉴스를 가져옵니다.",
   },
   {
     id: "aggregate-sentiment",
-    label: "Run sentiment aggregation",
-    description: "Trigger `m2.aggregate_news` and sector aggregation warm-ups.",
+    label: "감성 집계 실행",
+    description: "`m2.aggregate_news`와 섹터 집계 워크플로를 즉시 실행합니다.",
   },
   {
     id: "rebuild-rag",
-    label: "Refresh RAG index",
-    description: "Launch the vector service backfill to sync filings and documents.",
+    label: "RAG 인덱스 새로 고침",
+    description: "공시·문서를 다시 읽어 인덱스를 최신 상태로 동기화합니다.",
   },
 ];
 
@@ -148,7 +168,49 @@ function SectionCard({
   );
 }
 
-function QuickActionCard({ action }: { action: QuickAction }) {
+function QuickActionCard({ action, actor }: { action: QuickAction; actor: string | null }) {
+  const triggerQuickAction = useTriggerQuickAction();
+  const showToast = useToastStore((state) => state.show);
+
+  const handleClick = async () => {
+    if (!actor) {
+      showToast({
+        intent: "warning",
+        message: "운영 토큰 인증을 완료한 뒤에 실행할 수 있어요.",
+      });
+      return;
+    }
+    try {
+      const result = await triggerQuickAction.mutateAsync({
+        action: action.id,
+        actor,
+      });
+      const successMessage =
+        result.message ??
+        (result.taskId ? `작업 ${result.taskId} (${result.status})` : `상태: ${result.status}`);
+      showToast({
+        id: `admin/quick-action/${action.id}/${Date.now()}`,
+        intent: "success",
+        title: `${action.label} 실행`,
+        message: successMessage,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "퀵 액션을 실행하지 못했어요. 잠시 후 다시 시도해 주세요.";
+      showToast({
+        id: `admin/quick-action/${action.id}/error/${Date.now()}`,
+        intent: "error",
+        title: `${action.label} 실행 실패`,
+        message,
+      });
+    }
+  };
+
+  const isPending = triggerQuickAction.isPending;
+  const isDisabled = isPending || !actor;
+  const buttonClass =
+    "inline-flex items-center gap-2 rounded-md border px-3 py-1 text-xs font-semibold uppercase tracking-wide transition";
+
   return (
     <div className="flex items-start justify-between rounded-xl border border-border-light bg-background-cardLight p-5 text-sm transition-colors dark:border-border-dark dark:bg-background-cardDark">
       <div>
@@ -157,10 +219,16 @@ function QuickActionCard({ action }: { action: QuickAction }) {
       </div>
       <button
         type="button"
-        disabled
-        className="inline-flex cursor-not-allowed items-center rounded-md bg-border-light px-3 py-1 text-xs font-semibold uppercase tracking-wide text-text-secondaryLight dark:bg-border-dark dark:text-text-secondaryDark"
+        onClick={handleClick}
+        disabled={isDisabled}
+        className={`${buttonClass} ${
+          isDisabled
+            ? "cursor-not-allowed border-border-light text-text-secondaryLight opacity-60 dark:border-border-dark dark:text-text-secondaryDark"
+            : "border-border-light text-primary hover:border-primary hover:text-primary dark:border-border-dark dark:text-primary.dark dark:hover:border-primary.dark dark:hover:text-primary.dark"
+        }`}
       >
-        coming soon
+        {isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+        {isPending ? "실행 중…" : "바로 실행"}
       </button>
     </div>
   );
@@ -173,6 +241,8 @@ export default function AdminPage() {
     isLoading: isAlertPlanLoading,
     isError: isAlertPlanError,
   } = useAlertRules();
+  const { data: adminSession } = useAdminSession();
+  const sessionActor = adminSession?.actor ?? null;
 
   const alertPlan = alertRulesData?.plan ?? null;
   const alertPlanErrorMessage = isAlertPlanError ? "알림 플랜 정보를 불러오지 못했어요." : undefined;
@@ -193,6 +263,10 @@ export default function AdminPage() {
         return <AdminOpsPanel sections={["integrations"]} />;
       case "alerts":
         return <AdminOpsPanel sections={["alerts"]} />;
+      case "watchlist":
+        return <AdminOpsPanel sections={["watchlist"]} />;
+      case "reports":
+        return <AdminReportsPanel />;
       case "ui":
         return <AdminUiUxPanel />;
       default:
@@ -289,12 +363,12 @@ export default function AdminPage() {
             Quick Actions
           </h2>
           <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-            운영용 API와 툴이 연결되면 이 자리에서 바로 실행할 수 있어요. 지금은 준비 중이라 미리보기 상태로 표시돼요.
+            운영 중 즉시 실행이 필요한 작업을 한 번에 처리할 수 있어요. 큐에 등록된 작업은 감사 로그와 실행 기록에 남습니다.
           </p>
         </header>
         <div className="space-y-3">
           {QUICK_ACTIONS.map((action) => (
-            <QuickActionCard key={action.id} action={action} />
+            <QuickActionCard key={action.id} action={action} actor={sessionActor} />
           ))}
         </div>
       </section>

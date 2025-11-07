@@ -38,11 +38,14 @@ from schemas.api.admin import (
     AdminOpsTemplateSchema,
     AdminOpsTriggerRequest,
     AdminOpsTriggerResponse,
+    AdminOpsQuickActionRequest,
+    AdminOpsQuickActionResponse,
     PromptChannel,
 )
 from services import admin_ops_service
 from services.admin_audit import append_audit_log
 from web.deps_admin import require_admin_session
+from web.routers.admin_rag import _perform_reindex
 
 try:
     from parse.celery_app import app as celery_app  # type: ignore
@@ -61,6 +64,23 @@ router = APIRouter(
 )
 
 _AUDIT_DIR = FilePath("uploads") / "admin"
+
+_QUICK_ACTION_TASKS: Dict[str, Dict[str, object]] = {
+    "seed-news": {"task": "m2.seed_news_feeds"},
+    "aggregate-sentiment": {"task": "m2.aggregate_news"},
+}
+
+
+def _dispatch_celery_task(task_name: str, kwargs: Optional[Dict[str, object]] = None) -> str:
+    app = worker_app or celery_app
+    if not app:
+        raise RuntimeError("Celery worker가 활성화되어 있지 않습니다.")
+
+    async_result = app.send_task(task_name, kwargs=kwargs or {})
+    task_id = getattr(async_result, "id", None)
+    if not task_id:
+        task_id = f"{task_name}-{uuid.uuid4().hex[:8]}"
+    return task_id
 
 
 def _human_interval(schedule_obj: object) -> str:
@@ -205,6 +225,77 @@ def trigger_schedule(
         payload={"jobId": job_id, "taskId": task_id, "note": payload.note},
     )
     return AdminOpsTriggerResponse(jobId=job_id, taskId=task_id, status="queued")
+
+
+@router.post(
+    "/quick-actions/{action_id}",
+    response_model=AdminOpsQuickActionResponse,
+    summary="운영 퀵 액션을 실행합니다.",
+)
+def execute_quick_action(
+    action_id: str,
+    payload: AdminOpsQuickActionRequest,
+) -> AdminOpsQuickActionResponse:
+    action = action_id.strip()
+    actor = payload.actor.strip()
+    if not actor:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "quick_action.actor_required", "message": "actor 필드를 입력해 주세요."},
+        )
+    note = (payload.note or "").strip() or None
+
+    if action in _QUICK_ACTION_TASKS:
+        task_name = str(_QUICK_ACTION_TASKS[action].get("task"))
+        kwargs = dict(_QUICK_ACTION_TASKS[action].get("kwargs") or {})
+        try:
+            task_id = _dispatch_celery_task(task_name, kwargs)
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "quick_action.unavailable", "message": str(exc)},
+            ) from exc
+
+        admin_ops_service.append_run_history(
+            task_id=task_id,
+            job_id=f"quick-action.{action}",
+            task=task_name,
+            status="queued",
+            actor=actor,
+            note=note,
+        )
+        append_audit_log(
+            filename="ops_audit.jsonl",
+            actor=actor,
+            action="quick_action_run",
+            payload={"action": action, "task": task_name, "taskId": task_id, "note": note},
+        )
+        return AdminOpsQuickActionResponse(
+            action=action,
+            status="queued",
+            taskId=task_id,
+            message="작업이 큐에 등록됐어요.",
+        )
+
+    if action == "rebuild-rag":
+        result = _perform_reindex(actor=actor, sources=[], note=note)
+        append_audit_log(
+            filename="ops_audit.jsonl",
+            actor=actor,
+            action="quick_action_run",
+            payload={"action": action, "taskId": result.taskId, "status": result.status, "note": note},
+        )
+        return AdminOpsQuickActionResponse(
+            action=action,
+            status=result.status,
+            taskId=result.taskId,
+            message="RAG 재색인을 요청했어요.",
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={"code": "quick_action.not_found", "message": f"지원하지 않는 퀵 액션입니다: {action_id}"},
+    )
 
 
 @router.get(

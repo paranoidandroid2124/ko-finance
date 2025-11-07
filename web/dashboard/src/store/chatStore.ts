@@ -573,9 +573,6 @@ export const selectActiveEvidence = (state: Store): RagEvidenceState => {
   return evidence;
 };
 
-export const selectEvidenceStatus = (state: Store) =>
-  selectActiveSession(state)?.evidence?.status ?? 'idle';
-
 export const selectGuardrailTelemetry = (state: Store): GuardrailTelemetry => {
   const guardrail = selectActiveSession(state)?.telemetry?.guardrail;
   if (!guardrail) {

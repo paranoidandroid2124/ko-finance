@@ -1,45 +1,56 @@
-﻿새로운 요청을 수행하기 전에 아래 내용을 차근차근 읽고, 단계별로 진행해 주세요. 모든 문서는 UTF-8 인코딩으로 유지하고, 프런트엔드 사용자에게 노출되는 문장은 ‘친근한 사회적 기업’ 톤을 잊지 않는 것이 핵심입니다.
+Phase 5–8 Guidance
+==================
 
-1. 프로젝트 한눈에 보기
-- 아키텍처: FastAPI 백엔드와 Next.js 대시보드로 구성된 K-Finance AI Research Copilot입니다.
-- 핵심 도메인: 플랜·결제(Toss 연동), RAG Evidence, Admin Quick Actions. 운영 레이어는 LiteLLM, Langfuse, Celery, MinIO, Qdrant로 구성되어 있어요.
-- RAG 게이트: Judge가 `rag_mode`(vector|optional|none)를 판정해 문서 검색 여부를 자동 분기합니다. `vector`는 반드시 검색, `optional`은 검색 후 부족하면 바로 일반 LLM 경로, `none`은 처음부터 RAG 없이 응답합니다.
+1. 프로젝트 개요
+- FastAPI 백엔드와 Next.js 대시보드로 구성된 K-Finance AI Research Copilot입니다.
+- 핵심 도메인: 공시 기반 RAG Evidence, 플랜/결제(Toss), Admin Ops & Guardrail.
+- 운영 레이어: LiteLLM, Langfuse, Celery, MinIO, Qdrant로 구성되며 Langfuse trace와 감사 로그가 모든 플로우에 연결됩니다.
 
-2. Phase 진행 현황 (2025-10-31 기준)
-- Phase 4 핵심 구현은 완료되었으며, 아래 항목은 기록/참고용 요약입니다.
-- Phase 4 달성 사항
-  - `/api/v1/admin/llm/*`, `/api/v1/admin/rag/*`, `/api/v1/admin/ops/*` 라우터가 업로드 기반 저장소와 감사 로그에 연결되어 LLM 프로필·Guardrail·RAG 설정·운영 파이프라인을 읽고 씁니다. `tests/test_admin_management.py`, `tests/test_rag_api.py`가 통과합니다.
-  - Admin 플랜 퀵 액션 패널: actor·변경 메모·감사 로그 다운로드·토스트를 포함하고 `plan_audit.jsonl`에 이력 기록합니다. Langfuse 키 회전, Toss 웹훅 감사, PlanContext 수정이 한 번에 모니터링돼요.
-  - Admin Ops 패널: Celery 스케줄·실행 이력, Langfuse/외부 API 설정, 알림 채널 관리까지 통합되었고, 알림 미리보기는 본문/렌더링 결과를 손쉽게 복사할 수 있도록 개선됐습니다.
-  - LLM·Guardrail·RAG·Ops·UI 패널을 개별 섹션으로 재구성했고 감사 흐름과 토스트 UX를 통일했습니다. LLM 프로필 편집 화면에는 “현재 저장된 값 ↔ 저장 예정 값” 비교 카드와 복사 버튼이 추가돼 변경분을 바로 확인할 수 있습니다.
-  - RAG 재색인 패널에 실패 재시도 큐, 상태 필터, 검색 입력, Langfuse trace/spans를 복사할 수 있는 UI가 포함되어 즉시 재시도·정리가 가능하고 Judge `optional|none` 모드 선택 시 사용자 토스트로 안내합니다.
-  - Guardrail 샘플 평가 API는 평가 시각·감사 로그 파일명을 반환하며, UI에서 즉시 다운로드 링크와 최신 감사 파일 배지를 노출하도록 개선했습니다.
-- Langfuse API 키는 `/api/v1/admin/ops/api-keys/langfuse/rotate` 엔드포인트와 관리자 패널 “토큰 재발급” 버튼으로 자동 회전되며, 회전 이력은 감사 로그에 기록됩니다.
-- 감사 로그는 `audit_master.jsonl`과 `/api/v1/admin/ops/audit/logs` 통합 API로 중앙 집계되어 알림 채널·API 키 변경 이력과 actor/note 정보를 한 번에 조회할 수 있습니다.
-- Phase 5 준비 항목
-  - 인프라: GCP Cloud Run 배포, Cloud SQL·Secret Manager 도입, 감사 로그를 GCS·Cloud Logging으로 이관, Google Identity RBAC 연동 준비.
-  - 데이터 전략: 라이선스 검토, 의도 분류/threshold/fallback/Langfuse trace 확장, 재색인 히스토리 API 고도화.
-  - 운영 파이프라인: Cloud Tasks/Workflows 등 관리형 서비스로 이전, 저장소 추상화로 로컬/클라우드 겸용 구조 마련.
-  - 법무/운영: 개인정보·전자금융 규정 준수 체크리스트 유지, 감사 로그/비밀 관리 정책과 DR 드릴 결과를 문서화.
+2. Phase 5 핵심 목표
+- 합법 데이터 정비: DART API 순정화, KOGL 필터·출처 배지 자동화, 뉴스 메타만 저장(온디맨드 요약).
+- 남은 Must-Have: Toss 플랜 레이트·기능 토글(Plan tier 메시지 포함).
+- Toss 결제 플랜 가드레일 강화와 운영 플로우 문서화를 통해 유료 서비스 준비.
 
-3. Admin 패널 요약
-- LLM & 프롬프트: LiteLLM 프로필, 시스템 프롬프트를 분리해 actor 프리필, 감사 로그 다운로드, 토스트 패턴을 일관되게 제공합니다. 프로필 비교 카드로 변경 전/후를 확인하고 복사할 수 있어요.
-- Guardrail: 정책 편집과 샘플 평가 섹션에 actor/note 입력, 감사 로그 다운로드 링크, 다채널 평가 프리뷰를 제공하며 평가 결과에 감사 로그 파일명과 기록 시각을 함께 표시합니다.
-- RAG: 소스, 필터, 유사도, 재색인 히스토리를 한 화면에서 관리하며 재색인 타임라인, 대기열 큐, 상태 필터·검색, Langfuse trace/span, Judge `rag_mode` 기반 토스트가 구성되어 있습니다.
-- 운영 & 접근 제어: 스케줄, 뉴스 파이프라인, Langfuse/API 키, 알림 채널을 개별 패널로 분리했고 감사 흐름과 토스트 UX를 공유합니다. 알림 미리보기 결과는 복사 버튼으로 바로 재사용할 수 있습니다.
-- UI & UX 설정: 브랜드 색상, 기본 범위, 첫 화면, 환영 문구, 알림 배너를 조정하는 패널과 대응 스토어가 연결되었습니다.
+- **진행 중**
+  * Toss 플랜 레이트·기능 토글, Plan tier 커스텀 메시지 정비.
+- **진행도**: 약 65%
 
-4. 네이밍·코딩 지침 (Phase 4 규칙 통일)
-- 함수: 스네이크 케이스, 20자 이하, 3~4단어 이내, 구조는 “동사+목적어”(예: `build_basic_reply`). 접속사(and/with/from 등) 금지. 복합 책임(두 개 이상의 동사) 금지.
-- 파일/클래스명: 의미 중복 금지. 자세한 의미는 타입힌트와 도큐스트링으로 보완합니다.
-- 재사용: 이미 존재하는 훅·컴포넌트·유틸을 먼저 확인하고 중복 작성 금지.
-- 테스트: `pytest`만 실행합니다. `pnpm` 기반 테스트나 빌드가 필요하면 사용자에게 요청하세요.
-- 명령 실행: UTF-8 인코딩을 유지하고, 단계별로 상황을 공유합니다. 예상치 못한 파일 인코딩 문제가 생기면 즉시 복구합니다.
-- 프런트 문구: ‘친근한 사회적 기업’ 말투로 작성하고, `거래량`처럼 정해진 용어는 원문 그대로 유지합니다. Evidence diff 문구도 같은 톤으로 안내합니다.
+4. Phase 6 미리보기 — “데이터 확장 & 업셀”
+- 테마/섹터 워크보드(공시+뉴스+EOD), 다문서 표준질의 “질문 그리드”, 알림 룰 빌더, 리서치 메모 증거 고정.
+- 공공 EOD 지표 확장, KOGL 자동 배지 확대, “근거 팩” API 베타.
+- 트랜스크립트·섹터 지수·프리미엄 뉴스 벤더 PoC 계약 및 라이선스 조건 검토.
 
-5. 향후 작업 제안 (우선순위 확인 후 진행)
-- RAG UX 확장: Evidence diff 세부 강조, Langfuse trace 모니터링 대시보드 연계, 자동 재시도 흐름 요약 카드.
-- LLM/Guardrail 평가 심화: 라인 단위 diff 하이라이트, 감사 로그 검색/필터, Guardrail 샘플 히스토리 북마크 기능.
-- 운영 & 접근 제어 강화: 알림 템플릿 갤러리, 샘플 메타 자동 생성, 토큰/세션 만료 안내 배너, 다중 환경 토큰 보관.
-- Phase 5 대비 문서화: Secret Manager/Cloud Run 설정 가이드, 감사 로그 저장소 추상화, RAG 고도화 실험 계획.
-- 정기 스모크: Toss 결제·PlanContext·Admin 설정 충돌 여부를 `pytest`로 점검, 브라우저 테스트(`pnpm test`)는 사용자 협의 후 진행.
+5. 컴플라이언스 & 데이터 원칙
+- 무료·합법 데이터만 사용 (OpenDART API, KOGL 유형 1·3, 공개 RSS 메타).
+- 공시 PDF/첨부는 내부 저장소에만 유지하고 UI에는 반드시 “출처: DART” 링크를 표시합니다.
+- 뉴스 전문 저장 금지 → 메타+요약만 저장, 원문은 외부 링크로 이동.
+- 라이선스 기록(`docs/phase_roadmap.md`)을 업데이트하고 RAG 응답에는 근거 문장과 링크를 필수 포함합니다.
+
+6. 개발 지침 & 테스트
+- 함수: 스네이크 케이스, 20자 이하, “동사+목적어” 구조(접속사 금지).
+- 기존 훅·컴포넌트·유틸을 재사용하고 중복 코드를 피합니다.
+- `pytest`만 실행하며, 프런트 테스트나 빌드가 필요하면 사용자와 협의합니다.
+- 모든 문서는 UTF-8로 유지하고, 프런트 문구는 ‘친근한 사회적 기업’ 톤을 지킵니다.
+
+7. 참고 문서
+- `docs/phase_roadmap.md`: Phase 5~8 로드맵과 진행률.
+- `docs/policies/news_storage_policy.md`: 뉴스 메타데이터 저장·보존 정책.
+- Admin 패널/스토어 구조는 Phase 4 산출물(LLM/Guardrail/RAG/Ops/Plan)을 참고합니다.
+
+- 뉴스 저장소 정책 변경에 맞춘 메타 전용 캐시/요약 파이프라인 배포.
+- Toss 플랜 레이트/기능 토글, Plan tier 커스텀 메시지, 결제 플로 가드레일 보강.
+
+9. 최근 완료 항목
+- BigQuery 기반 재색인 SLA 대시보드 + 감사/Trace 싱크 파이프라인 정비.
+- 근거 하이라이트·클릭 체인 강화 및 Admin 증거 미리보기 연동.
+- Typst→LaTeX 데일리 브리프 렌더러, 증거 패키지 ZIP, MinIO/GCS 스토리지 추상화.
+- 워치리스트 레이더 P1~P3 UX와 다이제스트 재전송 플로우 개선.
+- 워치리스트 룰 마법사 Step 3 채널 정책 UI 고도화(Slack/Email 카드, 정책 요약, 즐겨찾기 토글).
+- 룰 리스트→다이제스트 공유 버튼 및 자동 필터/채널 프리필 추가.
+- 데일리 브리프 보존 루틴 및 `m4.cleanup_daily_briefs` 태스크 추가.
+- KOGL 라이선스 배지·출처 표시 자동화 및 API/대시보드 반영.
+- RAG 상대 날짜 질의 전처리 및 현재 날짜 메타정보 주입, 감성 메타데이터 벡터 반영.
+
+10. 최근 업데이트 & 비고
+- GCP 전환(Cloud Run, Cloud SQL, Secret Manager, Artifact Registry)은 Phase 8 범위로 유지합니다.
+- Toss 결제·PlanContext·Admin 설정 충돌 여부는 정기적으로 `pytest`로 점검하고, 브라우저 테스트(`pnpm test`)는 필요 시 별도 협의합니다.

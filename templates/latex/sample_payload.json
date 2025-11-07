@@ -1,0 +1,188 @@
+{
+  "report": {
+    "title": "AI Market Signals",
+    "date": "2025-11-04",
+    "headline": "대규모 공급계약 공시와 KOGL 정책 이슈가 동시에 등장했습니다.",
+    "top_n": {
+      "signals": 6,
+      "alerts": 3,
+      "actions": 2,
+      "evidence": 4,
+      "metrics": 5,
+      "notes": 4
+    }
+  },
+  "signals": [
+    {
+      "label": "OpenDART filings (24h)",
+      "value": "86",
+      "delta": "+18 vs D-1",
+      "note": "정정 공시 포함, 공급계약 3건 집중",
+      "severity": "primary"
+    },
+    {
+      "label": "KOGL news meta (24h)",
+      "value": "142",
+      "delta": "+12 vs D-1",
+      "note": "정책 관련 메타 비중 34%",
+      "severity": "info"
+    },
+    {
+      "label": "Watchlist alerts",
+      "value": "28",
+      "delta": "+5 vs D-1",
+      "note": "High 레벨 9건, 자본재 섹터 집중",
+      "severity": "accent"
+    },
+    {
+      "label": "Positive filings",
+      "value": "19",
+      "delta": "+7 vs D-1",
+      "note": "재무 개선/계약 확정 중심",
+      "severity": "neutral"
+    },
+    {
+      "label": "Negative filings",
+      "value": "11",
+      "delta": "-2 vs D-1",
+      "note": "지연/리스크 공시 소폭 감소",
+      "severity": "warn"
+    },
+    {
+      "label": "Model self-check score",
+      "value": "0.93",
+      "delta": "= ",
+      "note": "Precision@K 유지",
+      "severity": "info"
+    },
+    {
+      "label": "Appendix overflow sample",
+      "value": "3",
+      "delta": "+1",
+      "note": "본문 top_n 초과 시 부록으로 이동",
+      "severity": "neutral"
+    }
+  ],
+  "alerts": [
+    {
+      "title": "공급계약 워치",
+      "body": "정정 공시 2건과 신규 계약 1건이 동일 밸류체인에서 발생했습니다. High 레벨 주체 4곳.",
+      "severity": "warn"
+    },
+    {
+      "title": "KOGL 정책 이슈",
+      "body": "배터리 소재 세액공제 확대 논의, 관련 협력사 6곳에서 이상 거래가 감지되었습니다.",
+      "severity": "warn"
+    },
+    {
+      "title": "워치리스트 레벨업",
+      "body": "기업 A와 C가 감시 레벨 High로 전환되었습니다. Slack 알림을 상향 유지하세요.",
+      "severity": "warn"
+    },
+    {
+      "title": "Appendix Alert",
+      "body": "본문 top_n 초과 알림 예시입니다.",
+      "severity": "info"
+    }
+  ],
+  "actions": [
+    {
+      "title": "우선 조치",
+      "ordered": true,
+      "items": [
+        "계약 당사 기업 3곳에 대해 48시간 수주 추적 알림을 생성합니다.",
+        "KOGL 정책 기사 메타를 대시보드 상단 노출로 고정합니다.",
+        "High 레벨 기업 재무 영향 분석을 워크플로 큐에 등록합니다."
+      ]
+    },
+    {
+      "title": "추가 모니터링",
+      "ordered": false,
+      "items": [
+        "재색인 SLA 여유분을 활용해 야간 배치 빈도를 3회로 상향 테스트합니다.",
+        "Slack 다이제스트에 정책 이슈 전용 섹션을 추가할지 검토합니다."
+      ]
+    },
+    {
+      "title": "Appendix Action",
+      "ordered": false,
+      "items": [
+        "본문 top_n 초과 시 Appendix로 이동하는지 테스트합니다."
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "source": "OpenDART",
+      "date": "2025-11-04",
+      "title": "정정 공시: 대규모 공급계약 체결 및 납품 일정 업데이트",
+      "body": "감시 레벨 High 기업 B — 매출 비중 28%, 공급처 다변화 리스크",
+      "trace_id": "trace-open-dart-001",
+      "url": "https://dart.fss.or.kr/sample"
+    },
+    {
+      "source": "KOGL 뉴스",
+      "date": "2025-11-04",
+      "title": "산업부, 배터리 소재 세액공제 확대",
+      "body": "정책 변화가 워치리스트 6개 종목에 영향을 미칩니다.",
+      "trace_id": "trace-kogl-news-007",
+      "url": "https://data.go.kr/sample"
+    },
+    {
+      "source": "Watchlist Radar",
+      "date": "2025-11-04",
+      "title": "기업 A: 재무구조 개선 공시 후 High 전환",
+      "body": "Slack 채널 #watchlists 알림 ID alert-1234",
+      "trace_id": "radar-2025-11-04"
+    },
+    {
+      "source": "Ops Digest",
+      "date": "2025-11-04",
+      "title": "워크플로 재시작 없이 92% 작업이 SLA 내 마감",
+      "body": "TraceID ops-5678 — pipeline 안정성 양호",
+      "trace_id": "ops-5678"
+    },
+    {
+      "source": "Extra Evidence",
+      "date": "2025-11-04",
+      "title": "Appendix evidence example",
+      "body": "본문 top_n 초과 시 부록으로 이동합니다."
+    }
+  ],
+  "metrics": [
+    { "label": "재색인 p50", "current": "27 min", "delta": "-5 min" },
+    { "label": "재색인 p95", "current": "44 min", "delta": "-6 min" },
+    { "label": "LiteLLM 요청 성공률", "current": "98.7%", "delta": "+0.3pt" },
+    { "label": "Slack digest 발송", "current": "100%", "delta": "=" },
+    { "label": "증거 패키지 ZIP 생성", "current": "12/12", "delta": "0" },
+    { "label": "추가 지표", "current": "42", "delta": "+2" }
+  ],
+  "notes": [
+    "모든 인사이트는 TraceID와 함께 재현 가능합니다. (manifest-abc)",
+    "정책 이슈 분류 Precision@K 0.93 유지, 야간 배치에서 재검증 예정입니다.",
+    "내일 09:30 KST 발송분에는 워치리스트 섹터 요약을 추가할 계획입니다.",
+    "Appendix 테스트 노트 항목입니다.",
+    "본문 top_n 초과 시 Appendix로 이동하는 노트입니다."
+  ],
+  "appendix": {
+    "sections": [
+      {
+        "title": "Positive Filings (24h)",
+        "type": "list",
+        "items": [
+          "기업 D — 신사업 투자 결정 공시",
+          "기업 E — 해외 수주 계약 공시"
+        ]
+      }
+    ]
+  },
+  "links": {
+    "policy_digest_url": "https://k-finance.ai/policy/2025-11-04",
+    "alert_id": "alert-1234",
+    "trace_id": "trace-xyz",
+    "evidence_manifest_id": "manifest-abc"
+  },
+  "charts": {
+    "sla_trend": "assets/sla_trend.pdf"
+  }
+}

@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 from core.env import env_float, env_int, env_str
 from core.logging import get_logger
 from schemas.news import NewsArticleCreate
+from services.kogl_license import detect_kogl_license
 
 try:
     import feedparser  # type: ignore
@@ -59,11 +60,42 @@ def _join_entry_content(entry) -> str:
     return "\n\n".join(part.strip() for part in parts if part and str(part).strip())
 
 
-def _entry_to_article(entry, source_name: str) -> NewsArticleCreate:
+def _extract_license_metadata(entry, feed_meta) -> tuple[Optional[str], Optional[str]]:
+    license_url: Optional[str] = None
+    links = entry.get("links") or []
+    for link in links:
+        if isinstance(link, dict) and link.get("rel") == "license":
+            license_url = link.get("href") or license_url
+            if license_url:
+                break
+
+    license_text_candidates = [
+        entry.get("rights"),
+        entry.get("dc_rights"),
+        entry.get("license"),
+        entry.get("kogl"),
+    ]
+    if isinstance(feed_meta, dict):
+        license_text_candidates.extend(
+            [
+                feed_meta.get("rights"),
+                feed_meta.get("license"),
+            ]
+        )
+
+    license_text = next(
+        (candidate for candidate in license_text_candidates if isinstance(candidate, str) and candidate.strip()),
+        None,
+    )
+    return detect_kogl_license(license_text, license_url=license_url)
+
+
+def _entry_to_article(entry, source_name: str, feed_meta) -> NewsArticleCreate:
     link = entry.get("link") or ""
     summary = entry.get("summary") or entry.get("description")
     published_at = _parse_entry_time(entry)
     original_text = _join_entry_content(entry) or (summary or "")
+    license_type, license_url = _extract_license_metadata(entry, feed_meta)
 
     return NewsArticleCreate(
         ticker=None,
@@ -73,6 +105,8 @@ def _entry_to_article(entry, source_name: str) -> NewsArticleCreate:
         summary=summary,
         published_at=published_at,
         original_text=original_text or link or source_name,
+        license_type=license_type,
+        license_url=license_url,
     )
 
 
@@ -188,7 +222,7 @@ def fetch_news_batch(limit_per_feed: int = 5, *, use_mock_fallback: bool = False
 
         for entry in entries:
             try:
-                article = _entry_to_article(entry, source_name=source_name)
+                article = _entry_to_article(entry, source_name=source_name, feed_meta=feed_meta)
             except Exception as exc:  # pragma: no cover - defensive logging
                 logger.error("Failed to normalize entry from %s: %s", feed_url, exc, exc_info=True)
                 continue
