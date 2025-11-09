@@ -7,7 +7,9 @@ import { usePlanQuickAdjust } from "@/hooks/useAdminQuickActions";
 import { useAdminSession } from "@/hooks/useAdminSession";
 import { resolveApiBase } from "@/lib/apiBase";
 import { useToastStore } from "@/store/toastStore";
-import { planTierRank, usePlanStore, type PlanQuota, type PlanTier } from "@/store/planStore";
+import { planTierRank, usePlanStore, type PlanMemoryFlags, type PlanPreset, type PlanQuota, type PlanTier } from "@/store/planStore";
+import { LIGHTMEM_FLAG_OPTIONS, type LightMemFlagKey } from "@/constants/lightmemFlags";
+import { usePlanPresets } from "@/hooks/usePlanPresets";
 
 type EntitlementOption = {
   value: string;
@@ -31,19 +33,6 @@ const PLAN_TIER_LABEL: Record<PlanTier, string> = {
   enterprise: "Enterprise",
 };
 
-const PLAN_BASE_ENTITLEMENTS: Record<PlanTier, ReadonlySet<string>> = {
-  free: new Set(),
-  pro: new Set(["search.compare", "search.alerts", "evidence.inline_pdf"]),
-  enterprise: new Set([
-    "search.compare",
-    "search.alerts",
-    "search.export",
-    "evidence.inline_pdf",
-    "evidence.diff",
-    "timeline.full",
-  ]),
-};
-
 const labelForEntitlement = (value: string) =>
   ENTITLEMENT_OPTIONS.find((item) => item.value === value)?.label ?? value;
 
@@ -61,6 +50,7 @@ type FormState = {
   selfCheckEnabled: boolean;
   triggerCheckout: boolean;
   forceCheckout: ForceCheckoutState;
+  memoryFlags: PlanMemoryFlags;
 };
 
 const isoToLocalInput = (iso?: string | null) => {
@@ -103,8 +93,20 @@ const isEntitlementAllowed = (entitlement: string, tier: PlanTier) => {
   return planTierRank(tier) >= planTierRank(requiredTier);
 };
 
-const ensureEntitlementsForTier = (tier: PlanTier, entitlements: Iterable<string>) => {
-  const base = PLAN_BASE_ENTITLEMENTS[tier];
+type BaseEntitlementMap = Record<PlanTier, ReadonlySet<string>>;
+
+const buildBaseEntitlementMap = (presets: Record<PlanTier, PlanPreset> | null): BaseEntitlementMap => ({
+  free: new Set<string>(presets?.free?.entitlements ?? []),
+  pro: new Set<string>(presets?.pro?.entitlements ?? []),
+  enterprise: new Set<string>(presets?.enterprise?.entitlements ?? []),
+});
+
+const ensureEntitlementsForTier = (
+  tier: PlanTier,
+  entitlements: Iterable<string>,
+  baseEntitlements: BaseEntitlementMap,
+) => {
+  const base = baseEntitlements[tier] ?? new Set<string>();
   const allowed = new Set<string>(base);
 
   for (const item of entitlements) {
@@ -118,16 +120,20 @@ const ensureEntitlementsForTier = (tier: PlanTier, entitlements: Iterable<string
   return allowed;
 };
 
-const buildInitialState = (args: {
+const buildInitialState = (
+  args: {
   planTier: PlanTier;
   entitlements: string[];
   expiresAt?: string | null;
   quota: PlanQuota;
   updatedBy?: string | null;
   defaultActor?: string | null;
-}): FormState => ({
+  memoryFlags: PlanMemoryFlags;
+  },
+  baseEntitlements: BaseEntitlementMap,
+): FormState => ({
   planTier: args.planTier,
-  entitlements: ensureEntitlementsForTier(args.planTier, args.entitlements),
+  entitlements: ensureEntitlementsForTier(args.planTier, args.entitlements, baseEntitlements),
   expiresAtInput: isoToLocalInput(args.expiresAt ?? null),
   actor: args.updatedBy ?? args.defaultActor ?? "admin@kfinance.ai",
   changeNote: "",
@@ -137,6 +143,7 @@ const buildInitialState = (args: {
   selfCheckEnabled: Boolean(args.quota.selfCheckEnabled),
   triggerCheckout: false,
   forceCheckout: "keep",
+  memoryFlags: { ...args.memoryFlags },
 });
 
 export function PlanQuickActionsPanel() {
@@ -146,6 +153,7 @@ export function PlanQuickActionsPanel() {
     quota,
     expiresAt,
     updatedBy,
+    memoryFlags,
     checkoutRequested,
     fetchPlan,
   } = usePlanStore((state) => ({
@@ -154,9 +162,12 @@ export function PlanQuickActionsPanel() {
     quota: state.quota,
     expiresAt: state.expiresAt,
     updatedBy: state.updatedBy,
+    memoryFlags: state.memoryFlags,
     checkoutRequested: state.checkoutRequested,
     fetchPlan: state.fetchPlan,
   }));
+  const { presets, loading: presetsLoading, error: presetsError } = usePlanPresets();
+  const baseEntitlementSets = useMemo(() => buildBaseEntitlementMap(presets), [presets]);
   const {
     data: adminSession,
     isLoading: isAdminSessionLoading,
@@ -168,18 +179,20 @@ export function PlanQuickActionsPanel() {
   const auditDownloadUrl = `${resolveApiBase()}/api/v1/admin/plan/audit/logs`;
 
   const [formState, setFormState] = useState<FormState>(() =>
-    buildInitialState({ planTier, entitlements, quota, expiresAt, updatedBy, defaultActor }),
+    buildInitialState({ planTier, entitlements, quota, expiresAt, updatedBy, defaultActor, memoryFlags }, baseEntitlementSets),
   );
   const { mutateAsync, isPending } = usePlanQuickAdjust();
   const pushToast = useToastStore((state) => state.show);
 
   useEffect(() => {
-    setFormState(buildInitialState({ planTier, entitlements, quota, expiresAt, updatedBy, defaultActor }));
-  }, [planTier, entitlements, quota, expiresAt, updatedBy, defaultActor]);
+    setFormState(
+      buildInitialState({ planTier, entitlements, quota, expiresAt, updatedBy, defaultActor, memoryFlags }, baseEntitlementSets),
+    );
+  }, [baseEntitlementSets, planTier, entitlements, quota, expiresAt, updatedBy, defaultActor, memoryFlags]);
 
   const handleEntitlementToggle = (value: string) => {
     setFormState((prev) => {
-      const locked = PLAN_BASE_ENTITLEMENTS[prev.planTier].has(value);
+      const locked = baseEntitlementSets[prev.planTier].has(value);
       if (locked || !isEntitlementAllowed(value, prev.planTier)) {
         return prev;
       }
@@ -191,6 +204,16 @@ export function PlanQuickActionsPanel() {
       }
       return { ...prev, entitlements: next };
     });
+  };
+
+  const handleMemoryFlagToggle = (flag: LightMemFlagKey) => {
+    setFormState((prev) => ({
+      ...prev,
+      memoryFlags: {
+        ...prev.memoryFlags,
+        [flag]: !prev.memoryFlags[flag],
+      },
+    }));
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -207,6 +230,7 @@ export function PlanQuickActionsPanel() {
       const payload = {
         planTier: formState.planTier,
         entitlements: entitlementsList,
+        memoryFlags: formState.memoryFlags,
         expiresAt: expiresAtIso,
         actor: actorValue,
         changeNote: formState.changeNote.trim() || undefined,
@@ -245,18 +269,20 @@ export function PlanQuickActionsPanel() {
   };
 
   const handleReset = () => {
-    setFormState(buildInitialState({ planTier, entitlements, quota, expiresAt, updatedBy, defaultActor }));
+    setFormState(
+      buildInitialState({ planTier, entitlements, quota, expiresAt, updatedBy, defaultActor, memoryFlags }, baseEntitlementSets),
+    );
   };
 
   const handleTierChange = (tier: PlanTier) => {
     setFormState((prev) => ({
       ...prev,
       planTier: tier,
-      entitlements: ensureEntitlementsForTier(tier, prev.entitlements),
+      entitlements: ensureEntitlementsForTier(tier, prev.entitlements, baseEntitlementSets),
     }));
   };
 
-  const baseEntitlements = PLAN_BASE_ENTITLEMENTS[formState.planTier];
+  const baseEntitlements = baseEntitlementSets[formState.planTier];
 
   const entitlementSummary = useMemo(() => {
     const baseList = Array.from(baseEntitlements).map(labelForEntitlement);
@@ -268,6 +294,13 @@ export function PlanQuickActionsPanel() {
     const extraText = extraList.length ? `추가: ${extraList.join(", ")}` : "추가: 없음";
     return `${baseText} · ${extraText}`;
   }, [baseEntitlements, formState.entitlements]);
+
+  const memoryFlagSummary = useMemo(() => {
+    const active = LIGHTMEM_FLAG_OPTIONS.filter((option) => formState.memoryFlags[option.key]).map(
+      (option) => option.label,
+    );
+    return active.length ? active.join(", ") : "모두 비활성";
+  }, [formState.memoryFlags]);
 
   const checkoutStatusLabel = checkoutRequested ? "진행 중" : "없음";
   const showLoadingSession = isAdminSessionLoading;
@@ -310,6 +343,16 @@ export function PlanQuickActionsPanel() {
   } else {
     content = (
       <form className="mt-4 space-y-6" onSubmit={handleSubmit}>
+        {presetsLoading && !presets && (
+          <div className="rounded-lg border border-dashed border-border-light bg-background-base/50 px-3 py-2 text-xs text-text-secondaryLight dark:border-border-dark dark:bg-background-cardDark/40 dark:text-text-secondaryDark">
+            플랜 프리셋 정보를 불러오는 중입니다. 잠시만 기다려 주세요.
+          </div>
+        )}
+        {presetsError && (
+          <div className="rounded-lg border border-dashed border-amber-400 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/60 dark:bg-amber-500/10 dark:text-amber-100">
+            플랜 프리셋을 불러오지 못했습니다. 현재 저장된 값을 기준으로 편집합니다.
+          </div>
+        )}
         <div className="grid gap-4 lg:grid-cols-2">
           <div>
             <label className="text-xs font-semibold uppercase text-text-tertiaryLight dark:text-text-tertiaryDark">
@@ -436,6 +479,37 @@ export function PlanQuickActionsPanel() {
                 </label>
               );
             })}
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-text-primaryLight dark:text-text-primaryDark">LightMem 개인화</span>
+            <span className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">{memoryFlagSummary}</span>
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-3">
+            {LIGHTMEM_FLAG_OPTIONS.map((option) => (
+              <label
+                key={option.key}
+                className={clsx(
+                  "flex cursor-pointer flex-col rounded-lg border px-3 py-2 text-sm transition",
+                  formState.memoryFlags[option.key]
+                    ? "border-primary bg-primary/10 text-primary dark:border-primary dark:bg-primary/15 dark:text-primary"
+                    : "border-border-light text-text-secondaryLight hover:border-primary/60 dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary/40",
+                )}
+              >
+                <span className="flex items-center justify-between">
+                  <span className="font-medium">{option.label}</span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(formState.memoryFlags[option.key])}
+                    onChange={() => handleMemoryFlagToggle(option.key)}
+                    className="h-4 w-4 rounded border-border-light text-primary focus:ring-primary dark:border-border-dark"
+                  />
+                </span>
+                <span className="mt-1 text-xs text-text-secondaryLight dark:text-text-secondaryDark">{option.helper}</span>
+              </label>
+            ))}
           </div>
         </div>
 

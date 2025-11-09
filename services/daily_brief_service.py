@@ -7,7 +7,7 @@ from datetime import date, datetime, time, timedelta, timezone
 import json
 from pathlib import Path
 import shutil
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, or_
@@ -30,7 +30,7 @@ from models.news import NewsSignal
 from services import admin_rag_service, storage_service
 from services.aggregation.news_statistics import build_top_topics, summarize_news_signals
 from services.daily_brief_renderer import render_daily_brief
-from services.watchlist_service import is_watchlist_rule
+from services.watchlist_utils import is_watchlist_rule
 
 import llm.llm_service as llm_service
 
@@ -51,6 +51,9 @@ NEWS_TOP_TICKER_LIMIT = env_int("DAILY_BRIEF_TOP_TICKER_LIMIT", 5, minimum=1)
 NEWS_TOP_SOURCE_LIMIT = env_int("DAILY_BRIEF_TOP_SOURCE_LIMIT", 5, minimum=1)
 ALERT_TOP_TICKER_LIMIT = env_int("DAILY_BRIEF_ALERT_TOP_TICKER_LIMIT", 5, minimum=1)
 ALERT_TOP_CATEGORY_LIMIT = env_int("DAILY_BRIEF_ALERT_TOP_CATEGORY_LIMIT", 5, minimum=1)
+DIGEST_PREVIEW_NEWS_LIMIT = env_int("DIGEST_PREVIEW_NEWS_LIMIT", 4, minimum=1)
+DIGEST_PREVIEW_WATCHLIST_LIMIT = env_int("DIGEST_PREVIEW_WATCHLIST_LIMIT", 4, minimum=1)
+DIGEST_SOURCE_LABEL = "공시 · 뉴스 · 시황 지표"
 
 
 def _ensure_session(session: Optional[Session]) -> Tuple[Session, bool]:
@@ -60,6 +63,12 @@ def _ensure_session(session: Optional[Session]) -> Tuple[Session, bool]:
         raise RuntimeError("SessionLocal is unavailable; DATABASE_URL must be configured.") from _SESSION_IMPORT_ERROR
     db = SessionLocal()
     return db, True
+
+
+def _dispatch_watchlist_digest(*args, **kwargs) -> Dict[str, Any]:
+    from services import watchlist_service as _watchlist_service
+
+    return _watchlist_service.dispatch_watchlist_digest(*args, **kwargs)
 
 
 def _daily_bounds(target_date: date, *, tz: ZoneInfo = KST) -> Tuple[datetime, datetime]:
@@ -173,6 +182,30 @@ def _summarize_news(session: Session, *, start: datetime, end: datetime) -> Dict
         "filtered_count": len(analysis_rows),
         "raw_count": len(rows),
     }
+
+
+def _fetch_digest_news(session: Session, *, start: datetime, end: datetime, limit: int) -> List[Dict[str, Any]]:
+    query = (
+        session.query(NewsSignal)
+        .filter(NewsSignal.published_at >= start, NewsSignal.published_at < end)
+        .order_by(NewsSignal.published_at.desc())
+        .limit(limit)
+    )
+    rows = query.all()
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        reliability = getattr(row, "source_reliability", None)
+        if reliability is not None and reliability < NEWS_MIN_RELIABILITY:
+            continue
+        items.append(
+            {
+                "headline": row.headline,
+                "summary": row.summary,
+                "source": row.source,
+                "link": row.url,
+            }
+        )
+    return items
 
 
 def _count_news(session: Session, *, start: datetime, end: datetime) -> int:
@@ -728,6 +761,183 @@ def build_daily_brief_payload(
             "charts": {},
         }
         return payload
+    finally:
+        if owns_session:
+            db.close()
+
+
+def _format_digest_period_label(reference_date: date, timeframe: str) -> str:
+    if timeframe == "weekly":
+        start_date = reference_date - timedelta(days=6)
+        return f"{start_date:%Y년 %m월 %d일} ~ {reference_date:%Y년 %m월 %d일} · 1주 하이라이트"
+    return f"{reference_date:%Y년 %m월 %d일} · 오늘의 다이제스트"
+
+
+def _tone_from_sentiment(value: Optional[float], delivery_status: Optional[str]) -> str:
+    status = (delivery_status or "").lower()
+    if status and status != "delivered":
+        return "alert"
+    if isinstance(value, (int, float)):
+        if value >= 0.2:
+            return "positive"
+        if value <= -0.2:
+            return "negative"
+    return "neutral"
+
+
+def _build_digest_sentiment_block(
+    current_summary: Mapping[str, Any],
+    previous_summary: Optional[Mapping[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    total_articles = int(current_summary.get("count") or 0)
+    if total_articles <= 0:
+        return None
+    current_avg = float(current_summary.get("avg_sentiment") or 0.0)
+    previous_avg = float(previous_summary.get("avg_sentiment") or 0.0) if previous_summary else 0.0
+    delta = current_avg - previous_avg
+    if delta > 0.05:
+        trend = "up"
+    elif delta < -0.05:
+        trend = "down"
+    else:
+        trend = "flat"
+
+    score = int(max(min(((current_avg + 1.0) / 2.0) * 100, 100), 0))
+    summary_text = (
+        f"긍정 {int(current_summary.get('positive') or 0)}건 · "
+        f"중립 {int(current_summary.get('neutral') or 0)}건 · "
+        f"부정 {int(current_summary.get('negative') or 0)}건"
+    )
+    indicators = [
+        {"name": "Positive", "value": str(int(current_summary.get("positive") or 0)), "status": "positive"},
+        {"name": "Neutral", "value": str(int(current_summary.get("neutral") or 0)), "status": "neutral"},
+        {"name": "Negative", "value": str(int(current_summary.get("negative") or 0)), "status": "negative"},
+    ]
+    return {
+        "summary": summary_text,
+        "scoreLabel": f"{score}/100",
+        "trend": trend,
+        "indicators": indicators,
+    }
+
+
+def _build_digest_actions(
+    news_summary: Mapping[str, Any],
+    watchlist_summary: Mapping[str, Any],
+) -> List[Dict[str, Any]]:
+    actions: List[Dict[str, Any]] = []
+    top_topics = news_summary.get("top_topics") or []
+    if top_topics:
+        actions.append(
+            {
+                "title": f"{top_topics[0]} 모니터링",
+                "note": "해당 토픽 비중이 직전 기간 대비 확대되었습니다.",
+                "tone": "neutral",
+            }
+        )
+    top_watchlist = watchlist_summary.get("topTickers") or []
+    if top_watchlist:
+        actions.append(
+            {
+                "title": f"{top_watchlist[0]} 워치리스트 점검",
+                "note": "최근 알림이 집중된 종목이니 리스크 요인을 확인해 보세요.",
+                "tone": "alert",
+            }
+        )
+    return actions[:2]
+
+
+def _map_watchlist_items(items: Sequence[Mapping[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    mapped: List[Dict[str, Any]] = []
+    for entry in list(items)[:limit]:
+        title = str(entry.get("ticker") or entry.get("company") or entry.get("ruleName") or "Watchlist")
+        description = str(entry.get("summary") or entry.get("message") or "").strip()
+        sentiment = entry.get("sentiment")
+        tone = _tone_from_sentiment(sentiment, entry.get("deliveryStatus"))
+        change_label: Optional[str] = None
+        if isinstance(sentiment, (int, float)):
+            change_label = f"Sentiment {sentiment:+.2f}"
+        elif (entry.get("deliveryStatus") or "").lower() != "delivered":
+            change_label = "주의"
+        mapped.append(
+            {
+                "title": title,
+                "description": description or title,
+                "changeLabel": change_label,
+                "tone": tone,
+            }
+        )
+    return mapped
+
+
+def build_digest_preview(
+    *,
+    reference_date: Optional[date] = None,
+    session: Optional[Session] = None,
+    timeframe: str = "daily",
+    news_limit: int = DIGEST_PREVIEW_NEWS_LIMIT,
+    watchlist_limit: int = DIGEST_PREVIEW_WATCHLIST_LIMIT,
+    plan_memory_enabled: Optional[bool] = None,
+    tenant_id: Optional[str] = None,
+    user_id_hint: Optional[str] = None,
+    owner_filters: Optional[Mapping[str, Optional[Any]]] = None,
+) -> Dict[str, Any]:
+    """Assemble a lightweight digest preview payload for the dashboard."""
+
+    ref_date = reference_date or datetime.now(KST).date()
+    normalized_timeframe = "weekly" if str(timeframe).lower() == "weekly" else "daily"
+    db, owns_session = _ensure_session(session)
+    try:
+        day_start, day_end = _daily_bounds(ref_date)
+        if normalized_timeframe == "weekly":
+            window_start = day_end - timedelta(days=7)
+            window_end = day_end
+        else:
+            window_start, window_end = day_start, day_end
+
+        prev_span = window_end - window_start
+        prev_start = window_start - prev_span
+        prev_end = window_start
+
+        news_items = _fetch_digest_news(db, start=window_start, end=window_end, limit=news_limit)
+        news_summary = _summarize_news(db, start=window_start, end=window_end)
+        previous_summary = _summarize_news(db, start=prev_start, end=prev_end)
+
+        window_minutes = max(int(prev_span.total_seconds() // 60), 60)
+        digest_session_id = f"digest:{tenant_id or user_id_hint or 'global'}:{normalized_timeframe}"
+        watchlist_result = _dispatch_watchlist_digest(
+            db,
+            window_minutes=window_minutes,
+            limit=watchlist_limit,
+            slack_targets=[],
+            email_targets=[],
+            owner_filters=owner_filters or {},
+            plan_memory_enabled=plan_memory_enabled,
+            session_id=digest_session_id,
+            tenant_id=tenant_id,
+            user_id_hint=user_id_hint,
+        )
+        watchlist_payload = watchlist_result.get("payload") or {}
+        watchlist_items = _map_watchlist_items(watchlist_payload.get("items") or [], watchlist_limit)
+        watchlist_summary = watchlist_payload.get("summary") or {}
+
+        sentiment_block = _build_digest_sentiment_block(news_summary, previous_summary)
+        actions = _build_digest_actions(news_summary, watchlist_summary)
+        period_label = _format_digest_period_label(ref_date, normalized_timeframe)
+        generated_label = datetime.now(KST).strftime("%Y-%m-%d %H:%M (%Z)")
+
+        return {
+            "timeframe": normalized_timeframe,
+            "periodLabel": period_label,
+            "generatedAtLabel": generated_label,
+            "sourceLabel": DIGEST_SOURCE_LABEL,
+            "news": news_items,
+            "watchlist": watchlist_items,
+            "sentiment": sentiment_block,
+            "actions": actions,
+            "llmOverview": watchlist_payload.get("llmOverview"),
+            "llmPersonalNote": watchlist_payload.get("llmPersonalNote"),
+        }
     finally:
         if owns_session:
             db.close()

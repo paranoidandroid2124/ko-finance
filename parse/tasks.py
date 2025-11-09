@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from celery import shared_task
 from pydantic import ValidationError
@@ -44,7 +44,21 @@ from models.summary import Summary
 from parse.pdf_parser import extract_chunks
 from parse.xml_parser import extract_chunks_from_xml
 from schemas.news import NewsArticleCreate
-from services import alert_service, chat_service, storage_service, vector_service, ocr_service
+from services import (
+    alert_service,
+    chat_service,
+    storage_service,
+    vector_service,
+    ocr_service,
+    plan_service,
+    lightmem_rate_limiter,
+    digest_snapshot_service,
+    event_study_service,
+    market_data_service,
+    security_metadata_service,
+)
+import services.lightmem_gate as lightmem_gate
+from services.lightmem_config import DIGEST_RATE_LIMIT_PER_MINUTE
 from services.aggregation.sector_classifier import assign_article_to_sector
 from services.aggregation.sector_metrics import compute_sector_daily_metrics, compute_sector_window_metrics
 from services.aggregation.news_metrics import compute_news_window_metrics
@@ -54,6 +68,7 @@ from services.aggregation.news_statistics import summarize_news_signals, build_t
 from services.daily_brief_service import (
     DAILY_BRIEF_CHANNEL,
     DAILY_BRIEF_OUTPUT_ROOT,
+    build_digest_preview,
     build_daily_brief_payload,
     cleanup_daily_brief_artifacts,
     has_brief_been_generated,
@@ -71,23 +86,6 @@ _OCR_PAGE_LIMIT = env_int("OCR_TRIGGER_MAX_PAGES", 15, minimum=1)
 TELEGRAM_NOTIFY_POS_NEG_ONLY = env_bool("TELEGRAM_NOTIFY_POS_NEG_ONLY", True)
 
 
-@shared_task(name="watchlist.generate_personal_note")
-def generate_watchlist_personal_note_task(prompt_text: str) -> Dict[str, Any]:
-    """Background task to generate personalized watchlist notes via LLM."""
-
-    note, metadata = llm_service.generate_watchlist_personal_note(prompt_text)
-    usage = (metadata or {}).get("usage") or {}
-    logger.info(
-        "watchlist.personal_note.task",
-        extra={
-            "prompt_tokens": usage.get("prompt_tokens"),
-            "completion_tokens": usage.get("completion_tokens"),
-            "total_tokens": usage.get("total_tokens"),
-            "model": metadata.get("model") if metadata else None,
-        },
-    )
-    return {"note": note, "meta": metadata or {}}
-
 @dataclass
 class StageResult:
     name: str
@@ -101,6 +99,7 @@ def _snapshot_hash(payload: Dict[str, Any]) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+# Sentiment aliases for summaries
 _SENTIMENT_ALIASES: Dict[str, str] = {
     "positive": "positive",
     "\uae09\uc815": "positive",  # 긍정
@@ -109,7 +108,6 @@ _SENTIMENT_ALIASES: Dict[str, str] = {
     "neutral": "neutral",
     "\uc911\ub9bd": "neutral",  # 중립
 }
-
 
 def _normalize_sentiment(value: Any) -> Optional[str]:
     if isinstance(value, str):
@@ -178,6 +176,7 @@ def _count_text_characters(chunks: Iterable[Dict[str, Any]], *, source: Optional
             total += len(content)
     return total
 
+
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 
 DIGEST_ZONE = ZoneInfo("Asia/Seoul")
@@ -185,6 +184,7 @@ SECTOR_ZONE = ZoneInfo("Asia/Seoul")
 DIGEST_TOP_LIMIT = env_int("DAILY_DIGEST_TOP_N", 3, minimum=1)
 DIGEST_BASE_URL = env_str("FILINGS_DASHBOARD_URL", "https://kofilot.com/filings")
 DIGEST_CHANNEL = "telegram"
+DIGEST_LIGHTMEM_RATE_LIMIT_PER_MINUTE = DIGEST_RATE_LIMIT_PER_MINUTE
 SUMMARY_RECENT_TURNS = env_int("CHAT_MEMORY_RECENT_TURNS", 3, minimum=1)
 SUMMARY_TRIGGER_MESSAGES = env_int("CHAT_SUMMARY_TRIGGER_MESSAGES", 20, minimum=6)
 NEWS_FETCH_LIMIT = env_int("NEWS_FETCH_LIMIT", 5, minimum=1)
@@ -502,7 +502,20 @@ def health_check() -> str:
 @shared_task(name="m1.seed_recent_filings")
 def seed_recent_filings_task(days_back: int = 1) -> int:
     logger.info("Running DART seeding task for the last %d day(s).", days_back)
-    return seed_recent_filings_job(days_back=days_back)
+    created = seed_recent_filings_job(days_back=days_back)
+
+    # Kick off event study ingest/aggregation asynchronously so the dashboard stays fresh.
+    try:
+        sync_stock_prices.delay(days_back=days_back + 5)
+        sync_benchmark_prices.delay(days_back=days_back + 5)
+        sync_security_metadata.delay(days_back=1)
+        ingest_event_study_events.delay(days_back=days_back)
+        update_event_study_returns.delay()
+        aggregate_event_study_summary.delay()
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning("Failed to enqueue market/event study tasks after seeding: %s", exc, exc_info=True)
+
+    return created
 
 
 @shared_task(name="m1.process_filing")
@@ -1158,9 +1171,94 @@ def _build_digest_message(digest_date: date, total: int, filings: List[Filing]) 
     return "\n".join(lines)
 
 
+def _build_digest_preview_message(digest_date: date, payload: Mapping[str, Any]) -> str:
+    """Compose the richer digest message produced from the preview payload."""
+    timeframe = (payload.get("timeframe") or "daily").lower()
+    header_label = "Weekly Digest" if timeframe == "weekly" else "Daily Digest"
+    lines = [f"[{header_label}] {digest_date.isoformat()}"]
+
+    period_label = payload.get("periodLabel")
+    if period_label:
+        lines.append(period_label)
+    generated_label = payload.get("generatedAtLabel")
+    if generated_label:
+        lines.append(f"생성: {generated_label}")
+
+    news_items = payload.get("news") or []
+    if news_items:
+        lines.append("")
+        lines.append("뉴스 하이라이트")
+        for entry in news_items[:4]:
+            headline = str(entry.get("headline") or "뉴스 요약")
+            source = entry.get("source")
+            summary = entry.get("summary")
+            suffix = f" ({source})" if source else ""
+            if summary:
+                lines.append(f"- {headline}{suffix}: {summary}")
+            else:
+                lines.append(f"- {headline}{suffix}")
+
+    watchlist_items = payload.get("watchlist") or []
+    if watchlist_items:
+        lines.append("")
+        lines.append("워치리스트 업데이트")
+        for entry in watchlist_items[:4]:
+            title = str(entry.get("title") or "Watchlist")
+            change = entry.get("changeLabel")
+            description = entry.get("description")
+            prefix = f"{title} [{change}]" if change else title
+            if description and description != title:
+                lines.append(f"- {prefix} · {description}")
+            else:
+                lines.append(f"- {prefix}")
+
+    sentiment = payload.get("sentiment")
+    if isinstance(sentiment, Mapping):
+        summary_text = sentiment.get("summary")
+        if summary_text:
+            lines.append("")
+            lines.append("시장 심리지표")
+            score_label = sentiment.get("scoreLabel")
+            trend = sentiment.get("trend")
+            if score_label:
+                lines.append(f"- 점수 {score_label} · 추세 {trend or 'flat'}")
+            lines.append(f"- {summary_text}")
+
+    actions = payload.get("actions") or []
+    if actions:
+        lines.append("")
+        lines.append("추천 액션")
+        for entry in actions[:3]:
+            title = str(entry.get("title") or "Action")
+            note = entry.get("note")
+            if note:
+                lines.append(f"- {title}: {note}")
+            else:
+                lines.append(f"- {title}")
+
+    llm_overview = payload.get("llmOverview")
+    if llm_overview:
+        lines.append("")
+        lines.append("LLM Insight")
+        lines.append(str(llm_overview))
+
+    llm_personal = payload.get("llmPersonalNote")
+    if llm_personal:
+        lines.append("")
+        lines.append("Personal Note")
+        lines.append(str(llm_personal))
+
+    source_label = payload.get("sourceLabel")
+    if source_label:
+        lines.append("")
+        lines.append(f"출처: {source_label}")
+
+    return "\n".join(lines)
+
+
 @shared_task(name="m4.send_filing_digest")
-def send_filing_digest(target_date_iso: Optional[str] = None) -> str:
-    """Send a weekday filing digest to Telegram."""
+def send_filing_digest(target_date_iso: Optional[str] = None, timeframe: str = "daily") -> str:
+    """Send the daily/weekly digest summary using the preview pipeline."""
     reference = datetime.now(DIGEST_ZONE)
     if target_date_iso:
         try:
@@ -1172,8 +1270,9 @@ def send_filing_digest(target_date_iso: Optional[str] = None) -> str:
         except ValueError:
             logger.warning("Invalid target_date_iso '%s'. Using current time.", target_date_iso)
 
+    normalized_timeframe = "weekly" if str(timeframe or "").lower() == "weekly" else "daily"
     digest_date = reference.date()
-    if digest_date.weekday() >= 5:
+    if normalized_timeframe == "daily" and digest_date.weekday() >= 5:
         logger.info("Skipping filing digest on weekend: %s", digest_date.isoformat())
         return "skipped_weekend"
 
@@ -1184,15 +1283,116 @@ def send_filing_digest(target_date_iso: Optional[str] = None) -> str:
             logger.info("Digest already sent for %s", digest_date.isoformat())
             return "skipped_duplicate"
 
-        total, filings = _load_digest_filings(db, bounds, DIGEST_TOP_LIMIT)
-        message = _build_digest_message(digest_date, total, filings)
+        plan_context = plan_service.get_active_plan_context()
+        user_id = lightmem_gate.default_user_id()
+        user_settings = lightmem_gate.load_user_settings(user_id)
+        memory_allowed = lightmem_gate.digest_enabled(plan_context, user_settings)
+        rate_identifier = str(user_id) if user_id else "global"
+        rate_limit_result = lightmem_rate_limiter.check_limit(
+            "digest.preview",
+            rate_identifier,
+            limit=DIGEST_LIGHTMEM_RATE_LIMIT_PER_MINUTE,
+            window_seconds=60,
+        )
+        if not rate_limit_result.allowed:
+            memory_allowed = False
+            logger.warning(
+                "digest.delivery.rate_limited",
+                extra={
+                    "timeframe": normalized_timeframe,
+                    "user_id": str(user_id) if user_id else None,
+                    "rate_limit_remaining": rate_limit_result.remaining,
+                },
+            )
+        logger.info(
+            "digest.delivery.memory_gate",
+            extra={
+                "plan_enabled": plan_context.memory_digest_enabled,
+                "memory_allowed": memory_allowed,
+                "user_id": str(user_id) if user_id else None,
+                "user_enabled": getattr(user_settings, "enabled", None) if user_settings else None,
+                "rate_limited": not rate_limit_result.allowed,
+                "rate_limit_remaining": rate_limit_result.remaining,
+            },
+        )
+        owner_filters: Dict[str, Any] = {}
+        if user_id:
+            owner_filters["user_id"] = user_id
+
+        preview_payload: Optional[Dict[str, Any]] = None
+        preview_failed = False
+        try:
+            preview_payload = build_digest_preview(
+                reference_date=digest_date,
+                session=db,
+                timeframe=normalized_timeframe,
+                owner_filters=owner_filters,
+                plan_memory_enabled=memory_allowed,
+                tenant_id=None,
+                user_id_hint=str(user_id) if user_id else None,
+            )
+            logger.info(
+                "digest.delivery.payload",
+                extra={
+                    "timeframe": normalized_timeframe,
+                    "news_count": len(preview_payload.get("news") or []),
+                    "watchlist_count": len(preview_payload.get("watchlist") or []),
+                    "has_llm_overview": bool(preview_payload.get("llmOverview")),
+                    "has_personal_note": bool(preview_payload.get("llmPersonalNote")),
+                    "memory_allowed": memory_allowed,
+                    "rate_limited": not rate_limit_result.allowed,
+                    "rate_limit_remaining": rate_limit_result.remaining,
+                },
+            )
+            if memory_allowed and not preview_payload.get("llmPersonalNote"):
+                logger.warning("Digest personalization allowed but personal note missing.")
+            try:
+                digest_snapshot_service.upsert_snapshot(
+                    db,
+                    digest_date=digest_date,
+                    timeframe=normalized_timeframe,
+                    payload=preview_payload,
+                    user_id=user_id,
+                    org_id=None,
+                )
+            except Exception as snapshot_exc:  # pragma: no cover - best effort
+                logger.warning("Digest snapshot upsert failed: %s", snapshot_exc, exc_info=True)
+        except Exception as exc:
+            preview_failed = True
+            preview_payload = None
+            logger.warning("Digest preview build failed, falling back to filings summary: %s", exc, exc_info=True)
+
+        if preview_payload:
+            message = _build_digest_preview_message(digest_date, preview_payload)
+        else:
+            total, filings = _load_digest_filings(db, bounds, DIGEST_TOP_LIMIT)
+            message = _build_digest_message(digest_date, total, filings)
+            logger.info(
+                "digest.delivery.fallback",
+                extra={
+                    "timeframe": normalized_timeframe,
+                    "reason": "preview_failed" if preview_failed else "preview_empty",
+                    "news_count": 0,
+                    "watchlist_count": 0,
+                },
+            )
 
         if not send_telegram_alert(message):
             logger.error("Telegram digest send failed for %s", digest_date.isoformat())
             return "send_failed"
 
         _mark_digest_sent(db, digest_date)
-        logger.info("Daily filing digest sent for %s (total=%d)", digest_date.isoformat(), total)
+        logger.info(
+            "Digest sent for %s",
+            digest_date.isoformat(),
+            extra={
+                "timeframe": normalized_timeframe,
+                "used_preview": bool(preview_payload),
+                "memory_allowed": memory_allowed,
+                "rate_limited": not rate_limit_result.allowed,
+                "rate_limit_remaining": rate_limit_result.remaining,
+            },
+        )
         return "sent"
     except Exception as exc:
         db.rollback()
@@ -1492,3 +1692,116 @@ def snapshot_evidence_diff(payload: Dict[str, Any]) -> Dict[str, Any]:
         return {"stored": stored, "trace_id": trace_id, "error": str(exc)}
     finally:
         db.close()
+
+
+@shared_task(name="market_data.sync_stock_prices")
+def sync_stock_prices(days_back: int = 7) -> Dict[str, Any]:
+    """Fetch recent stock prices from the public API and upsert into the price table."""
+
+    start_date = date.today() - timedelta(days=days_back)
+    end_date = date.today()
+    db = SessionLocal()
+    try:
+        inserted = market_data_service.ingest_stock_prices(
+            db,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        logger.info("Synced %d stock price rows (%s~%s).", inserted, start_date, end_date)
+        return {"rows": inserted}
+    except market_data_service.MarketDataError as exc:
+        logger.warning("Stock price sync failed: %s", exc)
+        return {"rows": 0, "error": str(exc)}
+    finally:
+        db.close()
+
+
+@shared_task(name="market_data.sync_benchmark_prices")
+def sync_benchmark_prices(days_back: int = 7) -> Dict[str, Any]:
+    """Fetch benchmark ETF prices for market-model estimation."""
+
+    start_date = date.today() - timedelta(days=days_back)
+    end_date = date.today()
+    db = SessionLocal()
+    try:
+        inserted = market_data_service.ingest_etf_prices(
+            db,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        logger.info("Synced %d benchmark price rows (%s~%s).", inserted, start_date, end_date)
+        return {"rows": inserted}
+    except market_data_service.MarketDataError as exc:
+        logger.warning("Benchmark price sync failed: %s", exc)
+        return {"rows": 0, "error": str(exc)}
+    finally:
+        db.close()
+
+
+@shared_task(name="market_data.sync_security_metadata")
+def sync_security_metadata(days_back: int = 1) -> Dict[str, Any]:
+    """Refresh security metadata (market cap, buckets) and backfill events."""
+
+    target_date = date.today() - timedelta(days=days_back - 1)
+    db = SessionLocal()
+    try:
+        upserted = security_metadata_service.sync_security_metadata(db, as_of=target_date)
+        updated = security_metadata_service.backfill_event_cap_metadata(db)
+        logger.info("Synced %d security metadata rows; backfilled %d events.", upserted, updated)
+        return {"rows": upserted, "events_updated": updated}
+    except security_metadata_service.SecurityMetadataError as exc:
+        logger.warning("Security metadata sync failed: %s", exc)
+        return {"rows": 0, "error": str(exc)}
+    finally:
+        db.close()
+
+
+@shared_task(name="event_study.ingest_events")
+def ingest_event_study_events(days_back: int = 1) -> Dict[str, int]:
+    """Normalize recent filings into event records."""
+
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days_back)
+    db = SessionLocal()
+    try:
+        created = event_study_service.ingest_events_from_filings(
+            db,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    finally:
+        db.close()
+
+    logger.info("Event study ingest completed: %d events.", created)
+    return {"events": created}
+
+
+@shared_task(name="event_study.update_returns")
+def update_event_study_returns() -> Dict[str, int]:
+    """Compute AR/CAR series for events lacking measurements."""
+
+    db = SessionLocal()
+    try:
+        created = event_study_service.update_event_study_series(db)
+    finally:
+        db.close()
+
+    logger.info("Event study AR/CAR update inserted %d rows.", created)
+    return {"rows": created}
+
+
+@shared_task(name="event_study.aggregate_summary")
+def aggregate_event_study_summary() -> Dict[str, int]:
+    """Aggregate cohort-level AAR/CAAR statistics."""
+
+    db = SessionLocal()
+    try:
+        summaries = event_study_service.aggregate_event_summaries(
+            db,
+            as_of=date.today(),
+        )
+    finally:
+        db.close()
+
+    logger.info("Event study summary aggregation completed: %d rows.", summaries)
+    return {"summaries": summaries}

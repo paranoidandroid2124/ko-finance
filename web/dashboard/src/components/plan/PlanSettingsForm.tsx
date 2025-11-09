@@ -1,22 +1,28 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import clsx from "classnames";
 
 import {
   usePlanStore,
   type PlanContextUpdateInput,
+  type PlanMemoryFlags,
   type PlanQuota,
   type PlanTier,
+  usePlanTrial,
+  usePlanTrialRequestState,
 } from "@/store/planStore";
 import { useToastStore } from "@/store/toastStore";
 import { useTossCheckout } from "@/hooks/useTossCheckout";
 import { planTierLabel } from "@/constants/planPricing";
+import { LIGHTMEM_FLAG_OPTIONS, type LightMemFlagKey } from "@/constants/lightmemFlags";
+import { getTrialCountdownLabel } from "@/lib/trialUtils";
 
 type FormState = {
   planTier: PlanTier;
   expiresAt: string;
   entitlements: string[];
+  memoryFlags: PlanMemoryFlags;
   quota: PlanQuota;
   updatedBy: string;
   changeNote: string;
@@ -116,6 +122,7 @@ export function PlanSettingsForm({ className }: PlanSettingsFormProps) {
     planTier,
     expiresAt,
     entitlements,
+    memoryFlags,
     quota,
     updatedAt,
     updatedBy,
@@ -124,10 +131,12 @@ export function PlanSettingsForm({ className }: PlanSettingsFormProps) {
     saving,
     saveError,
     savePlan,
+    startTrial,
   } = usePlanStore((state) => ({
     planTier: state.planTier,
     expiresAt: state.expiresAt ?? "",
     entitlements: state.entitlements,
+    memoryFlags: state.memoryFlags,
     quota: state.quota,
     updatedAt: state.updatedAt ?? null,
     updatedBy: state.updatedBy ?? "",
@@ -136,7 +145,10 @@ export function PlanSettingsForm({ className }: PlanSettingsFormProps) {
     saving: state.saving,
     saveError: state.saveError,
     savePlan: state.savePlan,
+    startTrial: state.startTrial,
   }));
+  const trial = usePlanTrial();
+  const { trialStarting } = usePlanTrialRequestState();
   const pushToast = useToastStore((store) => store.show);
   const { isPreparing: checkoutPreparing, startCheckout, getPreset } = useTossCheckout();
 
@@ -144,6 +156,7 @@ export function PlanSettingsForm({ className }: PlanSettingsFormProps) {
     planTier,
     expiresAt,
     entitlements,
+    memoryFlags: { ...memoryFlags },
     quota: { ...quota },
     updatedBy,
     changeNote,
@@ -155,14 +168,19 @@ export function PlanSettingsForm({ className }: PlanSettingsFormProps) {
       planTier,
       expiresAt,
       entitlements,
+      memoryFlags: { ...memoryFlags },
       quota: { ...quota },
       updatedBy,
       changeNote,
       triggerCheckout: false,
     });
-  }, [planTier, expiresAt, entitlements, quota, updatedBy, changeNote]);
+  }, [planTier, expiresAt, entitlements, memoryFlags, quota, updatedBy, changeNote]);
 
   const lastSavedLabel = useMemo(() => formatKoreanDateTime(updatedAt), [updatedAt]);
+  const trialActive = Boolean(trial?.active);
+  const trialAvailable = Boolean(trial && !trial.active && !trial.used);
+  const trialDurationDays = trial?.durationDays ?? 7;
+  const trialEndsLabel = getTrialCountdownLabel(trial?.endsAt);
 
   const handleTierChange = (value: PlanTier) => {
     setForm((prev) => ({
@@ -179,6 +197,16 @@ export function PlanSettingsForm({ className }: PlanSettingsFormProps) {
         : [...prev.entitlements, value];
       return { ...prev, entitlements: nextValues };
     });
+  };
+
+  const toggleMemoryFlag = (flag: LightMemFlagKey) => {
+    setForm((prev) => ({
+      ...prev,
+      memoryFlags: {
+        ...prev.memoryFlags,
+        [flag]: !prev.memoryFlags[flag],
+      },
+    }));
   };
 
   const handleQuotaNumberChange =
@@ -212,6 +240,7 @@ export function PlanSettingsForm({ className }: PlanSettingsFormProps) {
       planTier: form.planTier,
       expiresAt: form.expiresAt.trim() ? form.expiresAt.trim() : null,
       entitlements: form.entitlements,
+      memoryFlags: form.memoryFlags,
       quota: {
         chatRequestsPerDay: form.quota.chatRequestsPerDay,
         ragTopK: form.quota.ragTopK,
@@ -295,6 +324,26 @@ export function PlanSettingsForm({ className }: PlanSettingsFormProps) {
     }
   };
 
+  const handleStartTrial = useCallback(async () => {
+    try {
+      await startTrial();
+      pushToast({
+        id: "plan-settings/trial-started",
+        title: "Pro 무료 체험을 시작했어요",
+        message: `${trialDurationDays}일 동안 상위 권한을 모두 사용할 수 있습니다.`,
+        intent: "success",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "무료 체험을 시작하지 못했어요.";
+      pushToast({
+        id: "plan-settings/trial-failed",
+        title: "무료 체험을 시작할 수 없어요",
+        message,
+        intent: "error",
+      });
+    }
+  }, [pushToast, startTrial, trialDurationDays]);
+
   return (
     <section
       className={clsx(
@@ -336,6 +385,43 @@ export function PlanSettingsForm({ className }: PlanSettingsFormProps) {
         </div>
       ) : null}
 
+      {trialActive ? (
+        <div className="mt-6 rounded-xl border border-primary/40 bg-primary/10 p-4 text-sm text-text-primaryLight shadow dark:border-primary.dark/40 dark:bg-primary.dark/15 dark:text-white">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="font-semibold">Pro 플랜 무료 체험이 진행 중이에요</p>
+              <p className="text-xs text-text-secondaryLight dark:text-white/80">
+                {trialEndsLabel ? `${trialEndsLabel} 후 플랜이 원래 상태로 돌아갑니다.` : "만료 예정 시간이 곧 업데이트됩니다."}
+              </p>
+            </div>
+            <span className="rounded-full border border-white/40 px-3 py-1 text-[11px] uppercase tracking-wide">
+              Trial Live
+            </span>
+          </div>
+        </div>
+      ) : trialAvailable ? (
+        <div className="mt-6 rounded-xl border border-dashed border-primary/40 bg-primary/5 p-4 text-sm text-text-secondaryLight shadow dark:border-primary.dark/40 dark:bg-primary.dark/10">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">
+                Pro {trialDurationDays}일 무료 체험으로 상위 권한을 열어보세요
+              </p>
+              <p className="text-xs">
+                검색 비교·알림·PDF 뷰어 등 유료 기능을 결제 없이 점검할 수 있습니다.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleStartTrial}
+              disabled={trialStarting}
+              className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-white shadow disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {trialStarting ? "체험 준비 중..." : "무료 체험 시작"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <form className="mt-6 space-y-6" onSubmit={handleSubmit}>
         <fieldset className="space-y-3">
           <legend className="text-xs font-semibold uppercase tracking-wide text-text-tertiaryLight dark:text-text-tertiaryDark">
@@ -369,6 +455,34 @@ export function PlanSettingsForm({ className }: PlanSettingsFormProps) {
               </label>
             ))}
           </div>
+        </fieldset>
+
+        <fieldset className="space-y-3">
+          <legend className="text-xs font-semibold uppercase tracking-wide text-text-tertiaryLight dark:text-text-tertiaryDark">
+            LightMem 개인화
+          </legend>
+          <div className="grid gap-3 md:grid-cols-3">
+            {LIGHTMEM_FLAG_OPTIONS.map((option) => (
+              <label
+                key={option.key}
+                className="flex flex-col gap-2 rounded-xl border border-border-light bg-white/70 p-3 text-sm transition hover:border-primary hover:text-text-primaryLight dark:border-border-dark dark:bg-background-cardDark dark:text-text-secondaryDark dark:hover:border-primary.dark"
+              >
+                <span className="flex items-center justify-between text-text-primaryLight dark:text-text-primaryDark">
+                  <span className="font-semibold">{option.label}</span>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-primary"
+                    checked={Boolean(form.memoryFlags[option.key])}
+                    onChange={() => toggleMemoryFlag(option.key)}
+                  />
+                </span>
+                <p className="text-xs leading-5 text-text-secondaryLight dark:text-text-secondaryDark">{option.helper}</p>
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-text-tertiaryLight dark:text-text-tertiaryDark">
+            플랜 단위로 LightMem 호출 가능 여부를 제어하며, 향후 회원·개인 설정과 조합해 개인화 범위를 결정합니다.
+          </p>
         </fieldset>
 
         <fieldset className="space-y-3">

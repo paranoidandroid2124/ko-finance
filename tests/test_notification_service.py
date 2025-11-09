@@ -49,25 +49,39 @@ def test_slack_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
     assert dispatch_args["kwargs"]["result_metadata"] == {"webhook": "https://hooks.slack.com/services/demo"}
 
 
-def test_email_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(notification_service, "ALERT_EMAIL_PROVIDER", "sendgrid")
+def test_email_dispatch_smtp(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(notification_service, "ALERT_EMAIL_PROVIDER", "nhn_smtp")
     monkeypatch.setattr(notification_service, "ALERT_EMAIL_FROM", "alerts@kfinance.ai")
-    monkeypatch.setattr(notification_service, "SENDGRID_API_KEY", "sg_test")
+    monkeypatch.setattr(notification_service, "SMTP_HOST", "smtp.test")
+    monkeypatch.setattr(notification_service, "SMTP_PORT", 587)
+    monkeypatch.setattr(notification_service, "SMTP_USERNAME", "smtp-user")
+    monkeypatch.setattr(notification_service, "SMTP_PASSWORD", "smtp-pass")
+    monkeypatch.setattr(notification_service, "SMTP_USE_TLS", True)
 
     captured: Dict[str, Any] = {}
 
-    def fake_post(url: str, payload: Dict[str, Any], **kwargs: Any) -> notification_service.NotificationResult:
-        captured["url"] = url
-        captured["payload"] = payload
-        captured["kwargs"] = kwargs
-        delivered = kwargs.get("success_count", 1)
-        return notification_service.NotificationResult(
-            status="delivered",
-            delivered=delivered,
-            metadata=kwargs.get("result_metadata"),
-        )
+    class DummySMTP:
+        def __init__(self, host: str, port: int) -> None:
+            captured["host"] = host
+            captured["port"] = port
+            self.sent: List[Dict[str, Any]] = []
 
-    monkeypatch.setattr(notification_service, "_post_with_backoff", fake_post)
+        def __enter__(self) -> "DummySMTP":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def starttls(self) -> None:
+            captured["starttls"] = True
+
+        def login(self, username: str, password: str) -> None:
+            captured["login"] = (username, password)
+
+        def send_message(self, msg) -> None:
+            captured["message"] = msg
+
+    monkeypatch.setattr(notification_service.smtplib, "SMTP", DummySMTP)
 
     metadata = {"subject": "따뜻한 알림", "html_template": "<p>{message}</p>"}
     result = notification_service.dispatch_notification(
@@ -80,17 +94,51 @@ def test_email_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert result.status == "delivered"
     assert result.delivered == 1
-    assert captured["url"] == "https://api.sendgrid.com/v3/mail/send"
+    assert captured["host"] == "smtp.test"
+    assert captured["port"] == 587
+    assert captured["starttls"] is True
+    assert captured["login"] == ("smtp-user", "smtp-pass")
 
+    msg = captured["message"]
+    assert msg["To"] == "hello@kfinance.ai"
+    assert msg["From"] == "alerts@kfinance.ai"
+
+
+def test_email_dispatch_nhn_rest(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(notification_service, "ALERT_EMAIL_PROVIDER", "nhn_rest")
+    monkeypatch.setattr(notification_service, "NHN_APP_KEY", "app-key")
+    monkeypatch.setattr(notification_service, "NHN_SECRET_KEY", "secret")
+    monkeypatch.setattr(notification_service, "NHN_EMAIL_BASE_URL", "https://email.api.nhncloudservice.com")
+    monkeypatch.setattr(notification_service, "NHN_SENDER_ADDRESS", "alerts@kfinance.ai")
+    monkeypatch.setattr(notification_service, "NHN_SENDER_NAME", "K-Finance QA")
+
+    captured: Dict[str, Any] = {}
+
+    def fake_post(url: str, payload: Dict[str, Any], **kwargs: Any) -> notification_service.NotificationResult:
+        captured["url"] = url
+        captured["payload"] = payload
+        captured["kwargs"] = kwargs
+        return notification_service.NotificationResult(status="delivered", delivered=kwargs.get("success_count", 1))
+
+    monkeypatch.setattr(notification_service, "_post_with_backoff", fake_post)
+
+    metadata = {"subject": "테스트", "html_template": "<p>{message}</p>"}
+    result = notification_service.dispatch_notification(
+        channel="email",
+        message="본문",
+        targets=["hello@kfinance.ai"],
+        metadata=metadata,
+        template=None,
+    )
+
+    assert result.status == "delivered"
+    assert captured["url"].endswith("/email/v2.1/appKeys/app-key/sender/mail")
     payload = captured["payload"]
-    assert payload["personalizations"][0]["to"][0]["email"] == "hello@kfinance.ai"
-    assert payload["from"]["email"] == "alerts@kfinance.ai"
-    assert payload["content"][0]["value"] == "테스트 알림"
-    assert payload["content"][1]["value"] == "<p>테스트 알림</p>"
-
+    assert payload["senderAddress"] == "alerts@kfinance.ai"
+    assert payload["senderName"] == "K-Finance QA"
+    assert payload["receiverList"][0]["receiveMailAddr"] == "hello@kfinance.ai"
     headers = captured["kwargs"]["headers"]
-    assert headers["Authorization"] == "Bearer sg_test"
-    assert captured["kwargs"]["result_metadata"] == {"recipients": ["hello@kfinance.ai"]}
+    assert headers["X-Secret-Key"] == "secret"
 
 
 def test_backoff_retry(monkeypatch: pytest.MonkeyPatch) -> None:

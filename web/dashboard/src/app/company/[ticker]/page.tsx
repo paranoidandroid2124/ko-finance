@@ -9,6 +9,10 @@ import { CompanySummaryCard } from "@/components/company/CompanySummaryCard";
 import { KeyMetricsGrid } from "@/components/company/KeyMetricsGrid";
 import { MajorEventsList } from "@/components/company/MajorEventsList";
 import { NewsSignalCards } from "@/components/company/NewsSignalCards";
+import { FinancialStatementsBoard } from "@/components/company/FinancialStatementsBoard";
+import { EvidenceBundleCard, FiscalAlignmentCard, RestatementRadarCard } from "@/components/company/InsightCards";
+import { PlanLock } from "@/components/ui/PlanLock";
+import { FinancialStatementsBoard } from "@/components/company/FinancialStatementsBoard";
 import { useCompanySnapshot } from "@/hooks/useCompanySnapshot";
 import { normalizeCompanySearchResult, type CompanySearchResult } from "@/hooks/useCompanySearch";
 
@@ -24,10 +28,16 @@ export default function CompanySnapshotPage({ params }: CompanySnapshotPageProps
   const identifier = decodeURIComponent(params.ticker ?? "").toUpperCase();
   const { data, isLoading, isError } = useCompanySnapshot(identifier);
 
-  const hasData = useMemo(
-    () => Boolean(data && data.keyMetrics.length + data.majorEvents.length + data.newsSignals.length > 0),
-    [data],
-  );
+  const hasData = useMemo(() => {
+    if (!data) return false;
+    const statementCount = data.financialStatements?.length ?? 0;
+    return Boolean(
+      statementCount ||
+        data.keyMetrics.length ||
+        data.majorEvents.length ||
+        data.newsSignals.length,
+    );
+  }, [data]);
 
   useEffect(() => {
     if (!data || typeof window === "undefined") {
@@ -113,6 +123,32 @@ export default function CompanySnapshotPage({ params }: CompanySnapshotPageProps
           headline={data.latestFiling}
           summary={data.summary}
         />
+        {data.financialStatements.length ? (
+          <FinancialStatementsBoard
+            statements={data.financialStatements}
+            corpName={data.corpName ?? identifier}
+            identifier={data.ticker ?? data.corpCode ?? identifier}
+          />
+        ) : null}
+        <div className="grid gap-6 lg:grid-cols-3">
+          <PlanLock requiredTier="pro" title="정정 영향 인사이트" description="정정 공시가 주요 지표에 미친 영향을 한눈에 살펴보세요.">
+            <RestatementRadarCard highlights={data.restatementHighlights} />
+          </PlanLock>
+          <PlanLock
+            requiredTier="enterprise"
+            title="Evidence Bundle"
+            description="모든 수치에 출처와 원문 링크를 연결해 감사 패키지를 빠르게 구성하세요."
+          >
+            <EvidenceBundleCard links={data.evidenceLinks} />
+          </PlanLock>
+          <PlanLock
+            requiredTier="pro"
+            title="Fiscal Alignment"
+            description="회계연도 전환·분기 길이 불일치를 자동 보정한 신뢰 지표입니다."
+          >
+            <FiscalAlignmentCard insight={data.fiscalAlignment} />
+          </PlanLock>
+        </div>
         <KeyMetricsGrid metrics={data.keyMetrics} />
         <div className="grid gap-6 xl:grid-cols-[minmax(0,0.6fr)_minmax(0,1fr)]">
           <MajorEventsList events={data.majorEvents} />

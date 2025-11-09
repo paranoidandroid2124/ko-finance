@@ -41,6 +41,7 @@ def health_check():
 
 
 app.include_router(routers.dashboard.router, prefix="/api/v1")
+app.include_router(routers.public.router, prefix="/api/v1")
 app.include_router(routers.alerts.router, prefix="/api/v1")
 app.include_router(routers.news.router, prefix="/api/v1")
 app.include_router(routers.chat.router, prefix="/api/v1")
@@ -48,14 +49,18 @@ app.include_router(routers.rag.router, prefix="/api/v1")
 app.include_router(routers.search.router, prefix="/api/v1")
 app.include_router(routers.sectors.router, prefix="/api/v1")
 app.include_router(routers.company.router, prefix="/api/v1")
+app.include_router(routers.event_study.router, prefix="/api/v1")
 app.include_router(routers.payments.router, prefix="/api/v1")
 app.include_router(routers.plan.router, prefix="/api/v1")
+app.include_router(routers.auth.router, prefix="/api/v1")
+app.include_router(routers.user_settings.router, prefix="/api/v1")
 app.include_router(routers.reports.router, prefix="/api/v1")
 app.include_router(routers.admin.router, prefix="/api/v1")
 app.include_router(routers.admin_llm.router, prefix="/api/v1")
 app.include_router(routers.admin_rag.router, prefix="/api/v1")
 app.include_router(routers.admin_ops.router, prefix="/api/v1")
 app.include_router(routers.admin_ui.router, prefix="/api/v1")
+app.include_router(routers.ops.router, prefix="/ops/api")
 
 if getattr(routers, "filing", None):
     app.include_router(routers.filing.router, prefix="/api/v1")

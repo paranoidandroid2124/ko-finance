@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, func, nulls_last, or_
@@ -18,10 +18,16 @@ from schemas.api.company import (
     CompanySearchResult,
     CompanySnapshotResponse,
     CompanySuggestions,
+    EvidenceLink,
     EventItem,
     FilingHeadline,
+    FinancialStatementBlock,
+    FinancialStatementRow,
+    FinancialValue,
+    FiscalAlignmentInsight,
     KeyMetric,
     NewsWindowInsight,
+    RestatementHighlight,
     SummaryBlock,
     TopicWeight,
     TimelinePoint,
@@ -40,6 +46,64 @@ METRIC_DEFINITIONS: Sequence[Dict[str, Iterable[str]]] = (
     {"code": "debt_ratio", "label": "부채비율", "keywords": ("부채비율", "debt ratio")},
     {"code": "revenue_growth", "label": "매출액증가율", "keywords": ("매출액증가율", "sales growth")},
 )
+
+FINANCIAL_STATEMENTS: Sequence[Dict[str, Any]] = (
+    {
+        "statement_code": "income_statement",
+        "label": "손익계산서",
+        "rows": (
+            {"metric_code": "revenue", "label": "매출액", "keywords": ("매출", "Revenue")},
+            {"metric_code": "gross_profit", "label": "매출총이익", "keywords": ("매출총이익", "Gross profit")},
+            {"metric_code": "operating_income", "label": "영업이익", "keywords": ("영업이익", "Operating income")},
+            {"metric_code": "ebitda", "label": "EBITDA", "keywords": ("EBITDA",)},
+            {"metric_code": "net_income", "label": "당기순이익", "keywords": ("당기순이익", "Net income")},
+        ),
+    },
+    {
+        "statement_code": "balance_sheet",
+        "label": "대차대조표",
+        "rows": (
+            {"metric_code": "total_assets", "label": "자산총계", "keywords": ("자산총계", "Total assets")},
+            {"metric_code": "total_liabilities", "label": "부채총계", "keywords": ("부채총계", "Total liabilities")},
+            {"metric_code": "total_equity", "label": "자본총계", "keywords": ("자본총계", "Total equity")},
+        ),
+    },
+    {
+        "statement_code": "cash_flow",
+        "label": "현금흐름표",
+        "rows": (
+            {
+                "metric_code": "operating_cash_flow",
+                "label": "영업활동현금흐름",
+                "keywords": ("영업활동현금흐름", "Operating activities"),
+            },
+            {
+                "metric_code": "investing_cash_flow",
+                "label": "투자활동현금흐름",
+                "keywords": ("투자활동현금흐름", "Investing activities"),
+            },
+            {
+                "metric_code": "financing_cash_flow",
+                "label": "재무활동현금흐름",
+                "keywords": ("재무활동현금흐름", "Financing activities"),
+            },
+        ),
+    },
+)
+
+RESTATEMENT_METRIC_PRIORITY: Sequence[str] = (
+    "net_income",
+    "operating_income",
+    "revenue",
+)
+
+_PERIOD_ORDER = {
+    "Q1": 1,
+    "Q2": 2,
+    "Q3": 3,
+    "Q4": 4,
+    "FY": 5,
+}
 
 
 
@@ -76,6 +140,7 @@ def company_snapshot(identifier: str, db: Session = Depends(get_db)) -> CompanyS
     )
 
     key_metrics = _collect_key_metrics(db, corp_code)
+    financial_statements = _collect_financial_statements(db, corp_code)
     recent_events = _latest_events(db, corp_code, limit=8)
     news_metrics = _collect_news_metrics(db, ticker)
 
@@ -111,15 +176,23 @@ def company_snapshot(identifier: str, db: Session = Depends(get_db)) -> CompanyS
         for record in news_metrics
     ]
 
+    restatement_highlights = _collect_restatement_highlights(db, corp_code, limit=3)
+    evidence_links = _build_evidence_links(financial_statements, limit=8)
+    fiscal_alignment = _compute_fiscal_alignment(financial_statements)
+
     response = CompanySnapshotResponse(
         corp_code=corp_code,
         ticker=ticker,
         corp_name=corp_name,
         latest_filing=_build_filing_headline(latest_filing),
         summary=_build_summary_block(summary_record),
+        financial_statements=financial_statements,
         key_metrics=key_metrics,
         major_events=event_models,
         news_signals=news_models,
+        restatement_highlights=restatement_highlights,
+        evidence_links=evidence_links,
+        fiscal_alignment=fiscal_alignment,
     )
     return response
 
@@ -205,6 +278,301 @@ def _build_summary_block(summary: Optional[Summary]) -> Optional[SummaryBlock]:
     )
 
 
+def _format_period_label(value: Optional[FinancialValue]) -> str:
+    if value is None:
+        return ""
+    year = value.fiscal_year
+    period = (value.fiscal_period or "").upper()
+    if value.period_type == "annual":
+        if value.period_end_date:
+            try:
+                if isinstance(value.period_end_date, str):
+                    end = datetime.fromisoformat(value.period_end_date)
+                else:
+                    end = value.period_end_date
+                return f"{end.year}년 {end.month}월"
+            except ValueError:
+                pass
+        return f"{year} FY" if year else "연도 미상"
+    if value.period_type == "quarter":
+        return f"{year} {period}" if year else period or "분기"
+    return period or (f"{year}" if year else "기간 미상")
+
+
+def _collect_financial_statements(db: Session, corp_code: str, max_points: int = 8) -> List[FinancialStatementBlock]:
+    statements: List[FinancialStatementBlock] = []
+    for statement in FINANCIAL_STATEMENTS:
+        rows: List[FinancialStatementRow] = []
+        for row in statement.get("rows", []):
+            keywords = tuple(row.get("keywords") or (row.get("label"),))
+            series = _select_metric_series(
+                db,
+                corp_code=corp_code,
+                keywords=keywords,
+                max_points=max_points,
+            )
+            if not series:
+                continue
+            values = [
+                FinancialValue(
+                    fiscal_year=record.fiscal_year,
+                    fiscal_period=record.fiscal_period,
+                    period_type=_infer_period_type(record.fiscal_period),
+                    period_end_date=record.period_end_date,
+                    value=record.value,
+                    unit=record.unit,
+                    currency=record.currency,
+                    reference_no=record.reference_no,
+                )
+                for record in series
+            ]
+            if not values:
+                continue
+            rows.append(
+                FinancialStatementRow(
+                    metric_code=row.get("metric_code") or series[0].metric_code,
+                    label=row.get("label") or series[0].metric_name,
+                    values=values,
+                )
+            )
+        if rows:
+            statements.append(
+                FinancialStatementBlock(
+                    statement_code=statement.get("statement_code", "custom"),
+                    label=statement.get("label", "Statement"),
+                    rows=rows,
+                    description=statement.get("description"),
+                )
+            )
+    return statements
+
+
+def _collect_restatement_highlights(db: Session, corp_code: str, limit: int = 3) -> List[RestatementHighlight]:
+    if limit <= 0:
+        return []
+
+    corrections = (
+        db.query(Filing)
+        .filter(
+            Filing.corp_code == corp_code,
+            or_(
+                Filing.category.in_(("correction", "revision", "정정 공시")),
+                Filing.title.ilike("%정정%"),
+                Filing.report_name.ilike("%정정%"),
+            ),
+            Filing.receipt_no.isnot(None),
+        )
+        .order_by(nulls_last(Filing.filed_at.desc()), Filing.created_at.desc())
+        .limit(limit * 4)
+    )
+
+    highlights: List[RestatementHighlight] = []
+    for filing in corrections:
+        impact = _compute_restatement_metric_delta(db, filing)
+        if not impact:
+            continue
+        highlights.append(
+            RestatementHighlight(
+                receipt_no=filing.receipt_no or "",
+                title=filing.title or filing.report_name,
+                filed_at=filing.filed_at.isoformat() if filing.filed_at else None,
+                report_name=filing.report_name,
+                metric_code=impact.get("metric_code"),
+                metric_label=impact.get("metric_label"),
+                previous_value=impact.get("previous_value"),
+                current_value=impact.get("current_value"),
+                delta_percent=impact.get("delta_percent"),
+                viewer_url=_viewer_url(filing.receipt_no) if filing.receipt_no else None,
+            )
+        )
+        if len(highlights) >= limit:
+            break
+    return highlights
+
+
+def _compute_restatement_metric_delta(db: Session, filing: Filing) -> Optional[Dict[str, Any]]:
+    if not filing.receipt_no or not filing.corp_code:
+        return None
+
+    metrics = (
+        db.query(CorpMetric)
+        .filter(
+            CorpMetric.corp_code == filing.corp_code,
+            CorpMetric.reference_no == filing.receipt_no,
+        )
+        .all()
+    )
+    if not metrics:
+        return None
+
+    metrics_by_code: Dict[str, CorpMetric] = {
+        metric.metric_code: metric for metric in metrics if metric.metric_code
+    }
+
+    ordered_candidates = list(RESTATEMENT_METRIC_PRIORITY) + list(metrics_by_code.keys())
+    for metric_code in ordered_candidates:
+        metric = metrics_by_code.get(metric_code)
+        if not metric or metric.value is None:
+            continue
+        previous = _previous_metric_record(db, metric)
+        if not previous or previous.value in (None, 0):
+            continue
+        delta_percent = ((metric.value - previous.value) / abs(previous.value)) * 100
+        return {
+            "metric_code": metric.metric_code,
+            "metric_label": metric.metric_name or metric.metric_code,
+            "previous_value": previous.value,
+            "current_value": metric.value,
+            "delta_percent": delta_percent,
+        }
+    return None
+
+
+def _previous_metric_record(db: Session, metric: CorpMetric) -> Optional[CorpMetric]:
+    return (
+        db.query(CorpMetric)
+        .filter(
+            CorpMetric.corp_code == metric.corp_code,
+            CorpMetric.metric_code == metric.metric_code,
+            CorpMetric.fiscal_year == metric.fiscal_year,
+            CorpMetric.fiscal_period == metric.fiscal_period,
+            CorpMetric.reference_no != metric.reference_no,
+        )
+        .order_by(
+            nulls_last(CorpMetric.updated_at.desc()),
+            nulls_last(CorpMetric.observed_at.desc()),
+        )
+        .first()
+    )
+
+
+def _build_evidence_links(
+    statements: List[FinancialStatementBlock],
+    limit: int = 8,
+) -> List[EvidenceLink]:
+    if limit <= 0:
+        return []
+    links: List[EvidenceLink] = []
+    seen: set[Tuple[str, str]] = set()
+
+    for block in statements:
+        for row in block.rows:
+            sorted_values = sorted(
+                row.values,
+                key=lambda value: (value.period_end_date or "", value.fiscal_year or 0),
+                reverse=True,
+            )
+            for value in sorted_values:
+                if not value.reference_no:
+                    continue
+                key = (row.metric_code, value.reference_no)
+                if key in seen:
+                    continue
+                seen.add(key)
+                links.append(
+                    EvidenceLink(
+                        statement_code=block.statement_code,
+                        statement_label=block.label,
+                        metric_code=row.metric_code,
+                        metric_label=row.label,
+                        period_label=_format_period_label(value),
+                        reference_no=value.reference_no,
+                        viewer_url=_viewer_url(value.reference_no),
+                        value=value.value,
+                        unit=value.unit,
+                    )
+                )
+                break
+        if len(links) >= limit:
+            break
+    return links[:limit]
+
+
+def _compute_fiscal_alignment(
+    statements: List[FinancialStatementBlock],
+) -> Optional[FiscalAlignmentInsight]:
+    if not statements:
+        return None
+
+    target_row = _find_metric_row(statements, "revenue")
+    if not target_row:
+        first_statement = statements[0] if statements else None
+        target_row = first_statement.rows[0] if first_statement and first_statement.rows else None
+    if not target_row:
+        return None
+
+    annual_values = [value for value in target_row.values if value.period_type == "annual"]
+    quarter_values = [value for value in target_row.values if value.period_type == "quarter"]
+
+    latest_annual = _latest_value(annual_values)
+    latest_quarter = _latest_value(quarter_values)
+
+    yoy_delta = None
+    if latest_quarter and latest_quarter.fiscal_year is not None:
+        comparator = next(
+            (
+                value
+                for value in quarter_values
+                if value.fiscal_period == latest_quarter.fiscal_period
+                and (value.fiscal_year or 0) == (latest_quarter.fiscal_year or 0) - 1
+            ),
+            None,
+        )
+        if comparator and comparator.value not in (None, 0) and latest_quarter.value is not None:
+            yoy_delta = ((latest_quarter.value - comparator.value) / abs(comparator.value)) * 100
+
+    unique_quarters = {
+        (value.fiscal_year, value.fiscal_period)
+        for value in quarter_values
+        if value.fiscal_period and value.fiscal_year is not None
+    }
+    quarter_coverage = len(unique_quarters)
+
+    notes: List[str] = []
+    if quarter_coverage >= 4 and yoy_delta is not None:
+        alignment_status: Literal["good", "warning", "missing"] = "good"
+    elif quarter_values or annual_values:
+        alignment_status = "warning"
+        if quarter_coverage < 4:
+            notes.append("최근 4개 분기 데이터가 부족합니다.")
+        if yoy_delta is None:
+            notes.append("동일 분기 YoY 비교를 계산할 수 없습니다.")
+    else:
+        alignment_status = "missing"
+        notes.append("재무 데이터가 충분하지 않습니다.")
+
+    return FiscalAlignmentInsight(
+        latest_annual_period=_format_period_label(latest_annual) if latest_annual else None,
+        latest_quarter_period=_format_period_label(latest_quarter) if latest_quarter else None,
+        yoy_delta_percent=yoy_delta,
+        ttm_quarter_coverage=min(quarter_coverage, 12),
+        alignment_status=alignment_status,
+        notes=" ".join(notes) if notes else None,
+    )
+
+
+def _find_metric_row(
+    statements: List[FinancialStatementBlock],
+    metric_code: str,
+) -> Optional[FinancialStatementRow]:
+    for statement in statements:
+        for row in statement.rows:
+            if row.metric_code == metric_code:
+                return row
+    return None
+
+
+def _latest_value(values: List[FinancialValue]) -> Optional[FinancialValue]:
+    if not values:
+        return None
+    sorted_values = sorted(
+        values,
+        key=lambda value: (value.period_end_date or "", value.fiscal_year or 0),
+        reverse=True,
+    )
+    return sorted_values[0]
+
+
 def _viewer_url(receipt_no: str) -> str:
     return f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={receipt_no}"
 
@@ -226,6 +594,72 @@ def _collect_key_metrics(db: Session, corp_code: str) -> List[KeyMetric]:
             )
         )
     return results
+
+
+def _select_metric_series(
+    db: Session,
+    corp_code: str,
+    keywords: Sequence[str],
+    *,
+    max_points: int = 8,
+) -> List[CorpMetric]:
+    filters = []
+    for keyword in keywords:
+        keyword = (keyword or "").strip()
+        if not keyword:
+            continue
+        filters.append(CorpMetric.metric_name.ilike(f"%{keyword}%"))
+    if not filters:
+        return []
+
+    query = (
+        db.query(CorpMetric)
+        .filter(
+            CorpMetric.corp_code == corp_code,
+            CorpMetric.source.in_(("DE002", "DE003")),
+            or_(*filters),
+        )
+        .order_by(
+            nulls_last(CorpMetric.period_end_date.desc()),
+            CorpMetric.fiscal_year.desc(),
+            CorpMetric.fiscal_period.desc(),
+            nulls_last(CorpMetric.updated_at.desc()),
+        )
+        .limit(max_points * 4)
+    )
+    records = query.all()
+    deduped = _deduplicate_ordered_records(records, max_points=max_points)
+    deduped.sort(key=lambda record: _period_sort_key(record.fiscal_year, record.fiscal_period))
+    return deduped
+
+
+def _deduplicate_ordered_records(records: Sequence[CorpMetric], *, max_points: int) -> List[CorpMetric]:
+    seen: set[Tuple[Optional[int], Optional[str]]] = set()
+    unique: List[CorpMetric] = []
+    for record in records:
+        key = (record.fiscal_year, record.fiscal_period)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(record)
+        if len(unique) >= max_points:
+            break
+    return unique
+
+
+def _period_sort_key(fiscal_year: Optional[int], fiscal_period: Optional[str]) -> Tuple[int, int]:
+    year = fiscal_year or 0
+    order = _PERIOD_ORDER.get((fiscal_period or "").upper(), 0)
+    return (year, order)
+
+
+def _infer_period_type(fiscal_period: Optional[str]) -> str:
+    normalized = (fiscal_period or "").upper()
+    if normalized in {"FY", "ANNUAL"}:
+        return "annual"
+    if normalized in {"Q1", "Q2", "Q3", "Q4"}:
+        return "quarter"
+    return "other"
 
 
 def _select_metric_record(db: Session, corp_code: str, keywords: Sequence[str]) -> Optional[CorpMetric]:

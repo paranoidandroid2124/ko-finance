@@ -309,6 +309,19 @@ const globalFetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestIni
           selfCheckEnabled: true,
           peerExportRowLimit: 120,
         },
+        memoryFlags: {
+          watchlist: true,
+          digest: true,
+          chat: true,
+        },
+        trial: {
+          tier: "pro",
+          startsAt: null,
+          endsAt: null,
+          durationDays: 7,
+          active: false,
+          used: false,
+        },
       }),
       {
         status: 200,

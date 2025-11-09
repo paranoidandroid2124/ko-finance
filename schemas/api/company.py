@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, date
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -29,6 +29,101 @@ class SummaryBlock(BaseModel):
     where: Optional[str] = None
     why: Optional[str] = None
     how: Optional[str] = None
+
+
+class FinancialValue(BaseModel):
+    """Time-series value for a financial metric."""
+
+    fiscal_year: Optional[int] = Field(
+        None,
+        description="Fiscal year associated with the value.",
+        serialization_alias="fiscalYear",
+    )
+    fiscal_period: Optional[str] = Field(
+        None,
+        description="Fiscal period label (FY/Q1/Q2/Q3/Q4).",
+        serialization_alias="fiscalPeriod",
+    )
+    period_type: Literal["annual", "quarter", "other"] = Field(
+        "other",
+        description="Derived period bucket used by the client toggle.",
+        serialization_alias="periodType",
+    )
+    period_end_date: Optional[date] = Field(
+        None,
+        description="Period end date supplied by DART if available.",
+        serialization_alias="periodEndDate",
+    )
+    value: Optional[float] = Field(None, description="Numeric value converted to float (unitless).")
+    unit: Optional[str] = Field(None, description="Measurement unit reported by DART.")
+    currency: Optional[str] = Field(None, description="Currency code when provided.")
+    reference_no: Optional[str] = Field(
+        None,
+        description="Underlying filing receipt number to power Evidence Bundle links.",
+        serialization_alias="referenceNo",
+    )
+
+
+class FinancialStatementRow(BaseModel):
+    """Single metric row displayed inside a financial statement block."""
+
+    metric_code: str = Field(..., description="Normalized metric identifier/code.")
+    label: str = Field(..., description="Localized display label for the metric.")
+    values: List[FinancialValue] = Field(default_factory=list, description="Chronological metric series.")
+
+
+class FinancialStatementBlock(BaseModel):
+    """Grouped rows for a financial statement (손익/대차/현금흐름)."""
+
+    statement_code: str = Field(..., description="Statement identifier (income_statement/balance_sheet/cash_flow).")
+    label: str = Field(..., description="Display label for the statement.")
+    rows: List[FinancialStatementRow] = Field(default_factory=list, description="Metric rows contained in the block.")
+    description: Optional[str] = Field(
+        default=None,
+        description="Optional helper copy rendered under the statement header.",
+    )
+
+
+class EvidenceLink(BaseModel):
+    """Link metadata connecting a metric to its evidence source."""
+
+    statement_code: str = Field(..., description="Originating statement identifier.")
+    statement_label: str = Field(..., description="Statement display label.")
+    metric_code: str = Field(..., description="Metric identifier.")
+    metric_label: str = Field(..., description="Display label for the metric.")
+    period_label: str = Field(..., description="Human-readable period (예: 2024 Q2).")
+    reference_no: str = Field(..., description="DART receipt number used to fetch the original evidence.")
+    viewer_url: str = Field(..., description="Direct viewer link for the underlying evidence.")
+    value: Optional[float] = Field(default=None, description="Metric value reported in the evidence.")
+    unit: Optional[str] = Field(default=None, description="Unit associated with the metric value.")
+
+
+class RestatementHighlight(BaseModel):
+    """Summarised view of a correction filing and its numeric impact."""
+
+    receipt_no: str = Field(..., description="Restatement filing receipt number.")
+    title: Optional[str] = Field(default=None, description="Restatement title or headline.")
+    filed_at: Optional[str] = Field(default=None, description="ISO timestamp when the restatement was filed.")
+    report_name: Optional[str] = Field(default=None, description="Originating report name.")
+    metric_code: Optional[str] = Field(default=None, description="Metric identifier impacted by the restatement.")
+    metric_label: Optional[str] = Field(default=None, description="Display label for the impacted metric.")
+    previous_value: Optional[float] = Field(default=None, description="Value before the restatement.")
+    current_value: Optional[float] = Field(default=None, description="Value after the restatement.")
+    delta_percent: Optional[float] = Field(default=None, description="Percentage change introduced by the restatement.")
+    viewer_url: Optional[str] = Field(default=None, description="Direct DART viewer link for the restatement.")
+
+
+class FiscalAlignmentInsight(BaseModel):
+    """Diagnostic summary explaining how well annual/quarter periods align."""
+
+    latest_annual_period: Optional[str] = Field(default=None, description="Most recent annual period label.")
+    latest_quarter_period: Optional[str] = Field(default=None, description="Most recent quarter period label.")
+    yoy_delta_percent: Optional[float] = Field(default=None, description="Seasonal YoY delta for the benchmark metric.")
+    ttm_quarter_coverage: int = Field(default=0, description="Number of consecutive quarters available for TTM.")
+    alignment_status: Literal["good", "warning", "missing"] = Field(
+        default="warning", description="Overall alignment heuristic."
+    )
+    notes: Optional[str] = Field(default=None, description="Helper note rendered on the UI.")
 
 
 class KeyMetric(BaseModel):
@@ -94,9 +189,25 @@ class CompanySnapshotResponse(BaseModel):
 
     latest_filing: Optional[FilingHeadline] = None
     summary: Optional[SummaryBlock] = None
+    financial_statements: List[FinancialStatementBlock] = Field(
+        default_factory=list,
+        description="Structured financial statement rows grouped by statement type.",
+    )
     key_metrics: List[KeyMetric] = Field(default_factory=list)
     major_events: List[EventItem] = Field(default_factory=list)
     news_signals: List[NewsWindowInsight] = Field(default_factory=list)
+    restatement_highlights: List[RestatementHighlight] = Field(
+        default_factory=list,
+        description="Recent correction filings with detected numeric impact.",
+    )
+    evidence_links: List[EvidenceLink] = Field(
+        default_factory=list,
+        description="Shortcut mapping from dashboard metrics to DART evidence.",
+    )
+    fiscal_alignment: Optional[FiscalAlignmentInsight] = Field(
+        default=None,
+        description="Insight describing annual/quarter alignment readiness.",
+    )
 
 
 class CompanySearchResult(BaseModel):

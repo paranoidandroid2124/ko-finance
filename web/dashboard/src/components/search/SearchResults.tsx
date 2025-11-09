@@ -2,6 +2,7 @@
 
 import { Lock } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { nextTier, usePlanTier } from "@/store/planStore";
 import type {
@@ -184,6 +185,7 @@ export function SearchResults({
 }
 
 function LockedButton({ label, isLocked }: { label: string; isLocked?: boolean }) {
+  const router = useRouter();
   const currentTier = usePlanTier();
   const upgradeTier = nextTier(currentTier) ?? "enterprise";
   const targetLabel = upgradeTier === "enterprise" ? "Enterprise" : "Pro";
@@ -203,11 +205,7 @@ function LockedButton({ label, isLocked }: { label: string; isLocked?: boolean }
     <button
       type="button"
       className="group relative inline-flex items-center gap-2 rounded-lg border border-dashed border-border-light px-3 py-2 text-xs font-semibold text-text-secondaryLight transition-motion-tactile hover:border-primary hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary dark:border-border-dark dark:text-text-secondaryDark"
-      onClick={(event) => {
-        event.currentTarget.classList.remove("animate-lock-shake");
-        void event.currentTarget.offsetWidth;
-        event.currentTarget.classList.add("animate-lock-shake");
-      }}
+      onClick={() => router.push(`/settings?panel=plan&tier=${upgradeTier}`)}
     >
       <span>{label}</span>
       <Lock aria-hidden className="h-4 w-4 text-primary" />

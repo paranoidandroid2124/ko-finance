@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -74,3 +74,51 @@ class DailyBriefGenerateResponse(BaseModel):
         default=None,
         description="Download URL for the rendered artefact when run synchronously and remote storage is configured.",
     )
+
+
+class DigestNewsItem(BaseModel):
+    headline: str = Field(..., description="뉴스 제목")
+    summary: Optional[str] = Field(default=None, description="요약 또는 하이라이트 문장.")
+    source: Optional[str] = Field(default=None, description="기사 출처.")
+    link: Optional[str] = Field(default=None, description="원문 링크.")
+
+
+class DigestWatchlistItem(BaseModel):
+    title: str = Field(..., description="워치리스트 항목 제목.")
+    description: str = Field(..., description="간단한 설명 또는 메모.")
+    changeLabel: Optional[str] = Field(default=None, description="변화량·상태 라벨.")
+    tone: Literal["positive", "negative", "neutral", "alert"] = Field(
+        default="neutral", description="표현 색상용 톤."
+    )
+
+
+class DigestIndicator(BaseModel):
+    name: str
+    value: str
+    status: Literal["positive", "negative", "neutral"]
+
+
+class DigestSentimentBlock(BaseModel):
+    summary: str
+    scoreLabel: Optional[str] = None
+    trend: Literal["up", "down", "flat"]
+    indicators: List[DigestIndicator]
+
+
+class DigestActionItem(BaseModel):
+    title: str
+    note: str
+    tone: Optional[Literal["positive", "negative", "neutral", "alert"]] = None
+
+
+class DigestPreviewResponse(BaseModel):
+    timeframe: Literal["daily", "weekly"] = Field(..., description="다이제스트 기준 기간.")
+    periodLabel: str = Field(..., description="기간 표시 문자열.")
+    generatedAtLabel: str = Field(..., description="생성 시각 표시 문자열.")
+    sourceLabel: Optional[str] = Field(default=None, description="데이터 출처 표시.")
+    news: List[DigestNewsItem] = Field(default_factory=list)
+    watchlist: List[DigestWatchlistItem] = Field(default_factory=list)
+    sentiment: Optional[DigestSentimentBlock] = None
+    actions: List[DigestActionItem] = Field(default_factory=list)
+    llmOverview: Optional[str] = None
+    llmPersonalNote: Optional[str] = None

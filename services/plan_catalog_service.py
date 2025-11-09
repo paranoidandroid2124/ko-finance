@@ -27,7 +27,7 @@ _DEFAULT_TIER_CARDS: List[Dict[str, Any]] = [
         "badge": "Starter",
         "price": {"amount": 0, "currency": "KRW", "interval": "월"},
         "ctaLabel": "무료로 시작하기",
-        "ctaHref": "/signup?plan=free",
+        "ctaHref": "/auth/register?plan=free",
         "features": [
             {"text": "AI를 통한 공시 분석"},
             {"text": "공시·뉴스·요약 기본 피드 열람"},

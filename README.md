@@ -30,6 +30,22 @@ pip install -r requirements.txt
   - `OCR_TRIGGER_MAX_PAGES` (default `15`) limits how many pages are rasterised per filing
   - `OCR_VISION_RENDER_DPI` and `OCR_VISION_LANGUAGE_HINTS` fine-tune rendering quality and language hints
 
+#### Email/Password Authentication Checklist
+1. **Apply the credential schema.** The combined SQL lives at `ops/migrations/add_email_password_auth.sql`. When using Docker Compose, copy it into the Postgres container and execute:
+   ```bash
+   docker cp ops/migrations/add_email_password_auth.sql ko-finance-postgres-1:/tmp/add_email_password_auth.sql
+   docker exec -i ko-finance-postgres-1 psql -U kfinance -d kfinance_db -v ON_ERROR_STOP=1 -f /tmp/add_email_password_auth.sql
+   ```
+2. **Backend endpoints.** `web/routers/auth.py` exposes `/api/v1/auth/register|login|email/verify|password-reset/*|session/refresh|logout` backed by `services/auth_service.py` (Argon2 hashing, `auth_tokens`, `session_tokens`, audit logging, rate limits). Error responses follow `{"detail": {"code": "...", "message": "...", "retryAfter"?: number}}` and rate limit violations also emit a `Retry-After` header.
+   - 재전송/잠금 플로우: `/auth/email/verify/resend`, `/auth/account/unlock/request`, `/auth/account/unlock/confirm`가 추가되어 로그인 화면에서 CTA를 붙일 수 있습니다.
+3. **Next.js Credentials provider.** `web/dashboard/src/lib/authOptions.ts` calls `POST /api/v1/auth/login`, stores `accessToken`, `refreshToken`, `sessionId`, and `sessionToken` inside the NextAuth JWT/session, and keeps OAuth providers untouched. `/auth/register`, `/auth/login`, `/auth/forgot-password`, `/auth/reset/[token]`, and `/auth/verify/[token]` are implemented with loading/error states that surface `detail.code/message` from FastAPI.
+4. **Env vars.** `DATABASE_URL` must be reachable from both FastAPI and Next.js processes (e.g., override to `postgresql://kfinance:your_strong_password@localhost:5432/kfinance_db` when running tests on the host). Set `AUTH_JWT_SECRET`, `NEXTAUTH_URL`, and `NEXT_PUBLIC_API_BASE_URL` for the dashboard.
+5. **Docs & tests.** See `docs/auth/email_password_design.md` for the latest API contract/error table and run `pytest tests/test_auth_api.py` plus `npm run test -- --run tests/auth/formatAuthError.test.ts` after making auth changes.
+
+### Guest/Public Preview
+- `GET /api/v1/public/filings` · `POST /api/v1/public/chat` 는 인증 없이 최신 공시 목록과 간단한 챗 답변 미리보기를 제공합니다. 기본 rate limit(시간당 5회)이 적용됩니다.
+- Next.js `/public` 페이지에서 위 API를 호출해 “로그인 없이 둘러보기” 경험을 제공합니다. 로그인/가입 CTA가 함께 노출되므로 체험 → 가입 전환 흐름을 구성할 수 있습니다.
+
 ### 4. Running Locally
 #### 4.1 Docker Compose
 ```bash

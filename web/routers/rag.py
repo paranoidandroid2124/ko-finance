@@ -27,7 +27,8 @@ from schemas.api.rag import (
     RelatedFiling,
     SelfCheckResult,
 )
-from services import chat_service, vector_service, date_range_parser
+from services import chat_service, date_range_parser, vector_service, lightmem_gate
+from services.user_settings_service import UserLightMemSettings
 from services.rag_shared import build_anchor_payload, normalize_reliability, safe_float, safe_int
 from services.evidence_service import attach_diff_metadata
 from models.chat import ChatMessage, ChatSession
@@ -117,8 +118,12 @@ def _build_evidence_payload(chunks: Iterable[Dict[str, Any]]) -> List[Dict[str, 
     return evidence
 
 
-def _plan_memory_enabled(plan: PlanContext) -> bool:
-    return plan.tier in {"pro", "enterprise"}
+def _plan_memory_enabled(
+    plan: PlanContext,
+    *,
+    user_settings: Optional[UserLightMemSettings] = None,
+) -> bool:
+    return lightmem_gate.chat_enabled(plan, user_settings)
 
 
 def _memory_subject_ids(
@@ -362,6 +367,22 @@ def _parse_uuid(value: Optional[str]) -> Optional[uuid.UUID]:
         return uuid.UUID(value)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID header.") from exc
+
+
+def _default_lightmem_user_id() -> Optional[uuid.UUID]:
+    return lightmem_gate.default_user_id()
+
+
+def _resolve_lightmem_user_id(value: Optional[str]) -> Optional[uuid.UUID]:
+    if value:
+        return _parse_uuid(value)
+    return _default_lightmem_user_id()
+
+
+def _load_user_lightmem_settings(
+    user_id: Optional[uuid.UUID],
+) -> Optional[UserLightMemSettings]:
+    return lightmem_gate.load_user_settings(user_id)
 
 def _coerce_uuid(value, *, default=None):
     """Convert an arbitrary identifier to a UUID."""
@@ -954,13 +975,14 @@ def query_rag(
     max_filings = request.max_filings
     trace_id = str(uuid.uuid4())
 
-    user_id = _parse_uuid(x_user_id)
+    user_id = _resolve_lightmem_user_id(x_user_id)
     org_id = _parse_uuid(x_org_id)
     turn_id = _coerce_uuid(request.turn_id)
     idempotency_key = request.idempotency_key or idempotency_key_header
 
     user_meta = dict(request.meta or {})
-    plan_memory_enabled = _plan_memory_enabled(plan)
+    user_settings = _load_user_lightmem_settings(user_id)
+    plan_memory_enabled = _plan_memory_enabled(plan, user_settings=user_settings)
 
     try:
         session = _resolve_session(
@@ -1280,12 +1302,13 @@ def query_rag_stream(
     max_filings = request.max_filings
     trace_id = str(uuid.uuid4())
 
-    user_id = _parse_uuid(x_user_id)
+    user_id = _resolve_lightmem_user_id(x_user_id)
     org_id = _parse_uuid(x_org_id)
     turn_id = _coerce_uuid(request.turn_id)
     idempotency_key = request.idempotency_key or idempotency_key_header
 
-    plan_memory_enabled = _plan_memory_enabled(plan)
+    user_settings = _load_user_lightmem_settings(user_id)
+    plan_memory_enabled = _plan_memory_enabled(plan, user_settings=user_settings)
 
     try:
         session = _resolve_session(

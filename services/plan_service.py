@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any, Dict, Literal, Mapping, MutableMapping, Optional, Sequence
+from typing import Any, Dict, Iterable, Literal, Mapping, MutableMapping, Optional, Sequence
 
 from fastapi import Request
 
@@ -70,6 +70,32 @@ class PlanMemoryFlags:
         }
 
 
+@dataclass(slots=True)
+class PlanTrialState:
+    """Representation of the optional trial period."""
+
+    tier: PlanTier = "pro"
+    duration_days: int = 7
+    started_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    used: bool = False
+
+    def is_active(self, *, at: Optional[datetime] = None) -> bool:
+        if not self.started_at or not self.ends_at:
+            return False
+        reference = at or datetime.now(timezone.utc)
+        return self.started_at <= reference < self.ends_at
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "tier": self.tier,
+            "durationDays": self.duration_days,
+            "startedAt": self.started_at.isoformat() if self.started_at else None,
+            "endsAt": self.ends_at.isoformat() if self.ends_at else None,
+            "used": self.used,
+        }
+
+
 PLAN_QUOTA_PRESETS: Mapping[str, PlanQuota] = {
     "free": PlanQuota(chat_requests_per_day=20, rag_top_k=4, self_check_enabled=False, peer_export_row_limit=0),
     "pro": PlanQuota(chat_requests_per_day=500, rag_top_k=6, self_check_enabled=True, peer_export_row_limit=100),
@@ -94,7 +120,8 @@ class PersistedPlanSettings:
     updated_by: Optional[str]
     change_note: Optional[str]
     checkout_requested: bool = False
-    memory_flags: PlanMemoryFlags = PlanMemoryFlags()
+    memory_flags: PlanMemoryFlags = field(default_factory=PlanMemoryFlags)
+    trial_state: PlanTrialState = field(default_factory=PlanTrialState)
 
 
 @dataclass(slots=True)
@@ -102,6 +129,7 @@ class PlanContext:
     """Resolved plan metadata stored on the request."""
 
     tier: PlanTier
+    base_tier: PlanTier
     expires_at: Optional[datetime]
     entitlements: frozenset[str]
     quota: PlanQuota
@@ -112,6 +140,12 @@ class PlanContext:
     memory_watchlist_enabled: bool = False
     memory_digest_enabled: bool = False
     memory_chat_enabled: bool = False
+    trial_tier: Optional[PlanTier] = None
+    trial_starts_at: Optional[datetime] = None
+    trial_ends_at: Optional[datetime] = None
+    trial_duration_days: Optional[int] = None
+    trial_active: bool = False
+    trial_used: bool = False
 
     def allows(self, entitlement: str) -> bool:
         return entitlement in self.entitlements
@@ -132,6 +166,18 @@ class PlanContext:
             "watchlist": self.memory_watchlist_enabled,
             "digest": self.memory_digest_enabled,
             "chat": self.memory_chat_enabled,
+        }
+
+    def trial_payload(self) -> Optional[Mapping[str, Any]]:
+        if not (self.trial_tier or self.trial_active or self.trial_used):
+            return None
+        return {
+            "tier": self.trial_tier or "pro",
+            "startsAt": self.trial_starts_at.isoformat() if self.trial_starts_at else None,
+            "endsAt": self.trial_ends_at.isoformat() if self.trial_ends_at else None,
+            "durationDays": self.trial_duration_days,
+            "active": self.trial_active,
+            "used": self.trial_used,
         }
 
 
@@ -175,6 +221,40 @@ def _parse_memory_flags(payload: Optional[Mapping[str, Any]]) -> PlanMemoryFlags
         digest_enabled=bool(payload.get("digest")),
         chat_enabled=bool(payload.get("chat")),
     )
+
+
+def _parse_trial_state(payload: Optional[Mapping[str, Any]]) -> PlanTrialState:
+    if not isinstance(payload, Mapping):
+        return PlanTrialState()
+    tier = _normalize_plan_tier(payload.get("tier"))
+    duration = payload.get("durationDays")
+    try:
+        duration_days = int(duration) if duration is not None else 7
+        if duration_days <= 0:
+            duration_days = 7
+    except (TypeError, ValueError):
+        duration_days = 7
+    started_at = _parse_iso_datetime(payload.get("startedAt"))
+    ends_at = _parse_iso_datetime(payload.get("endsAt"))
+    return PlanTrialState(
+        tier=tier,
+        duration_days=duration_days,
+        started_at=started_at,
+        ends_at=ends_at,
+        used=bool(payload.get("used")),
+    )
+
+
+def _feature_flags_from_entitlements(entitlements: Iterable[str]) -> Dict[str, bool]:
+    ent_set = {item.strip() for item in entitlements if item.strip()}
+    return {
+        "search.compare": "search.compare" in ent_set,
+        "search.alerts": "search.alerts" in ent_set,
+        "search.export": "search.export" in ent_set,
+        "evidence.inline_pdf": "evidence.inline_pdf" in ent_set,
+        "evidence.diff": "evidence.diff" in ent_set,
+        "timeline.full": "timeline.full" in ent_set,
+    }
 
 
 def _plan_settings_path() -> Path:
@@ -303,10 +383,10 @@ def _apply_quota_overrides(base: PlanQuota, overrides: Mapping[str, Any], *, str
 
 def _load_plan_settings(*, reload: bool = False) -> Optional[PersistedPlanSettings]:
     global _PLAN_SETTINGS_CACHE
+    path = _plan_settings_path()
     if _PLAN_SETTINGS_CACHE is not None and not reload:
         return _PLAN_SETTINGS_CACHE
 
-    path = _plan_settings_path()
     if not path.exists():
         _PLAN_SETTINGS_CACHE = None
         return None
@@ -338,6 +418,7 @@ def _load_plan_settings(*, reload: bool = False) -> Optional[PersistedPlanSettin
     )
 
     memory_flags = _parse_memory_flags(payload.get("memoryFlags"))
+    trial_state = _parse_trial_state(payload.get("trial"))
 
     settings = PersistedPlanSettings(
         plan_tier=tier,
@@ -349,6 +430,7 @@ def _load_plan_settings(*, reload: bool = False) -> Optional[PersistedPlanSettin
         change_note=_normalize_note(payload.get("changeNote")),
         checkout_requested=payload.get("checkoutRequested") is True,
         memory_flags=memory_flags,
+        trial_state=trial_state,
     )
     _PLAN_SETTINGS_CACHE = settings
     return settings
@@ -366,6 +448,7 @@ def _store_plan_settings(settings: PersistedPlanSettings) -> None:
         "changeNote": settings.change_note,
         "checkoutRequested": settings.checkout_requested,
         "memoryFlags": settings.memory_flags.to_dict(),
+        "trial": settings.trial_state.to_dict(),
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -397,15 +480,22 @@ def _build_plan_context(
     fallback_tier = (
         settings.plan_tier if settings and not has_header_override else env_str("DEFAULT_PLAN_TIER", "free")
     )
-    tier = _normalize_plan_tier(header_tier or fallback_tier)
+    base_tier = _normalize_plan_tier(header_tier or fallback_tier)
+
+    trial_state = settings.trial_state if settings else PlanTrialState()
+    trial_active = False
+    effective_tier = base_tier
+    if not has_header_override and trial_state.is_active():
+        effective_tier = trial_state.tier
+        trial_active = True
 
     env_entitlements = _parse_entitlements(env_str("DEFAULT_PLAN_ENTITLEMENTS", ""))
     header_entitlement_set = _parse_entitlements(header_entitlements)
 
-    if settings and not has_header_override and settings.entitlements:
+    if settings and not has_header_override and settings.entitlements and not trial_active:
         entitlements = set(settings.entitlements)
     else:
-        entitlements = set(PLAN_BASE_ENTITLEMENTS.get(tier, PLAN_BASE_ENTITLEMENTS["free"]))
+        entitlements = set(PLAN_BASE_ENTITLEMENTS.get(effective_tier, PLAN_BASE_ENTITLEMENTS["free"]))
     entitlements.update(env_entitlements)
     entitlements.update(header_entitlement_set)
 
@@ -419,7 +509,7 @@ def _build_plan_context(
     else:
         expires_at = _parse_iso_datetime(env_str("DEFAULT_PLAN_EXPIRES_AT"))
 
-    quota = PLAN_QUOTA_PRESETS.get(tier, PLAN_QUOTA_PRESETS["free"])
+    quota = PLAN_QUOTA_PRESETS.get(effective_tier, PLAN_QUOTA_PRESETS["free"])
     if settings and not has_header_override:
         quota = _apply_quota_overrides(quota, settings.quota.to_dict())
 
@@ -433,7 +523,8 @@ def _build_plan_context(
     memory_flags = settings.memory_flags if settings else PlanMemoryFlags()
 
     return PlanContext(
-        tier=tier,
+        tier=effective_tier,
+        base_tier=base_tier,
         expires_at=expires_at,
         entitlements=frozenset(entitlements),
         quota=quota,
@@ -444,6 +535,12 @@ def _build_plan_context(
         memory_watchlist_enabled=memory_flags.watchlist_enabled,
         memory_digest_enabled=memory_flags.digest_enabled,
         memory_chat_enabled=memory_flags.chat_enabled,
+        trial_tier=trial_state.tier,
+        trial_starts_at=trial_state.started_at,
+        trial_ends_at=trial_state.ends_at,
+        trial_duration_days=trial_state.duration_days,
+        trial_active=trial_active,
+        trial_used=trial_state.used,
     )
 
 
@@ -455,6 +552,11 @@ def resolve_plan_context(request: Request) -> PlanContext:
         header_expires_at=request.headers.get("x-plan-expires-at"),
         header_quota=request.headers.get("x-plan-quota"),
     )
+
+
+def get_active_plan_context() -> PlanContext:
+    """Return the persisted plan context for background workers."""
+    return _build_plan_context()
 
 
 def update_plan_context(
@@ -500,6 +602,7 @@ def update_plan_context(
         checkout_requested = True
 
     memory_settings = _parse_memory_flags(memory_flags)
+    trial_state = existing_settings.trial_state if existing_settings else PlanTrialState()
 
     settings = PersistedPlanSettings(
         plan_tier=tier,
@@ -511,6 +614,7 @@ def update_plan_context(
         change_note=_normalize_note(change_note),
         checkout_requested=checkout_requested,
         memory_flags=memory_settings,
+        trial_state=trial_state,
     )
 
     try:
@@ -543,6 +647,97 @@ def update_plan_context(
     )
 
     _load_plan_settings(reload=True)
+    return _build_plan_context()
+
+
+def list_plan_presets() -> Sequence[Mapping[str, Any]]:
+    """Return canonical plan presets (entitlements, feature flags, quotas) for each tier."""
+
+    presets: list[Mapping[str, Any]] = []
+    for tier in SUPPORTED_PLAN_TIERS:
+        entitlements = sorted(PLAN_BASE_ENTITLEMENTS.get(tier, ()))
+        quota = PLAN_QUOTA_PRESETS.get(tier, PLAN_QUOTA_PRESETS["free"])
+        presets.append(
+            {
+                "tier": tier,
+                "entitlements": entitlements,
+                "feature_flags": _feature_flags_from_entitlements(entitlements),
+                "quota": quota.to_dict(),
+            }
+        )
+    return presets
+
+
+def start_plan_trial(
+    *,
+    updated_by: Optional[str],
+    target_tier: PlanTier = "pro",
+    duration_days: Optional[int] = None,
+) -> PlanContext:
+    """Activate the Pro trial window if it's available."""
+
+    settings = _load_plan_settings()
+    actor = _normalize_actor(updated_by)
+    if not settings:
+        # bootstrap plan settings from the current resolved context so that trial activation works on first run
+        current = _build_plan_context()
+        settings = PersistedPlanSettings(
+            plan_tier=_normalize_plan_tier(current.base_tier),
+            entitlements=tuple(sorted(current.entitlements)),
+            quota=PlanQuota(
+                chat_requests_per_day=current.quota.chat_requests_per_day,
+                rag_top_k=current.quota.rag_top_k,
+                self_check_enabled=current.quota.self_check_enabled,
+                peer_export_row_limit=current.quota.peer_export_row_limit,
+            ),
+            expires_at=current.expires_at,
+            updated_at=datetime.now(timezone.utc),
+            updated_by=actor or "trial-bootstrap",
+            change_note="trial_bootstrap",
+            checkout_requested=False,
+            memory_flags=PlanMemoryFlags(
+                watchlist_enabled=current.memory_watchlist_enabled,
+                digest_enabled=current.memory_digest_enabled,
+                chat_enabled=current.memory_chat_enabled,
+            ),
+            trial_state=PlanTrialState(),
+        )
+        _store_plan_settings(settings)
+
+    trial = settings.trial_state or PlanTrialState()
+    if trial.is_active():
+        raise ValueError("Trial is already active.")
+    if trial.used:
+        raise ValueError("Trial has already been used.")
+
+    now = datetime.now(timezone.utc)
+    duration = duration_days if duration_days and duration_days > 0 else trial.duration_days or 7
+
+    settings.trial_state = PlanTrialState(
+        tier=target_tier,
+        duration_days=duration,
+        started_at=now,
+        ends_at=now + timedelta(days=duration),
+        used=True,
+    )
+    settings.updated_at = now
+    settings.updated_by = actor
+    settings.change_note = "trial_started"
+
+    _store_plan_settings(settings)
+
+    append_audit_log(
+        filename="plan_audit.jsonl",
+        actor=settings.updated_by or "self-service",
+        action="plan_trial_started",
+        payload={
+            "tier": target_tier,
+            "durationDays": duration,
+            "startsAt": settings.trial_state.started_at.isoformat() if settings.trial_state.started_at else None,
+            "endsAt": settings.trial_state.ends_at.isoformat() if settings.trial_state.ends_at else None,
+        },
+    )
+
     return _build_plan_context()
 
 

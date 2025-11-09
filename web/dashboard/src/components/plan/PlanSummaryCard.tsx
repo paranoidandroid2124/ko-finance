@@ -1,9 +1,12 @@
 "use client";
 
 import clsx from "classnames";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 
 import { usePlanStore, type PlanTier } from "@/store/planStore";
+import { useToastStore } from "@/store/toastStore";
+import { getTrialCountdownLabel } from "@/lib/trialUtils";
 
 const PLAN_BADGE_TONE: Record<PlanTier, string> = {
   free: "bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-200",
@@ -61,15 +64,47 @@ type PlanSummaryCardProps = {
 };
 
 export function PlanSummaryCard({ className }: PlanSummaryCardProps) {
-  const { planTier, expiresAt, entitlements, quota, loading, initialized, error } = usePlanStore((state) => ({
-    planTier: state.planTier,
-    expiresAt: state.expiresAt,
-    entitlements: state.entitlements,
-    quota: state.quota,
-    loading: state.loading,
-    initialized: state.initialized,
-    error: state.error,
-  }));
+  const router = useRouter();
+  const pushToast = useToastStore((state) => state.show);
+  const { planTier, expiresAt, entitlements, quota, loading, initialized, error, trial, trialStarting } = usePlanStore(
+    (state) => ({
+      planTier: state.planTier,
+      expiresAt: state.expiresAt,
+      entitlements: state.entitlements,
+      quota: state.quota,
+      loading: state.loading,
+      initialized: state.initialized,
+      error: state.error,
+      trial: state.trial,
+      trialStarting: state.trialStarting,
+    }),
+  );
+  const startTrial = usePlanStore((state) => state.startTrial);
+
+  const trialActive = Boolean(trial?.active);
+  const trialAvailable = Boolean(trial && !trial.active && !trial.used);
+  const trialDurationDays = trial?.durationDays ?? 7;
+  const trialEndsLabel = trialActive ? getTrialCountdownLabel(trial?.endsAt) : null;
+
+  const handleStartTrial = useCallback(async () => {
+    try {
+      await startTrial();
+      pushToast({
+        id: "plan-trial-started",
+        title: "Pro í”Œëžœ ì²´í—˜ì„ ì‹œìž‘í•˜ì˜¤ìš”!",
+        message: `${trialDurationDays}ì¼ ë™ì•ˆ ì´ë©”ì¼Â·ì›¹í›… ì±„ë„ì™„ì— ëª¨ë“  í”Œëžœ ê¸°ëŠ¥ì„ ê²°ì œ ì—†ì´ ë°”ë¡œ ì“° ìˆ˜ ìžˆì–´ìš”.`,
+        intent: "success",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "ë¬´ë£Œ í²´í—˜ì„ ì‹œìž‘í•˜ì§€ ëª»í–ˆì–´ìš”.";
+      pushToast({
+        id: "plan-trial-failed",
+        title: "í²´í—˜ ì‹œìž‘ì´ ì‹œë„ë˜ì§€ ëª»í–ˆì–´ìš”.",
+        message,
+        intent: "error",
+      });
+    }
+  }, [pushToast, startTrial, trialDurationDays]);
 
   const content = useMemo(() => {
     if (!initialized || loading) {
@@ -144,7 +179,48 @@ export function PlanSummaryCard({ className }: PlanSummaryCardProps) {
           </div>
         </header>
 
-        <section>
+        <section className="space-y-3">
+          {trialActive ? (
+            <div className="rounded-lg border border-primary/40 bg-primary/10 p-4 text-sm text-text-primaryLight dark:border-primary.dark/40 dark:bg-primary.dark/15 dark:text-white">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold">Pro 플랜 체험을 이용 중이에요</p>
+                  <p className="text-xs text-text-secondaryLight dark:text-white/70">
+                    {trialEndsLabel ? `${trialEndsLabel} 후 만료됩니다.` : "종료일 정보가 곧 업데이트됩니다."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-lg border border-white/60 bg-white/10 px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+                  onClick={() => router.push("/settings?panel=plan&tier=pro")}
+                >
+                  플랜 관리
+                </button>
+              </div>
+            </div>
+          ) : trialAvailable ? (
+            <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4 text-sm text-text-secondaryLight dark:border-primary.dark/40 dark:bg-primary.dark/10">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">
+                    Pro {trialDurationDays}일 무료 체험이 준비돼 있어요
+                  </p>
+                  <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                    검색·알림·PDF 열람 등 상위 권한을 결제 없이 바로 체험해볼 수 있어요.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleStartTrial}
+                  disabled={trialStarting}
+                  className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-primary-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {trialStarting ? "체험 시작 중..." : "무료 체험 시작"}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           <h3 className="text-xs font-semibold uppercase tracking-wide text-text-tertiaryLight dark:text-text-tertiaryDark">
             포함된 권한
           </h3>
@@ -180,7 +256,22 @@ export function PlanSummaryCard({ className }: PlanSummaryCardProps) {
         </section>
       </>
     );
-  }, [initialized, loading, error, planTier, expiresAt, entitlements, quota]);
+  }, [
+    initialized,
+    loading,
+    error,
+    planTier,
+    expiresAt,
+    entitlements,
+    quota,
+    trialActive,
+    trialAvailable,
+    trialDurationDays,
+    trialEndsLabel,
+    handleStartTrial,
+    trialStarting,
+    router,
+  ]);
 
   return (
     <section

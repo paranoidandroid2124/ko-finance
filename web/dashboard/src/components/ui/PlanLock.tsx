@@ -2,9 +2,19 @@
 
 import clsx from "classnames";
 import { Crown, Lock, Sparkles } from "lucide-react";
-import { useEffect, useMemo, type ComponentType } from "react";
+import { useEffect, useMemo, useCallback, type ComponentType } from "react";
+import { useRouter } from "next/navigation";
 import { logEvent } from "@/lib/telemetry";
-import { isTierAtLeast, nextTier, type PlanTier, usePlanTier } from "@/store/planStore";
+import {
+  isTierAtLeast,
+  nextTier,
+  type PlanTier,
+  usePlanTier,
+  usePlanTrial,
+  usePlanTrialRequestState,
+  usePlanStore,
+} from "@/store/planStore";
+import { useToastStore } from "@/store/toastStore";
 
 type PlanLockProps = {
   requiredTier: PlanTier;
@@ -51,9 +61,17 @@ export function PlanLock({
   children,
   showBadge = true,
 }: PlanLockProps) {
+  const router = useRouter();
   const tierFromStore = usePlanTier();
   const tier = currentTier ?? tierFromStore;
   const isUnlocked = isTierAtLeast(tier, requiredTier);
+  const pushToast = useToastStore((state) => state.show);
+  const trial = usePlanTrial();
+  const { trialStarting } = usePlanTrialRequestState();
+  const startTrial = usePlanStore((state) => state.startTrial);
+  const trialEligible = Boolean(
+    trial && !trial.active && !trial.used && requiredTier === "pro" && tier === "free",
+  );
 
   const Icon = PLAN_ICON[requiredTier] ?? Lock;
   const iconTone = PLAN_ICON_TONE[requiredTier] ?? PLAN_ICON_TONE.pro;
@@ -72,6 +90,35 @@ export function PlanLock({
       logEvent("plan.lock.view", { requiredTier, currentTier: tier });
     }
   }, [isUnlocked, requiredTier, tier]);
+
+  const defaultUpgrade = useCallback(
+    (tier: PlanTier) => {
+      router.push(`/settings?panel=plan&tier=${tier}`);
+    },
+    [router],
+  );
+
+  const upgradeHandler = onUpgrade ?? defaultUpgrade;
+  const handleStartTrial = useCallback(async () => {
+    try {
+      logEvent("plan.lock.trial_click", { requiredTier, currentTier: tier });
+      await startTrial();
+      pushToast({
+        id: "plan-lock-trial-started",
+        title: "Pro 무료 체험을 시작했어요",
+        message: "7일 동안 모든 Pro 기능을 결제 없이 이용할 수 있어요.",
+        intent: "success",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "무료 체험을 시작하지 못했어요.";
+      pushToast({
+        id: "plan-lock-trial-failed",
+        title: "무료 체험을 시작할 수 없어요",
+        message,
+        intent: "error",
+      });
+    }
+  }, [pushToast, requiredTier, startTrial, tier]);
 
   if (isUnlocked) {
     return children ? <>{children}</> : null;
@@ -95,18 +142,28 @@ export function PlanLock({
         ) : null}
       </div>
       <p className="mt-2 text-xs leading-5">{detail}</p>
-      {onUpgrade ? (
+      <div className="mt-3 flex flex-wrap gap-2">
+        {trialEligible ? (
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 rounded-lg border border-primary/60 bg-white px-3 py-2 text-xs font-semibold text-primary shadow-sm transition-motion-fast hover:bg-primary/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-60 dark:bg-transparent dark:text-primary.dark dark:hover:bg-primary.dark/20"
+            onClick={handleStartTrial}
+            disabled={trialStarting}
+          >
+            {trialStarting ? "체험 시작 중..." : "7일 무료 체험"}
+          </button>
+        ) : null}
         <button
           type="button"
-          className="mt-3 inline-flex items-center gap-2 rounded-lg border border-primary bg-primary px-3 py-2 text-xs font-semibold text-white transition-motion-fast hover:bg-primary-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          className="inline-flex items-center gap-2 rounded-lg border border-primary bg-primary px-3 py-2 text-xs font-semibold text-white transition-motion-fast hover:bg-primary-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           onClick={() => {
             logEvent("plan.lock.upgrade_click", { requiredTier, currentTier: tier, nextTier: next });
-            onUpgrade(requiredTier);
+            upgradeHandler(requiredTier);
           }}
         >
           {next === "enterprise" ? "전용 플랜 결제하기" : "플랜 업그레이드 안내 받기"}
         </button>
-      ) : null}
+      </div>
       {children ? <div className="mt-3">{children}</div> : null}
       <p className="mt-3 text-[11px] text-text-tertiaryLight dark:text-text-tertiaryDark">
         지금은{" "}

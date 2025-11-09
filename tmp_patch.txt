@@ -1,0 +1,8 @@
+*** Begin Patch
+*** Update File: .env
+@@
+ LIGHTMEM_RATE_LIMIT_SLACK_WEBHOOK=""
+ LIGHTMEM_RATE_LIMIT_ALERT_COOLDOWN_SECONDS=300
++# Ops / internal tooling
++OPS_ACCESS_TOKEN=""
+*** End Patch

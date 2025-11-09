@@ -33,6 +33,8 @@ from services.alert_service import (
 )
 from services.alert_channel_registry import list_channel_definitions
 from services import watchlist_service
+from services.user_settings_service import UserLightMemSettings
+from services import lightmem_gate
 from services.plan_service import PlanContext
 from web.deps import get_plan_context
 
@@ -79,6 +81,29 @@ def _normalize_query_list(values: Optional[List[str]]) -> List[str]:
             if trimmed and trimmed not in normalized:
                 normalized.append(trimmed)
     return normalized
+
+
+def _default_lightmem_user_id() -> Optional[uuid.UUID]:
+    return lightmem_gate.default_user_id()
+
+
+def _resolve_lightmem_user_id(value: Optional[str]) -> Optional[uuid.UUID]:
+    if value:
+        return _parse_uuid(value)
+    return _default_lightmem_user_id()
+
+
+def _load_user_lightmem_settings(
+    user_id: Optional[uuid.UUID],
+) -> Optional[UserLightMemSettings]:
+    return lightmem_gate.load_user_settings(user_id)
+
+
+def _watchlist_memory_enabled(
+    plan: PlanContext,
+    user_settings: Optional[UserLightMemSettings],
+) -> bool:
+    return lightmem_gate.watchlist_enabled(plan, user_settings)
 
 
 def _owner_filters(user_id: Optional[uuid.UUID], org_id: Optional[uuid.UUID]) -> dict:
@@ -224,13 +249,14 @@ def watchlist_radar(
 ) -> WatchlistRadarResponse:
     window_minutes = max(min(int(window_minutes or 1440), 7 * 24 * 60), 5)
     limit = max(min(int(limit or 100), 200), 1)
-    user_id = _parse_uuid(x_user_id)
+    user_id = _resolve_lightmem_user_id(x_user_id)
     org_id = _parse_uuid(x_org_id)
     owner_filters = _owner_filters(user_id, org_id)
     tenant_token = str(org_id) if org_id else None
     user_token = str(user_id) if user_id else None
     session_key = f"watchlist:radar:{tenant_token or user_token or 'global'}"
-    plan_memory_enabled = plan.tier in {"pro", "enterprise"}
+    user_memory_settings = _load_user_lightmem_settings(user_id)
+    plan_memory_enabled = _watchlist_memory_enabled(plan, user_memory_settings)
     parsed_channels = _normalize_query_list(channels)
     parsed_event_types = _normalize_query_list(event_types)
     parsed_tickers = _normalize_query_list(tickers)
@@ -276,13 +302,14 @@ def watchlist_dispatch(
 ) -> WatchlistDispatchResponse:
     window_minutes = max(min(int(payload.windowMinutes or 1440), 7 * 24 * 60), 5)
     limit = max(min(int(payload.limit or 20), 200), 1)
-    user_id = _parse_uuid(x_user_id)
+    user_id = _resolve_lightmem_user_id(x_user_id)
     org_id = _parse_uuid(x_org_id)
     owner_filters = _owner_filters(user_id, org_id)
     tenant_token = str(org_id) if org_id else None
     user_token = str(user_id) if user_id else None
     session_key = f"watchlist:dispatch:{tenant_token or user_token or 'global'}"
-    plan_memory_enabled = plan.tier in {"pro", "enterprise"}
+    user_memory_settings = _load_user_lightmem_settings(user_id)
+    plan_memory_enabled = _watchlist_memory_enabled(plan, user_memory_settings)
     result = watchlist_service.dispatch_watchlist_digest(
         db,
         window_minutes=window_minutes,

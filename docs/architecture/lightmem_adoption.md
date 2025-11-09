@@ -5,6 +5,14 @@
 - **참고 자료**: LightMem(https://github.com/zjunlp/LightMem) 구조 및 논문 `Lightweight and Efficient Memory-Augmented Generation (arXiv:2510.18866)`.
 - **핵심 질문**: 토큰 비용을 절감하면서도 사용자 맞춤형 응답/다이제스트 품질을 높일 수 있는가? 개인정보·보안 리스크는 제어 가능한가?
 
+## 진행 현황 (2025-11)
+- PlanSettings & Admin Quick Adjust UI가 LightMem watchlist/digest/chat 토글을 저장하고 `/api/v1/user-settings/lightmem`이 사용자 opt-in을 관리한다.
+- FastAPI 라우터와 Celery 경로가 공통 `services.lightmem_gate`로 플랜/사용자 권한을 판정한다.
+- `services/daily_brief_service.build_digest_preview()`가 Celery `m4.send_filing_digest`에서도 그대로 사용되어 프리뷰·실발송 데이터가 일치한다.
+- Digest 프리뷰 API 및 Celery 경로에 관측 로그가 추가되어 뉴스/워치리스트 건수, LLM 노트 유무, 메모리 허용 여부를 추적한다.
+- Celery beat 스케줄이 `timeframe=daily/weekly` 파라미터를 사용해 주간 다이제스트까지 자동 발송한다.
+- Phase 5 인증 개편(자체 이메일·비밀번호, FastAPI/Next.js Credential Provider, NHN Cloud Email REST, 인증 전용 Redis 레이트리밋) 문서와 코드가 반영돼 핵심 백엔드 기능을 확보했다.
+
 ---
 
 ## 기대 효과 (Strengths)
@@ -22,6 +30,33 @@
 
 4. **Plan Tier 차별화**
    - Pro/Enterprise 플랜에서 LightMem 기능을 활성화해 서비스 밸류 추가.
+
+---
+
+## 향후 우선 과제 (Backlog)
+1. **Rate limit & 큐 분리**
+   - Redis 기반 토큰 버킷으로 LLM 호출·LightMem compose 요청을 분당/초당 제한하고, hit 시 즉시 폴백을 반환한다.
+   - 인증 트래픽은 AUTH_RATE_LIMIT_REDIS_URL 기반 Redis를 사용하도록 분리해 LightMem과 공유되지 않도록 했고, 향후 지표/알림을 분리해 운영한다.
+   - Celery에서 watchlist/digest/chat 전용 큐를 분리하고 워커 수·prefetch 한도를 기능별로 조정한다.
+
+2. **API 키 분할·로테이션**
+   - 기능별(다이제스트, 워치리스트, 챗봇)로 별도의 API 키를 사용하고, 주/백업 키 자동 failover 로직을 추가한다.
+   - Secret Manager/Helm values에 키 목록을 등록해 CI/CD에서 롤링 교체 가능하도록 표준화한다.
+
+3. **캐시·폴백 계층**
+   - Digest/Chat에 Redis TTL 캐시를 도입해 동일 사용자 요청 반복 시 LLM 재호출을 줄이고, rate limit hit 시 템플릿 기반 폴백을 제공한다.
+   - Watchlist 개인화 노트를 세션 캐시에 저장해 Celery 재시도에서도 재사용한다.
+
+4. **관측·모니터링**
+   - Prometheus 또는 Langfuse에 LightMem 허용 여부, 토큰 사용량, rate limit hit, 폴백 비율을 적재하고 Admin Ops 대시보드에서 확인한다.
+   - Plan/user opt-in 변경 시 Audit 로그를 남겨 추후 감사에 대비한다.
+
+5. **테스트·시뮬레이션**
+   - 플랜×사용자 opt-in 조합별 LightMem 동작을 자동 검증하는 단위/통합 테스트를 확장하고, Celery digest 파이프라인 E2E 시나리오를 추가한다.
+
+6. **문서·환경 구성**
+   - 새 환경 변수(기본 사용자 ID, rate limit 설정, API 키 목록 등)를 Helm/Secret Manager/README에 반영하고 운영자가 값을 관리할 절차를 정의한다.
+   - 개인정보/데이터 보존 정책 문서를 최신 상태로 유지한다.
 
 ---
 
@@ -88,12 +123,12 @@
 ---
 
 ## 체크 리스트 (도입/운영 전에 확인)
-- [ ] Plan Tier & Feature flag 설계 (Pro 이상만 사용).
-- [ ] Redis/Qdrant가 준비되었는지 health check.
-- [ ] 압축 실패/fallback 처리 로직 구현.
-- [ ] 개인정보 동의/보관/삭제 정책 문서에 반영.
-- [ ] AES 암호화 + 키 관리 체계 마련(현재는 환경 변수, GCP 전환 시 Secret Manager 연동).
-- [ ] Audit log & Langfuse log 연동.
+- [x] Plan Tier & Feature flag 설계 (Pro 이상만 사용).
+- [ ] Redis/Qdrant 준비 상태 health check 및 모니터링.
+- [ ] Rate limit / fallback 처리 로직 구현.
+- [ ] 개인정보 동의/보관/삭제 정책 문서에 반영 및 자동화.
+- [ ] AES 암호화 + 키 관리 체계 마련(환경 변수 → Secret Manager 연동).
+- [ ] Audit log & Langfuse log 연동, 메트릭 대시보드 구축.
 - [ ] nightly batch(Celery) 스케줄링 구성.
 - [ ] 운영자 전용 Admin UI 분리(별도 도메인/Single Sign-On).
 - [ ] 토큰 절감/응답 품질 A/B 테스트 계획 수립.

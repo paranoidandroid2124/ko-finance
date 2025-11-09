@@ -38,8 +38,7 @@ DROP TYPE IF EXISTS alert_status;
 - Celery 워커/beat 재가동, `alerts.evaluate_rules` 스케줄이 1분 주기로 실행되는지 로그 확인.
 - Health query: `SELECT status, COUNT(*) FROM alert_deliveries GROUP BY 1;`
 - Update `.env` on staging/production with:
-  - `ALERT_EMAIL_FROM`, `SENDGRID_API_KEY`
+  - `ALERT_EMAIL_FROM`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`
   - `ALERT_SLACK_WEBHOOK_URL`
   - `PAGERDUTY_ROUTING_KEY`
   - `ALERT_REQUEST_TIMEOUT`, `ALERT_REQUEST_RETRIES` (optional tuning)
-

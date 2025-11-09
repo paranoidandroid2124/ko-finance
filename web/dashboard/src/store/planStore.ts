@@ -28,6 +28,28 @@ export type PlanQuota = {
   peerExportRowLimit: number | null;
 };
 
+export type PlanTrialState = {
+  tier: PlanTier;
+  startsAt: string | null;
+  endsAt: string | null;
+  durationDays?: number | null;
+  active: boolean;
+  used: boolean;
+};
+
+export type PlanTrialStartInput = {
+  actor?: string | null;
+  durationDays?: number | null;
+  tier?: PlanTier;
+};
+
+export type PlanPreset = {
+  tier: PlanTier;
+  entitlements: string[];
+  featureFlags: PlanFeatureFlags;
+  quota: PlanQuota;
+};
+
 export type PlanContextPayload = {
   planTier: PlanTier;
   expiresAt?: string | null;
@@ -39,6 +61,7 @@ export type PlanContextPayload = {
   updatedBy?: string | null;
   changeNote?: string | null;
   checkoutRequested?: boolean;
+  trial?: PlanTrialState | null;
 };
 
 export type PlanContextUpdateInput = {
@@ -68,9 +91,17 @@ type PlanStoreState = {
   saving: boolean;
   error?: string | null;
   saveError?: string | null;
+  trial: PlanTrialState | null;
+  trialStarting: boolean;
+  trialError?: string | null;
+  presets: Record<PlanTier, PlanPreset> | null;
+  presetsLoading: boolean;
+  presetsError?: string | null;
   fetchPlan: (options?: { signal?: AbortSignal }) => Promise<void>;
   setPlanFromServer: (payload: PlanContextPayload) => void;
   savePlan: (input: PlanContextUpdateInput) => Promise<PlanContextPayload>;
+  startTrial: (input?: PlanTrialStartInput) => Promise<PlanContextPayload>;
+  fetchPlanPresets: (options?: { signal?: AbortSignal }) => Promise<void>;
 };
 
 const PLAN_TIER_ORDER: Record<PlanTier, number> = {
@@ -112,6 +143,14 @@ const DEFAULT_PLAN_PAYLOAD: PlanContextPayload = {
   updatedBy: null,
   changeNote: null,
   checkoutRequested: false,
+  trial: {
+    tier: 'pro',
+    startsAt: null,
+    endsAt: null,
+    durationDays: 7,
+    active: false,
+    used: false,
+  },
 };
 
 function mergeFeatureFlags(flags?: PlanFeatureFlags): PlanFeatureFlags {
@@ -125,6 +164,38 @@ function mergeMemoryFlags(flags?: PlanMemoryFlags): PlanMemoryFlags {
 function mergeQuota(quota?: PlanQuota): PlanQuota {
   return { ...DEFAULT_QUOTA, ...(quota ?? {}) };
 }
+
+const DEFAULT_TRIAL_STATE: PlanTrialState = {
+  tier: 'pro',
+  startsAt: null,
+  endsAt: null,
+  durationDays: 7,
+  active: false,
+  used: false,
+};
+
+function mergeTrial(trial?: PlanTrialState | null): PlanTrialState {
+  if (!trial) {
+    return { ...DEFAULT_TRIAL_STATE };
+  }
+  return {
+    tier: trial.tier ?? DEFAULT_TRIAL_STATE.tier,
+    startsAt: trial.startsAt ?? null,
+    endsAt: trial.endsAt ?? null,
+    durationDays: trial.durationDays ?? DEFAULT_TRIAL_STATE.durationDays,
+    active: Boolean(trial.active),
+    used: Boolean(trial.used),
+  };
+}
+
+type PlanPresetResponsePayload = {
+  presets: Array<{
+    tier: PlanTier;
+    entitlements?: string[];
+    featureFlags?: PlanFeatureFlags;
+    quota?: PlanQuota;
+  }>;
+};
 
 function uniqueEntitlements(entitlements?: string[]): string[] {
   if (!entitlements?.length) {
@@ -149,11 +220,13 @@ function mapPayload(payload: PlanContextPayload) {
     expiresAt: payload.expiresAt ?? null,
     entitlements: uniqueEntitlements(payload.entitlements),
     featureFlags: mergeFeatureFlags(payload.featureFlags),
+    memoryFlags: mergeMemoryFlags(payload.memoryFlags),
     quota: mergeQuota(payload.quota),
     updatedAt: payload.updatedAt ?? null,
     updatedBy: payload.updatedBy ?? null,
     changeNote: payload.changeNote ?? null,
     checkoutRequested: payload.checkoutRequested ?? false,
+    trial: mergeTrial(payload.trial),
   };
 }
 
@@ -162,6 +235,7 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
   expiresAt: DEFAULT_PLAN_PAYLOAD.expiresAt,
   entitlements: DEFAULT_PLAN_PAYLOAD.entitlements,
   featureFlags: DEFAULT_FEATURE_FLAGS,
+  memoryFlags: DEFAULT_MEMORY_FLAGS,
   quota: DEFAULT_QUOTA,
   updatedAt: DEFAULT_PLAN_PAYLOAD.updatedAt,
   updatedBy: DEFAULT_PLAN_PAYLOAD.updatedBy,
@@ -172,6 +246,12 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
   saving: false,
   error: undefined,
   saveError: undefined,
+  trial: mergeTrial(DEFAULT_PLAN_PAYLOAD.trial),
+  trialStarting: false,
+  trialError: undefined,
+  presets: null,
+  presetsLoading: false,
+  presetsError: undefined,
 
   async fetchPlan(options) {
     if (get().loading) {
@@ -204,6 +284,7 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
         expiresAt: mapped.expiresAt,
         entitlements: mapped.entitlements,
         featureFlags: mapped.featureFlags,
+        memoryFlags: mapped.memoryFlags,
         quota: mapped.quota,
         updatedAt: mapped.updatedAt,
         updatedBy: mapped.updatedBy,
@@ -214,7 +295,15 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
         saving: false,
         error: undefined,
         saveError: undefined,
+        trial: mapped.trial,
+        trialStarting: false,
+        trialError: undefined,
       });
+      if (!get().presets && !get().presetsLoading) {
+        void get()
+          .fetchPlanPresets(options)
+          .catch(() => undefined);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'plan context fetch failed';
       logEvent('plan.context.fetch_failed', { message });
@@ -224,6 +313,7 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
         expiresAt: DEFAULT_PLAN_PAYLOAD.expiresAt,
         entitlements: DEFAULT_PLAN_PAYLOAD.entitlements,
         featureFlags: DEFAULT_FEATURE_FLAGS,
+        memoryFlags: DEFAULT_MEMORY_FLAGS,
         quota: DEFAULT_QUOTA,
         updatedAt: DEFAULT_PLAN_PAYLOAD.updatedAt,
         updatedBy: DEFAULT_PLAN_PAYLOAD.updatedBy,
@@ -234,6 +324,9 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
         saving: false,
         error: message,
         saveError: message,
+        trial: mergeTrial(DEFAULT_PLAN_PAYLOAD.trial),
+        trialStarting: false,
+        trialError: message,
       });
     }
   },
@@ -246,6 +339,7 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
       expiresAt: mapped.expiresAt,
       entitlements: mapped.entitlements,
       featureFlags: mapped.featureFlags,
+      memoryFlags: mapped.memoryFlags,
       quota: mapped.quota,
       updatedAt: mapped.updatedAt,
       updatedBy: mapped.updatedBy,
@@ -256,6 +350,9 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
       saving: false,
       error: undefined,
       saveError: undefined,
+      trial: mapped.trial,
+      trialStarting: false,
+      trialError: undefined,
     });
   },
 
@@ -267,11 +364,13 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
         expiresAt: current.expiresAt ?? null,
         entitlements: current.entitlements,
         featureFlags: current.featureFlags,
+        memoryFlags: current.memoryFlags,
         quota: current.quota,
         updatedAt: current.updatedAt ?? null,
         updatedBy: current.updatedBy ?? null,
         changeNote: current.changeNote ?? null,
         checkoutRequested: current.checkoutRequested,
+        trial: current.trial ?? mergeTrial(DEFAULT_PLAN_PAYLOAD.trial),
       });
     }
     set({ saving: true, saveError: undefined });
@@ -282,6 +381,7 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
       planTier: input.planTier,
       expiresAt: input.expiresAt ?? null,
       entitlements: unique,
+      memoryFlags: input.memoryFlags ?? DEFAULT_MEMORY_FLAGS,
       quota: input.quota,
       updatedBy: input.updatedBy ?? null,
       changeNote: input.changeNote ?? null,
@@ -317,6 +417,7 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
         expiresAt: mapped.expiresAt,
         entitlements: mapped.entitlements,
         featureFlags: mapped.featureFlags,
+        memoryFlags: mapped.memoryFlags,
         quota: mapped.quota,
         updatedAt: mapped.updatedAt,
         updatedBy: mapped.updatedBy ?? body.updatedBy ?? null,
@@ -327,6 +428,9 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
         saving: false,
         error: undefined,
         saveError: undefined,
+        trial: mapped.trial,
+        trialStarting: false,
+        trialError: undefined,
       });
 
       return payload;
@@ -337,9 +441,127 @@ export const usePlanStore = create<PlanStoreState>((set, get) => ({
       throw error instanceof Error ? error : new Error(String(error));
     }
   },
+
+  async startTrial(input) {
+    const { trialStarting } = get();
+    if (trialStarting) {
+      return Promise.reject(new Error('trial request already in progress'));
+    }
+    set({ trialStarting: true, trialError: undefined });
+
+    const baseUrl = resolveApiBase();
+    const payloadBody: Record<string, unknown> = {};
+    if (input?.actor) {
+      payloadBody.actor = input.actor;
+    }
+    if (typeof input?.durationDays === 'number') {
+      payloadBody.durationDays = input.durationDays;
+    }
+    if (input?.tier) {
+      payloadBody.tier = input.tier;
+    }
+
+    try {
+      const response = await fetch(`${baseUrl}/api/v1/plan/trial`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payloadBody),
+      });
+
+      if (!response.ok) {
+        throw new Error(`failed to start plan trial (${response.status})`);
+      }
+
+      const payload = (await response.json()) as PlanContextPayload;
+      const mapped = mapPayload(payload);
+      logEvent('plan.trial.started', {
+        planTier: mapped.planTier,
+        trialTier: mapped.trial.tier,
+        trialActive: mapped.trial.active,
+      });
+
+      set({
+        planTier: mapped.planTier,
+        expiresAt: mapped.expiresAt,
+        entitlements: mapped.entitlements,
+        featureFlags: mapped.featureFlags,
+        memoryFlags: mapped.memoryFlags,
+        quota: mapped.quota,
+        updatedAt: mapped.updatedAt,
+        updatedBy: mapped.updatedBy,
+        changeNote: mapped.changeNote,
+        checkoutRequested: mapped.checkoutRequested,
+        initialized: true,
+        loading: false,
+        saving: false,
+        error: undefined,
+        saveError: undefined,
+        trial: mapped.trial,
+        trialStarting: false,
+        trialError: undefined,
+      });
+
+      return payload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'plan trial request failed';
+      logEvent('plan.trial.failed', { message });
+      set({ trialStarting: false, trialError: message });
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+  },
+
+  async fetchPlanPresets(options) {
+    if (get().presetsLoading) {
+      return;
+    }
+    set({ presetsLoading: true, presetsError: undefined });
+    try {
+      const baseUrl = resolveApiBase();
+      const response = await fetch(`${baseUrl}/api/v1/plan/presets`, {
+        cache: 'no-store',
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+        signal: options?.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`failed to load plan presets (${response.status})`);
+      }
+      const payload = (await response.json()) as PlanPresetResponsePayload;
+      const mapping = payload.presets.reduce((acc, preset) => {
+        const tier = preset.tier;
+        const normalized: PlanPreset = {
+          tier,
+          entitlements: uniqueEntitlements(preset.entitlements ?? []),
+          featureFlags: mergeFeatureFlags(preset.featureFlags),
+          quota: mergeQuota(preset.quota ?? undefined),
+        };
+        acc[tier] = normalized;
+        return acc;
+      }, {} as Record<PlanTier, PlanPreset>);
+      set({
+        presets: mapping,
+        presetsLoading: false,
+        presetsError: undefined,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'plan preset fetch failed';
+      set({ presetsLoading: false, presetsError: message });
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+  },
 }));
 
 export const usePlanTier = () => usePlanStore((state) => state.planTier);
+export const usePlanTrial = () => usePlanStore((state) => state.trial);
+export const usePlanTrialRequestState = () =>
+  usePlanStore((state) => ({
+    trialStarting: state.trialStarting,
+    trialError: state.trialError,
+  }));
 export const planTierRank = (tier: PlanTier): number => PLAN_TIER_ORDER[tier] ?? 0;
 export const isTierAtLeast = (tier: PlanTier, required: PlanTier): boolean =>
   planTierRank(tier) >= planTierRank(required);

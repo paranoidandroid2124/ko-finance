@@ -57,6 +57,14 @@ def test_plan_context_uses_environment_defaults(plan_api_client: TestClient):
     assert quota["ragTopK"] == 6
     assert quota["selfCheckEnabled"] is True
     assert quota["peerExportRowLimit"] == 100
+    assert payload["trial"] == {
+        "tier": "pro",
+        "startsAt": None,
+        "endsAt": None,
+        "durationDays": 7,
+        "active": False,
+        "used": False,
+    }
 
 
 def test_plan_context_respects_request_headers(monkeypatch: pytest.MonkeyPatch):
@@ -93,6 +101,8 @@ def test_plan_context_respects_request_headers(monkeypatch: pytest.MonkeyPatch):
         assert "evidence.diff" in entitlements
         assert "alerts.force_webhook" in entitlements
         assert entitlements == sorted(entitlements)
+        assert payload["trial"]["tier"] == "pro"
+        assert payload["trial"]["active"] is False
     finally:
         client.close()
 
@@ -134,6 +144,7 @@ def test_plan_context_patch_updates_defaults(plan_api_client: TestClient, plan_e
     assert reread_body["quota"]["ragTopK"] == 12
     assert reread_body["updatedBy"] == "sally@kfinance.ai"
     assert reread_body["checkoutRequested"] is True
+    assert reread_body["trial"]["tier"] == "pro"
 
 
 def test_plan_context_patch_requires_admin(plan_api_client: TestClient):
@@ -173,3 +184,57 @@ def test_plan_context_patch_rejects_invalid_quota(plan_api_client: TestClient):
     assert response.status_code == 400, response.text
     detail = response.json()["detail"]
     assert detail["code"] == "plan.invalid_payload"
+
+
+def test_plan_trial_endpoint_starts_trial(plan_api_client: TestClient, plan_env: Path):
+    response = plan_api_client.post(
+        "/api/v1/plan/trial",
+        json={
+            "actor": "sejin@kfinance.ai",
+            "durationDays": 5,
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["trial"]["active"] is True
+    assert payload["trial"]["used"] is True
+    assert payload["trial"]["durationDays"] == 5
+    assert payload["trial"]["tier"] == "pro"
+
+    saved = json.loads(plan_env.read_text(encoding="utf-8"))
+    assert saved["trial"]["used"] is True
+    assert saved["trial"]["durationDays"] == 5
+    assert saved["trial"]["startedAt"] is not None
+    assert saved["trial"]["endsAt"] is not None
+
+    # second request should be rejected because the trial is already used
+    second = plan_api_client.post("/api/v1/plan/trial", json={"actor": "someone@kfinance.ai"})
+    assert second.status_code == 400
+    second_detail = second.json()["detail"]
+    assert second_detail["code"] == "plan.trial_unavailable"
+
+
+def test_plan_patch_preserves_trial_state(plan_api_client: TestClient, plan_env: Path):
+    # start the trial first
+    trial_resp = plan_api_client.post("/api/v1/plan/trial", json={"actor": "trialer@kfinance.ai"})
+    assert trial_resp.status_code == 200, trial_resp.text
+
+    payload = {
+        "planTier": "pro",
+        "entitlements": ["search.compare"],
+        "quota": {
+            "chatRequestsPerDay": 300,
+            "ragTopK": 4,
+            "selfCheckEnabled": True,
+            "peerExportRowLimit": 10,
+        },
+        "updatedBy": "admin@kfinance.ai",
+    }
+    response = plan_api_client.patch("/api/v1/plan/context", json=payload, headers=ADMIN_AUTH_HEADER)
+    assert response.status_code == 200, response.text
+
+    saved = json.loads(plan_env.read_text(encoding="utf-8"))
+    assert "trial" in saved
+    assert saved["trial"]["used"] is True
+    assert saved["trial"]["startedAt"] is not None
+    assert saved["trial"]["endsAt"] is not None

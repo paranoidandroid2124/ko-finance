@@ -18,6 +18,11 @@ logging.basicConfig(level=logging.INFO)
 
 def seed_bootstrap() -> None:
     """Run initial DART/news seeding when services start."""
+    marker_path = os.getenv("BOOTSTRAP_MARKER_FILE", "/tmp/bootstrap_seeded")
+    if marker_path and os.path.exists(marker_path):
+        logger.info("Bootstrap marker %s found; skipping seeding.", marker_path)
+        return
+
     days_back = int(os.getenv("BOOTSTRAP_FILINGS_DAYS_BACK", "3"))
     news_limit = int(os.getenv("BOOTSTRAP_NEWS_LIMIT", "5"))
 
@@ -33,6 +38,14 @@ def seed_bootstrap() -> None:
         logger.info("Bootstrap news seeding dispatched.")
     except Exception as exc:  # pragma: no cover - defensive guard
         logger.exception("Bootstrap news encountered an error: %s", exc)
+
+    if marker_path:
+        try:
+            with open(marker_path, "w", encoding="utf-8") as marker_file:
+                marker_file.write("seeded\n")
+            logger.info("Bootstrap marker written to %s.", marker_path)
+        except OSError as exc:  # pragma: no cover - best-effort
+            logger.warning("Failed to write bootstrap marker %s: %s", marker_path, exc)
 
 
 if __name__ == "__main__":

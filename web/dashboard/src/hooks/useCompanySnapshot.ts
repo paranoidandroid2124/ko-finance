@@ -54,6 +54,40 @@ export type KeyMetric = {
   fiscalPeriod?: string | null;
 };
 
+export type RestatementHighlight = {
+  receiptNo: string;
+  title?: string | null;
+  filedAt?: string | null;
+  reportName?: string | null;
+  metricCode?: string | null;
+  metricLabel?: string | null;
+  previousValue?: number | null;
+  currentValue?: number | null;
+  deltaPercent?: number | null;
+  viewerUrl?: string | null;
+};
+
+export type EvidenceLink = {
+  statementCode: string;
+  statementLabel: string;
+  metricCode: string;
+  metricLabel: string;
+  periodLabel: string;
+  referenceNo: string;
+  viewerUrl: string;
+  value?: number | null;
+  unit?: string | null;
+};
+
+export type FiscalAlignmentInsight = {
+  latestAnnualPeriod?: string | null;
+  latestQuarterPeriod?: string | null;
+  yoyDeltaPercent?: number | null;
+  ttmQuarterCoverage: number;
+  alignmentStatus: "good" | "warning" | "missing";
+  notes?: string | null;
+};
+
 export type EventItem = {
   id: string;
   eventType: string;
@@ -87,15 +121,43 @@ export type NewsWindowInsight = {
   deduplicationClusterId?: string | null;
 };
 
+export type FinancialValue = {
+  fiscalYear?: number | null;
+  fiscalPeriod?: string | null;
+  periodType: "annual" | "quarter" | "other";
+  periodEndDate?: string | null;
+  value?: number | null;
+  unit?: string | null;
+  currency?: string | null;
+  referenceNo?: string | null;
+};
+
+export type FinancialStatementRow = {
+  metricCode: string;
+  label: string;
+  values: FinancialValue[];
+};
+
+export type FinancialStatementBlock = {
+  statementCode: string;
+  label: string;
+  rows: FinancialStatementRow[];
+  description?: string | null;
+};
+
 export type CompanySnapshot = {
   corpCode?: string | null;
   ticker?: string | null;
   corpName?: string | null;
   latestFiling?: FilingHeadline | null;
   summary?: SummaryBlock | null;
+  financialStatements: FinancialStatementBlock[];
   keyMetrics: KeyMetric[];
   majorEvents: EventItem[];
   newsSignals: NewsWindowInsight[];
+  restatementHighlights: RestatementHighlight[];
+  evidenceLinks: EvidenceLink[];
+  fiscalAlignment?: FiscalAlignmentInsight | null;
 };
 
 const mapTopicWeights = (entries: unknown): TopicWeight[] => {
@@ -240,6 +302,148 @@ const mapEvents = (entries: unknown): EventItem[] => {
   }, []);
 };
 
+const mapRestatementHighlights = (entries: unknown): RestatementHighlight[] => {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  return entries.reduce<RestatementHighlight[]>((acc, entry) => {
+    if (!isRecord(entry) || typeof entry.receipt_no !== "string") {
+      return acc;
+    }
+    acc.push({
+      receiptNo: entry.receipt_no,
+      title: toStringOrNull(entry.title),
+      filedAt: toStringOrNull(entry.filed_at ?? entry.filedAt),
+      reportName: toStringOrNull(entry.report_name ?? entry.reportName),
+      metricCode: toStringOrNull(entry.metric_code ?? entry.metricCode),
+      metricLabel: toStringOrNull(entry.metric_label ?? entry.metricLabel),
+      previousValue: toNumberOrNull(entry.previous_value ?? entry.previousValue),
+      currentValue: toNumberOrNull(entry.current_value ?? entry.currentValue),
+      deltaPercent: toNumberOrNull(entry.delta_percent ?? entry.deltaPercent),
+      viewerUrl: toStringOrNull(entry.viewer_url ?? entry.viewerUrl),
+    });
+    return acc;
+  }, []);
+};
+
+const mapEvidenceLinks = (entries: unknown): EvidenceLink[] => {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  return entries.reduce<EvidenceLink[]>((acc, entry) => {
+    if (!isRecord(entry)) {
+      return acc;
+    }
+    const referenceNo = toStringOrNull(entry.reference_no ?? entry.referenceNo);
+    const viewerUrl = toStringOrNull(entry.viewer_url ?? entry.viewerUrl);
+    if (!referenceNo || !viewerUrl) {
+      return acc;
+    }
+    acc.push({
+      statementCode: toStringOrNull(entry.statement_code ?? entry.statementCode) ?? "statement",
+      statementLabel: toStringOrNull(entry.statement_label ?? entry.statementLabel) ?? "재무제표",
+      metricCode: toStringOrNull(entry.metric_code ?? entry.metricCode) ?? referenceNo,
+      metricLabel: toStringOrNull(entry.metric_label ?? entry.metricLabel) ?? referenceNo,
+      periodLabel: toStringOrNull(entry.period_label ?? entry.periodLabel) ?? "",
+      referenceNo,
+      viewerUrl,
+      value: toNumberOrNull(entry.value),
+      unit: toStringOrNull(entry.unit),
+    });
+    return acc;
+  }, []);
+};
+
+const mapFiscalAlignment = (value: unknown): FiscalAlignmentInsight | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const status = toStringOrNull(value.alignment_status ?? value.alignmentStatus);
+  if (status !== "good" && status !== "warning" && status !== "missing") {
+    return null;
+  }
+  return {
+    latestAnnualPeriod: toStringOrNull(value.latest_annual_period ?? value.latestAnnualPeriod),
+    latestQuarterPeriod: toStringOrNull(value.latest_quarter_period ?? value.latestQuarterPeriod),
+    yoyDeltaPercent: toNumberOrNull(value.yoy_delta_percent ?? value.yoyDeltaPercent),
+    ttmQuarterCoverage: toNumberOrZero(value.ttm_quarter_coverage ?? value.ttmQuarterCoverage),
+    alignmentStatus: status,
+    notes: toStringOrNull(value.notes),
+  };
+};
+
+const mapFinancialValues = (entries: unknown): FinancialValue[] => {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  return entries.reduce<FinancialValue[]>((acc, entry) => {
+    if (!isRecord(entry)) {
+      return acc;
+    }
+    const periodType = toStringOrNull(entry.period_type ?? entry.periodType);
+    const normalizedPeriod: FinancialValue["periodType"] =
+      periodType === "annual" || periodType === "quarter" ? periodType : "other";
+
+    acc.push({
+      fiscalYear: toNumberOrNull(entry.fiscal_year ?? entry.fiscalYear),
+      fiscalPeriod: toStringOrNull(entry.fiscal_period ?? entry.fiscalPeriod),
+      periodType: normalizedPeriod,
+      periodEndDate: toStringOrNull(entry.period_end_date ?? entry.periodEndDate),
+      value: toNumberOrNull(entry.value),
+      unit: toStringOrNull(entry.unit),
+      currency: toStringOrNull(entry.currency),
+      referenceNo: toStringOrNull(entry.reference_no ?? entry.referenceNo),
+    });
+    return acc;
+  }, []);
+};
+
+const mapFinancialStatementRows = (entries: unknown): FinancialStatementRow[] => {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+
+  return entries.reduce<FinancialStatementRow[]>((acc, entry) => {
+    if (!isRecord(entry)) {
+      return acc;
+    }
+    const metricCode = toStringOrNull(entry.metric_code ?? entry.metricCode);
+    const label = toStringOrNull(entry.label);
+    if (!metricCode || !label) {
+      return acc;
+    }
+    acc.push({
+      metricCode,
+      label,
+      values: mapFinancialValues(entry.values),
+    });
+    return acc;
+  }, []);
+};
+
+const mapFinancialStatements = (entries: unknown): FinancialStatementBlock[] => {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  return entries.reduce<FinancialStatementBlock[]>((acc, entry) => {
+    if (!isRecord(entry)) {
+      return acc;
+    }
+    const statementCode = toStringOrNull(entry.statement_code ?? entry.statementCode);
+    const label = toStringOrNull(entry.label);
+    if (!statementCode || !label) {
+      return acc;
+    }
+    acc.push({
+      statementCode,
+      label,
+      description: toStringOrNull(entry.description),
+      rows: mapFinancialStatementRows(entry.rows),
+    });
+    return acc;
+  }, []);
+};
+
 const mapSnapshotPayload = (payload: unknown): CompanySnapshot => {
   const record = toRecordOrEmpty(payload);
   return {
@@ -248,13 +452,17 @@ const mapSnapshotPayload = (payload: unknown): CompanySnapshot => {
     corpName: toStringOrNull(record.corp_name ?? record.corpName),
     latestFiling: mapFilingHeadline(record.latest_filing ?? record.latestFiling),
     summary: mapSummaryBlock(record.summary),
+    financialStatements: mapFinancialStatements(record.financial_statements ?? record.financialStatements),
     keyMetrics: mapKeyMetrics(record.key_metrics ?? record.keyMetrics),
     majorEvents: mapEvents(record.major_events ?? record.majorEvents),
     newsSignals: mapNewsInsights(record.news_signals ?? record.newsSignals),
+    restatementHighlights: mapRestatementHighlights(record.restatement_highlights ?? record.restatementHighlights),
+    evidenceLinks: mapEvidenceLinks(record.evidence_links ?? record.evidenceLinks),
+    fiscalAlignment: mapFiscalAlignment(record.fiscal_alignment ?? record.fiscalAlignment),
   };
 };
 
-const fetchCompanySnapshot = async (identifier: string): Promise<CompanySnapshot> => {
+export const fetchCompanySnapshot = async (identifier: string): Promise<CompanySnapshot> => {
   const baseUrl = resolveApiBase();
   const response = await fetch(
     `${baseUrl}/api/v1/companies/${encodeURIComponent(identifier)}/snapshot`,

@@ -2,55 +2,81 @@
 
 import { useState } from "react";
 import clsx from "clsx";
+import { RefreshCw } from "lucide-react";
+
 import { AppShell } from "@/components/layout/AppShell";
 import { DigestCard } from "@/components/digest/DigestCard";
-import { emptyDigest, sampleDigest } from "@/components/digest/sampleData";
+import { sampleDigest } from "@/components/digest/sampleData";
+import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { useDigestPreview } from "@/hooks/useDigestPreview";
 
-type ViewMode = "sample" | "empty";
+const TIMEFRAME_OPTIONS: Array<{ value: "daily" | "weekly"; label: string }> = [
+  { value: "daily", label: "Daily Digest" },
+  { value: "weekly", label: "Weekly Highlight" },
+];
 
 export default function DigestLabPage() {
-  const [viewMode, setViewMode] = useState<ViewMode>("sample");
+  const [timeframe, setTimeframe] = useState<"daily" | "weekly">("daily");
+  const { data, isLoading, isFetching, isError, refetch } = useDigestPreview({ timeframe });
 
-  const payload = viewMode === "sample" ? sampleDigest : emptyDigest;
+  const payload = data ?? sampleDigest;
+  const isEmpty = Boolean(data) && payload.news.length === 0 && payload.watchlist.length === 0;
 
   return (
     <AppShell title="Digest 미리보기">
       <div className="flex flex-col gap-6">
         <section className="rounded-2xl border border-border-light bg-background-cardLight p-5 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
-          <h1 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">Watchlist Digest 시안</h1>
+          <h1 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">Watchlist Digest 프리뷰</h1>
           <p className="mt-2 text-sm text-text-secondaryLight dark:text-text-secondaryDark">
-            Figma 시안을 기반으로 한 Digest 템플릿 프리뷰입니다. 아래 토글을 통해 샘플 데이터와 빈 상태를 확인할 수 있습니다.
+            실제 다이제스트 파이프라인에서 수집한 데이터로 카드 미리보기를 제공합니다. 기간을 선택하고 필요하면 새로 고침하세요.
           </p>
           <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
             <div className="inline-flex overflow-hidden rounded-full border border-border-light bg-background-body dark:border-border-dark dark:bg-background-body.dark">
-              {(["sample", "empty"] as ViewMode[]).map((mode) => (
+              {TIMEFRAME_OPTIONS.map((option) => (
                 <button
-                  key={mode}
+                  key={option.value}
                   type="button"
-                  onClick={() => setViewMode(mode)}
+                  onClick={() => setTimeframe(option.value)}
                   className={clsx(
                     "px-4 py-1.5 font-medium transition-colors",
-                    viewMode === mode
+                    timeframe === option.value
                       ? "bg-primary text-white"
-                      : "text-text-secondaryLight hover:bg-border-light/40 dark:text-text-secondaryDark dark:hover:bg-border-dark/40"
+                      : "text-text-secondaryLight hover:bg-border-light/40 dark:text-text-secondaryDark dark:hover:bg-border-dark/40",
                   )}
                 >
-                  {mode === "sample" ? "샘플 데이터" : "빈 상태"}
+                  {option.label}
                 </button>
               ))}
             </div>
             <button
               type="button"
-              onClick={() => setViewMode((prev) => (prev === "sample" ? "empty" : "sample"))}
-              className="rounded-full border border-border-light px-4 py-1.5 font-medium text-text-secondaryLight transition-colors hover:bg-border-light/40 dark:border-border-dark dark:text-text-secondaryDark dark:hover:bg-border-dark/30"
+              onClick={() => refetch()}
+              className={clsx(
+                "inline-flex items-center gap-2 rounded-full border border-border-light px-4 py-1.5 font-medium text-text-secondaryLight transition-colors hover:bg-border-light/40 dark:border-border-dark dark:text-text-secondaryDark dark:hover:bg-border-dark/40",
+                isFetching ? "opacity-60" : "",
+              )}
+              disabled={isFetching}
             >
-              보기 전환
+              <RefreshCw className={clsx("h-4 w-4", isFetching ? "animate-spin" : "")} />
+              새로 고침
             </button>
           </div>
         </section>
 
+        {isError && (
+          <ErrorState
+            title="다이제스트 데이터를 불러오지 못했어요"
+            description="네트워크 상태를 확인한 뒤 다시 새로 고침해 주세요. 임시로 샘플 데이터를 표시합니다."
+          />
+        )}
+
         <section className="flex justify-center">
-          <DigestCard data={payload} isEmpty={viewMode === "empty"} />
+          {isLoading && !data ? (
+            <SkeletonBlock className="h-[620px] w-full max-w-4xl rounded-3xl" />
+          ) : (
+            <DigestCard data={payload} isEmpty={isEmpty} />
+          )}
         </section>
       </div>
     </AppShell>

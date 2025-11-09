@@ -8,9 +8,15 @@ app.conf.enable_utc = False
 app.conf.beat_schedule = {
     "seed-recent-filings-hourly": {
         "task": "m1.seed_recent_filings",
-        "schedule": crontab(minute=0),
+        "schedule": crontab(minute=0, day_of_week="mon-fri"),
         "args": (),
         "kwargs": {"days_back": 1},
+    },
+    "seed-recent-filings-weekend-catchup": {
+        "task": "m1.seed_recent_filings",
+        "schedule": crontab(hour=7, minute=0, day_of_week="mon"),
+        "args": (),
+        "kwargs": {"days_back": 3},
     },
     "seed-news-hourly": {
         "task": "m2.seed_news_feeds",
@@ -40,7 +46,13 @@ app.conf.beat_schedule = {
         "task": "m4.send_filing_digest",
         "schedule": crontab(hour=18, minute=0, day_of_week="mon-fri"),
         "args": (),
-        "kwargs": {},
+        "kwargs": {"timeframe": "daily"},
+    },
+    "weekly-filing-digest": {
+        "task": "m4.send_filing_digest",
+        "schedule": crontab(hour=9, minute=30, day_of_week="mon"),
+        "args": (),
+        "kwargs": {"timeframe": "weekly"},
     },
     "daily-brief-pdf": {
         "task": "m4.generate_daily_brief",

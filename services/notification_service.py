@@ -10,6 +10,8 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 from urllib.parse import urlparse
 
 import httpx
+import smtplib
+from email.message import EmailMessage
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,9 +22,19 @@ logger.setLevel(logging.INFO)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-ALERT_EMAIL_PROVIDER = (os.getenv("ALERT_EMAIL_PROVIDER") or "sendgrid").lower()
+ALERT_EMAIL_PROVIDER = (os.getenv("ALERT_EMAIL_PROVIDER") or "nhn_rest").lower()
 ALERT_EMAIL_FROM = os.getenv("ALERT_EMAIL_FROM")
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+NHN_EMAIL_BASE_URL = os.getenv("NHN_EMAIL_BASE_URL", "https://email.api.nhncloudservice.com").rstrip("/")
+NHN_APP_KEY = os.getenv("NHN_APP_KEY")
+NHN_SECRET_KEY = os.getenv("NHN_SECRET_KEY")
+NHN_SENDER_ADDRESS = os.getenv("NHN_SENDER_ADDRESS") or ALERT_EMAIL_FROM
+NHN_SENDER_NAME = os.getenv("NHN_SENDER_NAME") or os.getenv("APP_BRAND_NAME") or "K-Finance"
+NHN_EMAIL_TIMEOUT = float(os.getenv("NHN_EMAIL_TIMEOUT", "10"))
+SMTP_HOST = os.getenv("SMTP_HOST")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USERNAME = os.getenv("SMTP_USERNAME")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+SMTP_USE_TLS = (os.getenv("SMTP_USE_TLS", "true").strip().lower() in {"1", "true", "yes", "on"})
 
 ALERT_SLACK_DEFAULT_WEBHOOK = os.getenv("ALERT_SLACK_WEBHOOK_URL")
 ALERT_WEBHOOK_TIMEOUT = float(os.getenv("ALERT_REQUEST_TIMEOUT", "10"))
@@ -237,51 +249,113 @@ def _handle_email(
     if not recipients:
         return NotificationResult(status="failed", error="이메일 수신자(target)가 필요합니다.")
 
-    if ALERT_EMAIL_PROVIDER != "sendgrid":
-        logger.warning("Email provider %s is not supported; skipping send.", ALERT_EMAIL_PROVIDER)
-        return NotificationResult(status="failed", error="지원되지 않는 이메일 제공자 설정", failed=len(recipients))
+    if ALERT_EMAIL_PROVIDER in {"nhn_rest", "nhn", "rest"}:
+        return _send_email_via_nhn_rest(message, recipients, metadata, rendered)
+    if ALERT_EMAIL_PROVIDER in {"nhn_smtp", "smtp"}:
+        return _send_email_via_smtp(message, recipients, metadata, rendered)
 
-    if not ALERT_EMAIL_FROM or not SENDGRID_API_KEY:
-        logger.warning("Email channel is missing SENDGRID_API_KEY or ALERT_EMAIL_FROM.")
-        return NotificationResult(status="failed", error="이메일 채널이 구성되지 않았습니다.", failed=len(recipients))
+    logger.warning("Email provider %s is not supported; skipping send.", ALERT_EMAIL_PROVIDER)
+    return NotificationResult(status="failed", error="지원되지 않는 이메일 제공자", failed=len(recipients))
 
-    payload = {
-        "personalizations": [{"to": [{"email": email} for email in recipients]}],
-        "from": {"email": ALERT_EMAIL_FROM},
-        "subject": rendered.get("subject") or "ko-finance 알림",
-        "content": [
-            {"type": "text/plain", "value": rendered.get("body") or message},
-        ],
-    }
+
+def _send_email_via_nhn_rest(
+    message: str,
+    recipients: Sequence[str],
+    metadata: Dict[str, Any],
+    rendered: Dict[str, Any],
+) -> NotificationResult:
+    if not NHN_APP_KEY:
+        logger.warning("NHN_APP_KEY is not configured.")
+        return NotificationResult(status="failed", error="NHN 설정 누락", failed=len(recipients))
+    sender_address = metadata.get("sender_address") or NHN_SENDER_ADDRESS or ALERT_EMAIL_FROM
+    if not sender_address:
+        logger.warning("NHN sender address is missing.")
+        return NotificationResult(status="failed", error="발신 주소 누락", failed=len(recipients))
+
+    sender_name = metadata.get("sender_name") or NHN_SENDER_NAME
+    subject = metadata.get("subject") or rendered.get("subject") or "ko-finance 알림"
+    body_text = rendered.get("body") or message
     html_template = metadata.get("html_template") or metadata.get("html")
     if isinstance(html_template, str):
         html_body = _format_template(html_template, rendered.get("context", {}))
         if html_body:
-            payload["content"].append({"type": "text/html", "value": html_body})
-    reply_to = metadata.get("reply_to")
-    if isinstance(reply_to, str) and reply_to.strip():
-        payload["reply_to"] = {"email": reply_to.strip()}
-    headers = {
-        "Authorization": f"Bearer {SENDGRID_API_KEY}",
-        "Content-Type": "application/json",
-    }
+            body_text = html_body
 
+    payload = {
+        "senderAddress": sender_address,
+        "senderName": sender_name,
+        "title": subject,
+        "body": body_text,
+        "receiverList": [{"receiveMailAddr": email, "receiveType": "MRT0"} for email in recipients],
+        "adYn": "N",
+    }
+    template_id = metadata.get("template_id")
+    if template_id:
+        payload["templateId"] = template_id
+    template_name = metadata.get("template_name")
+    if template_name:
+        payload["templateName"] = template_name
+
+    headers = {"Content-Type": "application/json;charset=UTF-8"}
+    if NHN_SECRET_KEY:
+        headers["X-Secret-Key"] = NHN_SECRET_KEY
+
+    url = f"{NHN_EMAIL_BASE_URL}/email/v2.1/appKeys/{NHN_APP_KEY}/sender/mail"
     result = _post_with_backoff(
-        "https://api.sendgrid.com/v3/mail/send",
+        url,
         payload,
         headers=headers,
+        timeout=NHN_EMAIL_TIMEOUT,
         success_count=len(recipients),
         result_metadata={"recipients": recipients},
     )
-    if result.status == "delivered":
-        return result
-    return NotificationResult(
-        status=result.status,
-        error=result.error or "이메일 발송 실패",
-        delivered=result.delivered,
-        failed=result.failed or len(recipients),
-        metadata={"recipients": recipients},
-    )
+    return result
+
+
+def _send_email_via_smtp(
+    message: str,
+    recipients: Sequence[str],
+    metadata: Dict[str, Any],
+    rendered: Dict[str, Any],
+) -> NotificationResult:
+    if not ALERT_EMAIL_FROM or not SMTP_HOST:
+        logger.warning("SMTP email provider is missing configuration.")
+        return NotificationResult(status="failed", error="SMTP 설정이 누락되었습니다.", failed=len(recipients))
+
+    email_msg = EmailMessage()
+    email_msg["Subject"] = rendered.get("subject") or "ko-finance 알림"
+    email_msg["From"] = ALERT_EMAIL_FROM
+    email_msg["To"] = ", ".join(recipients)
+    reply_to = metadata.get("reply_to")
+    if isinstance(reply_to, str) and reply_to.strip():
+        email_msg["Reply-To"] = reply_to.strip()
+
+    body_text = rendered.get("body") or message
+    email_msg.set_content(body_text)
+
+    html_template = metadata.get("html_template") or metadata.get("html")
+    if isinstance(html_template, str):
+        html_body = _format_template(html_template, rendered.get("context", {}))
+        if html_body:
+            email_msg.add_alternative(html_body, subtype="html")
+
+    try:
+        if SMTP_USE_TLS:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                server.starttls()
+                if SMTP_USERNAME:
+                    server.login(SMTP_USERNAME, SMTP_PASSWORD or "")
+                server.send_message(email_msg)
+        else:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                if SMTP_USERNAME:
+                    server.login(SMTP_USERNAME, SMTP_PASSWORD or "")
+                server.send_message(email_msg)
+    except Exception as exc:  # pragma: no cover - network failure
+        logger.warning("SMTP email send failed: %s", exc, exc_info=True)
+        return NotificationResult(status="failed", error="이메일 발송 실패", failed=len(recipients))
+
+    return NotificationResult(status="delivered", delivered=len(recipients), failed=0, metadata={"recipients": recipients})
 
 
 def _handle_slack(

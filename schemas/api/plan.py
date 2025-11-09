@@ -40,6 +40,15 @@ class PlanMemoryFlagsSchema(BaseModel):
     chat: bool = False
 
 
+class PlanTrialStateSchema(BaseModel):
+    tier: PlanTier = Field(default="pro", description="Trial tier that will be applied while active.")
+    startsAt: Optional[str] = Field(default=None, description="ISO timestamp when the trial started.")
+    endsAt: Optional[str] = Field(default=None, description="ISO timestamp when the trial is scheduled to end.")
+    durationDays: Optional[int] = Field(default=None, description="Configured trial length in days.")
+    active: bool = Field(default=False, description="Whether the trial perks currently override the base plan.")
+    used: bool = Field(default=False, description="Indicates the trial window has already been claimed.")
+
+
 class PlanContextUpdateRequest(BaseModel):
     planTier: PlanTier = Field(..., description="Desired default plan tier.")
     expiresAt: Optional[str] = Field(
@@ -105,6 +114,27 @@ class PlanContextResponse(BaseModel):
         default_factory=PlanMemoryFlagsSchema,
         description="Resolved LightMem feature toggles for this plan.",
     )
+    trial: Optional[PlanTrialStateSchema] = Field(
+        default=None,
+        description="Optional trial metadata including availability and end date.",
+    )
+
+
+class PlanPresetSchema(BaseModel):
+    tier: PlanTier = Field(..., description="Preset identifier (plan tier).")
+    entitlements: list[str] = Field(default_factory=list, description="Default entitlements shipped with this tier.")
+    featureFlags: PlanFeatureFlagsSchema = Field(
+        default_factory=PlanFeatureFlagsSchema,
+        description="Feature flags derived from the entitlement list.",
+    )
+    quota: PlanQuotaSchema = Field(default_factory=PlanQuotaSchema, description="Default quota values for the tier.")
+
+
+class PlanPresetResponse(BaseModel):
+    presets: list[PlanPresetSchema] = Field(
+        default_factory=list,
+        description="Collection of plan presets available to the client.",
+    )
 
 
 class PlanCatalogPriceSchema(BaseModel):
@@ -145,3 +175,18 @@ class PlanCatalogUpdateRequest(BaseModel):
     tiers: list[PlanCatalogTierSchema] = Field(default_factory=list, description="Plan catalog tier definitions.")
     updatedBy: Optional[str] = Field(default=None, description="Operator recorded for the update.")
     note: Optional[str] = Field(default=None, description="Optional note describing the catalog change.")
+
+
+class PlanTrialStartRequest(BaseModel):
+    tier: PlanTier = Field(default="pro", description="Trial tier to activate.")
+    durationDays: Optional[int] = Field(
+        default=None,
+        description="Override trial duration. Defaults to configured duration when omitted.",
+        ge=1,
+        le=30,
+    )
+    actor: Optional[str] = Field(
+        default=None,
+        description="Optional actor identifier stored in the audit log.",
+        max_length=200,
+    )
