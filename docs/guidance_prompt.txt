@@ -25,6 +25,7 @@ Phase 5–8 Guidance
 - 공공 EOD 지표 확장, KOGL 자동 배지 확대, “근거 팩” API 베타.
 - 트랜스크립트·섹터 지수·프리미엄 뉴스 벤더 PoC 계약 및 라이선스 조건 검토.
 - 이벤트 스터디: 기본값을 “전 종목/전 공시” 커버리지로 두고, 대시보드 필터(시장/시총/섹터·검색)로 원하는 범위를 좁히는 UX를 유지. 워치리스트는 우선순위 모니터링 용도로만 사용.
+- 이벤트 데이터 백필: `scripts/backfill_event_study.py`로 DART 공시·가격·AR/CAR·summary를 기간별로 일괄 적재하고, Celery 태스크(`market_data.sync_*`, `event_study.*`)와 함께 주기적으로 돌려 데이터 품질을 확보합니다.
 
 5. 컴플라이언스 & 데이터 원칙
 - 무료·합법 데이터만 사용 (OpenDART API, KOGL 유형 1·3, 공개 RSS 메타).
@@ -57,6 +58,7 @@ Phase 5–8 Guidance
 - 데일리 브리프 보존 루틴 및 `m4.cleanup_daily_briefs` 태스크 추가.
 - KOGL 라이선스 배지·출처 표시 자동화 및 API/대시보드 반영.
 - RAG 상대 날짜 질의 전처리 및 현재 날짜 메타정보 주입, 감성 메타데이터 벡터 반영.
+- 이벤트 스터디 Labs 개선: 유의수준 입력(숫자 필드), CAAR 한글 표기, 히트율/평균 p-value 카드 추가, 사이드바에 `Labs · 이벤트 스터디` 항목 신설.
 
 10. 최근 업데이트 & 비고
 - GCP 전환(Cloud Run, Cloud SQL, Secret Manager, Artifact Registry)은 Phase 8 범위로 유지합니다.

@@ -91,6 +91,22 @@ export default function EventStudyLabPage() {
     totalSample === 0
       ? 0
       : summaryResults.reduce((acc, item) => acc + item.meanCaar * item.n, 0) / totalSample;
+  const weightedHitRate =
+    totalSample === 0
+      ? 0
+      : summaryResults.reduce((acc, item) => acc + item.hitRate * item.n, 0) / totalSample;
+  const weightedPValue = (() => {
+    const weightedRows = summaryResults.filter((item) => typeof item.pValue === "number");
+    if (!weightedRows.length) {
+      return null;
+    }
+    const sampleWeight = weightedRows.reduce((acc, item) => acc + item.n, 0);
+    if (sampleWeight === 0) {
+      return null;
+    }
+    const aggregated = weightedRows.reduce((acc, item) => acc + (item.pValue ?? 0) * item.n, 0);
+    return aggregated / sampleWeight;
+  })();
   const visibleEvents = useMemo<EventStudyEvent[]>(() => eventsData?.events ?? [], [eventsData]);
 
   const [focusedEventType, setFocusedEventType] = useState<string | null>(null);
@@ -254,15 +270,27 @@ export default function EventStudyLabPage() {
           </div>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-3">
+        <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <SummaryCard title="표본" description="필터를 조정하면 표본이 즉시 업데이트됩니다.">
             {isSummaryLoading ? <Loader2 className="h-6 w-6 animate-spin text-primary" /> : <span>{totalSample}</span>}
           </SummaryCard>
-          <SummaryCard title="평균 누적 초과수익 (CAAR)" description={`${selectedWindow.label} 윈도우 기준`}>
+          <SummaryCard
+            title="평균 누적 초과수익 (CAAR)"
+            description={`${selectedWindow.label} 윈도우 · p ≤ ${significanceThreshold.toFixed(2)}`}
+          >
             {isSummaryLoading ? <Loader2 className="h-6 w-6 animate-spin text-primary" /> : <span>{formatPercent(weightedMeanCaar)}</span>}
           </SummaryCard>
-          <SummaryCard title="현재 윈도우" description={`p ≤ ${significanceThreshold.toFixed(2)} 조건`}>
-            <span>{selectedWindow.label}</span>
+          <SummaryCard title="히트율" description="양의 누적 초과수익 비중">
+            {isSummaryLoading ? <Loader2 className="h-6 w-6 animate-spin text-primary" /> : <span>{formatPercent(weightedHitRate)}</span>}
+          </SummaryCard>
+          <SummaryCard title="평균 p-value" description="표본 가중 평균">
+            {isSummaryLoading ? (
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            ) : weightedPValue == null ? (
+              <span>—</span>
+            ) : (
+              <span>{weightedPValue.toFixed(2)}</span>
+            )}
           </SummaryCard>
         </section>
 

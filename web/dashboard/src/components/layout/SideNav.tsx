@@ -3,6 +3,7 @@
 import {
   Building2,
   CreditCard,
+  FlaskConical,
   LayoutDashboard,
   FileText,
   MessageSquare,
@@ -23,6 +24,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/news", label: "뉴스", icon: Newspaper },
   { href: "/filings", label: "공시 자료", icon: FileText },
   { href: "/company", label: "기업 살펴보기", icon: Building2 },
+  { href: "/labs/event-study", label: "Labs · 이벤트 스터디", icon: FlaskConical },
   { href: "/chat", label: "대화", icon: MessageSquare },
   { href: "/pricing", label: "플랜 & 가격", icon: CreditCard },
   { href: "/admin", label: "운영 콘솔", icon: Shield },
