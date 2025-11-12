@@ -5,19 +5,24 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from dataclasses import dataclass, field
 
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
+from core.env import env_bool
 from models.alert import AlertDelivery, AlertRule
 from models.filing import Filing
 from models.news import NewsSignal
 from services.notification_service import NotificationResult, dispatch_notification
 from services.alert_channel_registry import validate_channel_payload
-
+from services.audit_log import audit_alert_event
 logger = logging.getLogger(__name__)
+
+ALERTS_ENABLE_MODEL = env_bool("ALERTS_ENABLE_MODEL", True)
+ALERTS_ENFORCE_RL = env_bool("ALERTS_ENFORCE_RL", False)
+ENTITLEMENT_ACTION_RULE_WRITE = "alerts.rules.max"
 
 ERROR_BACKOFF_SEQUENCE = (5, 15, 60)
 PLAN_CONSTRAINTS: Dict[str, Dict[str, Any]] = {
@@ -55,6 +60,13 @@ PLAN_CONSTRAINTS: Dict[str, Dict[str, Any]] = {
 
 DEFAULT_PLAN_KEY = "pro"
 
+LEGACY_FREQUENCY_FIELDS = {
+    "evaluation_interval_minutes": "evaluationIntervalMinutes",
+    "window_minutes": "windowMinutes",
+    "cooldown_minutes": "cooldownMinutes",
+    "max_triggers_per_day": "maxTriggersPerDay",
+}
+
 DEFAULT_MESSAGE = "새로운 알림이 감지되었습니다."
 
 
@@ -88,6 +100,46 @@ def _normalize_plan_tier(plan_tier: str) -> str:
     return DEFAULT_PLAN_KEY
 
 
+def _normalize_uuid(value: Any) -> Optional[uuid.UUID]:
+    if not value:
+        return None
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError):
+        return None
+
+
+def _resolve_subject(owner_filters: Mapping[str, Any]) -> Tuple[Optional[uuid.UUID], Optional[uuid.UUID]]:
+    user_id = _normalize_uuid(owner_filters.get("user_id"))
+    org_id = _normalize_uuid(owner_filters.get("org_id"))
+    if user_id is None and org_id is not None:
+        user_id = org_id
+    if org_id is None and user_id is not None:
+        org_id = user_id
+    return user_id, org_id
+
+
+def _consume_entitlement(
+    owner_filters: Mapping[str, Any],
+    *,
+    action: str,
+    cost: int = 1,
+) -> None:
+    if not ALERTS_ENFORCE_RL:
+        return
+    allowed = quota_guard.consume_quota(
+        action,
+        user_id=owner_filters.get("user_id"),
+        org_id=owner_filters.get("org_id"),
+        cost=cost,
+        context="alerts.service",
+    )
+    if not allowed:
+        raise PlanQuotaError("plan.entitlement_blocked", "플랜 할당량을 초과했습니다.")
+
+
 def _error_backoff_minutes(error_count: int) -> int:
     """Compute cooldown minutes applied after consecutive failures."""
     if error_count <= 0:
@@ -104,6 +156,7 @@ def ensure_plan_allows_creation(db: Session, *, plan_tier: str, owner_filters: D
     count = _count_alerts(db, owner_filters)
     if count >= limit:
         raise PlanQuotaError("plan.quota_exceeded", "플랜 알림 한도를 초과했습니다.")
+    _consume_entitlement(owner_filters, action=ENTITLEMENT_ACTION_RULE_WRITE)
 
 
 def _count_alerts(db: Session, owner_filters: Dict[str, Any]) -> int:
@@ -198,37 +251,25 @@ def create_alert_rule(
     owner_filters: Dict[str, Any],
     name: str,
     description: Optional[str],
-    condition: Dict[str, Any],
+    trigger: Mapping[str, Any],
     channels: Sequence[Dict[str, Any]],
     message_template: Optional[str],
-    evaluation_interval_minutes: int,
-    window_minutes: int,
-    cooldown_minutes: int,
-    max_triggers_per_day: Optional[int],
+    frequency: Mapping[str, Any],
     extras: Optional[Dict[str, Any]] = None,
 ) -> AlertRule:
     plan_tier = _normalize_plan_tier(plan_tier)
     ensure_plan_allows_creation(db, plan_tier=plan_tier, owner_filters=owner_filters)
     normalized_channels = validate_channels(plan_tier, channels)
-    evaluation_interval_minutes, window_minutes, cooldown_minutes, max_triggers_per_day = _apply_plan_defaults(
-        plan_tier,
-        evaluation_interval_minutes,
-        window_minutes,
-        cooldown_minutes,
-        max_triggers_per_day,
-    )
+    normalized_frequency = _apply_plan_frequency(plan_tier, frequency)
 
     rule = AlertRule(
         plan_tier=plan_tier,
         name=name.strip(),
         description=description.strip() if description else None,
-        condition=condition or {},
+        trigger=dict(trigger or {}),
         channels=normalized_channels,
         message_template=message_template.strip() if message_template else None,
-        evaluation_interval_minutes=evaluation_interval_minutes,
-        window_minutes=window_minutes,
-        cooldown_minutes=cooldown_minutes,
-        max_triggers_per_day=max_triggers_per_day,
+        frequency=normalized_frequency,
         extras=extras or {},
         **owner_filters,
     )
@@ -249,8 +290,10 @@ def update_alert_rule(
     if "description" in changes:
         description = changes["description"]
         rule.description = description.strip() if description else None
-    if "condition" in changes and changes["condition"]:
-        rule.condition = changes["condition"]
+    if "trigger" in changes and changes["trigger"]:
+        rule.condition = dict(changes["trigger"] or {})
+    elif "condition" in changes and changes["condition"]:
+        rule.condition = dict(changes["condition"] or {})
     if "channels" in changes and changes["channels"] is not None:
         rule.channels = validate_channels(plan_tier, changes["channels"])
     if "message_template" in changes:
@@ -258,26 +301,18 @@ def update_alert_rule(
         rule.message_template = message.strip() if message else None
     if "status" in changes and changes["status"] in {"active", "paused", "archived"}:
         rule.status = changes["status"]
-    if any(
-        key in changes
-        for key in ("evaluation_interval_minutes", "window_minutes", "cooldown_minutes", "max_triggers_per_day")
-    ):
-        evaluation_interval_minutes = changes.get("evaluation_interval_minutes", rule.evaluation_interval_minutes)
-        window_minutes = changes.get("window_minutes", rule.window_minutes)
-        cooldown_minutes = changes.get("cooldown_minutes", rule.cooldown_minutes)
-        max_triggers_per_day = changes.get("max_triggers_per_day", rule.max_triggers_per_day)
-        (
-            rule.evaluation_interval_minutes,
-            rule.window_minutes,
-            rule.cooldown_minutes,
-            rule.max_triggers_per_day,
-        ) = _apply_plan_defaults(
-            plan_tier,
-            evaluation_interval_minutes,
-            window_minutes,
-            cooldown_minutes,
-            max_triggers_per_day,
-        )
+    frequency_payload: Optional[Mapping[str, Any]] = None
+    if "frequency" in changes and isinstance(changes["frequency"], Mapping):
+        frequency_payload = changes["frequency"]
+    else:
+        legacy: Dict[str, Any] = {}
+        for legacy_key, camel_key in LEGACY_FREQUENCY_FIELDS.items():
+            if legacy_key in changes:
+                legacy[camel_key] = changes[legacy_key]
+        if legacy:
+            frequency_payload = legacy
+    if frequency_payload is not None:
+        rule.frequency = _apply_plan_frequency(plan_tier, frequency_payload)
     if "extras" in changes and isinstance(changes["extras"], dict):
         rule.extras = {**rule.extras, **changes["extras"]}
     return rule
@@ -536,7 +571,12 @@ def _process_rule(
 ) -> None:
     stats.record_evaluated(rule.plan_tier)
 
-    if _rule_is_throttled(rule, now) or _rule_not_due(rule, now):
+    if _rule_is_throttled(rule, now):
+        stats.record_skipped(rule.plan_tier)
+        _audit_cooldown_block(rule)
+        return
+
+    if _rule_not_due(rule, now):
         stats.record_skipped(rule.plan_tier)
         return
 
@@ -554,7 +594,7 @@ def _process_rule(
         rule.error_count = current_errors
         backoff_minutes = _error_backoff_minutes(current_errors)
         if backoff_minutes:
-            rule.throttle_until = now + timedelta(minutes=backoff_minutes)
+            rule.cooled_until = now + timedelta(minutes=backoff_minutes)
         logger.error(
             "Alert evaluation error (rule=%s plan=%s task=%s retries=%s): %s",
             rule.id,
@@ -574,7 +614,7 @@ def _process_rule(
 
     cooldown = max(rule.cooldown_minutes or 0, 0)
     if cooldown:
-        rule.throttle_until = now + timedelta(minutes=cooldown)
+        rule.cooled_until = now + timedelta(minutes=cooldown)
 
     channel_failures = _dispatch_rule_notifications(db, rule, message, events_json)
     if channel_failures:
@@ -614,7 +654,26 @@ def _dispatch_rule_notifications(
 
 
 def _rule_is_throttled(rule: AlertRule, now: datetime) -> bool:
-    return bool(rule.throttle_until and rule.throttle_until > now)
+    return bool(rule.cooled_until and rule.cooled_until > now)
+
+
+def _audit_cooldown_block(rule: AlertRule) -> None:
+    if not ALERTS_ENABLE_MODEL or not rule.cooled_until:
+        return
+    try:
+        audit_alert_event(
+            action="alerts.cooldown_blocked",
+            user_id=rule.user_id,
+            org_id=rule.org_id,
+            target_id=str(rule.id),
+            extra={
+                "planTier": rule.plan_tier,
+                "cooledUntil": rule.cooled_until.isoformat(),
+                "cooldownMinutes": rule.cooldown_minutes,
+            },
+        )
+    except Exception:  # pragma: no cover - audit logging best effort
+        logger.debug("Failed to record cooldown audit for rule=%s", rule.id, exc_info=True)
 
 
 def _rule_not_due(rule: AlertRule, now: datetime) -> bool:
@@ -663,23 +722,36 @@ def _evaluate_rule(
     return True, message, events_json
 
 
+def _serialize_frequency(rule: AlertRule) -> Dict[str, Optional[int]]:
+    return {
+        "evaluationIntervalMinutes": rule.evaluation_interval_minutes,
+        "windowMinutes": rule.window_minutes,
+        "cooldownMinutes": rule.cooldown_minutes,
+        "maxTriggersPerDay": rule.max_triggers_per_day,
+    }
+
+
 def serialize_alert(rule: AlertRule) -> Dict[str, Any]:
+    frequency_payload = _serialize_frequency(rule)
     return {
         "id": str(rule.id),
         "name": rule.name,
         "description": rule.description,
         "planTier": rule.plan_tier,
         "status": rule.status,
-        "condition": rule.condition,
+        "trigger": rule.trigger,
+        "condition": rule.trigger,
         "channels": rule.channels,
+        "frequency": frequency_payload,
         "messageTemplate": rule.message_template,
-        "evaluationIntervalMinutes": rule.evaluation_interval_minutes,
-        "windowMinutes": rule.window_minutes,
-        "cooldownMinutes": rule.cooldown_minutes,
-        "maxTriggersPerDay": rule.max_triggers_per_day,
+        "evaluationIntervalMinutes": frequency_payload["evaluationIntervalMinutes"],
+        "windowMinutes": frequency_payload["windowMinutes"],
+        "cooldownMinutes": frequency_payload["cooldownMinutes"],
+        "maxTriggersPerDay": frequency_payload["maxTriggersPerDay"],
         "lastTriggeredAt": rule.last_triggered_at.isoformat() if rule.last_triggered_at else None,
         "lastEvaluatedAt": rule.last_evaluated_at.isoformat() if rule.last_evaluated_at else None,
-        "throttleUntil": rule.throttle_until.isoformat() if rule.throttle_until else None,
+        "cooledUntil": rule.cooled_until.isoformat() if rule.cooled_until else None,
+        "throttleUntil": rule.cooled_until.isoformat() if rule.cooled_until else None,
         "errorCount": rule.error_count,
         "extras": rule.extras,
         "createdAt": rule.created_at.isoformat() if rule.created_at else None,
@@ -709,43 +781,70 @@ def serialize_plan_capabilities(
         "defaultCooldownMinutes": config.get("default_cooldown_minutes"),
         "minEvaluationIntervalMinutes": config.get("min_evaluation_interval_minutes"),
         "minCooldownMinutes": config.get("min_cooldown_minutes"),
+        "frequencyDefaults": {
+            "evaluationIntervalMinutes": config.get("default_evaluation_interval_minutes"),
+            "windowMinutes": config.get("default_window_minutes"),
+            "cooldownMinutes": config.get("default_cooldown_minutes"),
+            "maxTriggersPerDay": config.get("max_daily_triggers"),
+        },
         "nextEvaluationAt": next_eval.isoformat() if next_eval else None,
     }
 
 
-def _apply_plan_defaults(
-    plan_tier: str,
-    evaluation_interval_minutes: Optional[int],
-    window_minutes: Optional[int],
-    cooldown_minutes: Optional[int],
-    max_triggers_per_day: Optional[int],
-) -> Tuple[int, int, int, Optional[int]]:
+def _apply_plan_frequency(plan_tier: str, frequency: Mapping[str, Any]) -> Dict[str, Optional[int]]:
     config = _plan_config(plan_tier)
+    payload = frequency or {}
+
+    def _coerce_int(key: str, default: int, *, minimum: Optional[int] = None) -> int:
+        value = payload.get(key)
+        try:
+            candidate = int(value)
+        except (TypeError, ValueError):
+            candidate = default
+        if minimum is not None:
+            candidate = max(candidate, minimum)
+        return candidate
+
     eval_default = int(config["default_evaluation_interval_minutes"])
     eval_min = int(config["min_evaluation_interval_minutes"])
+    evaluation_interval = _coerce_int("evaluationIntervalMinutes", eval_default, minimum=eval_min)
+
     window_default = int(config["default_window_minutes"])
+    window_min = max(5, evaluation_interval)
+    window_minutes = _coerce_int("windowMinutes", window_default, minimum=window_min)
+
     cooldown_default = int(config["default_cooldown_minutes"])
     cooldown_min = int(config["min_cooldown_minutes"])
+    cooldown_minutes = _coerce_int("cooldownMinutes", cooldown_default, minimum=cooldown_min)
+
     plan_daily_cap = config.get("max_daily_triggers")
-
-    evaluation_interval = int(evaluation_interval_minutes or eval_default)
-    evaluation_interval = max(evaluation_interval, eval_min)
-
-    window = int(window_minutes or window_default)
-    window = max(window, max(5, evaluation_interval))
-
-    cooldown = int(cooldown_minutes if cooldown_minutes is not None else cooldown_default)
-    cooldown = max(cooldown, cooldown_min)
-
+    max_triggers_raw = payload.get("maxTriggersPerDay")
     if plan_daily_cap:
-        if max_triggers_per_day is None:
-            daily_cap: Optional[int] = int(plan_daily_cap)
+        plan_cap_int = int(plan_daily_cap)
+        if max_triggers_raw in (None, "", 0):
+            max_triggers_per_day: Optional[int] = plan_cap_int
         else:
-            daily_cap = min(int(max_triggers_per_day), int(plan_daily_cap))
+            try:
+                candidate = int(max_triggers_raw)
+            except (TypeError, ValueError):
+                candidate = plan_cap_int
+            max_triggers_per_day = min(max(candidate, 1), plan_cap_int)
     else:
-        daily_cap = int(max_triggers_per_day) if max_triggers_per_day is not None else None
+        if max_triggers_raw in (None, "", 0):
+            max_triggers_per_day = None
+        else:
+            try:
+                candidate = int(max_triggers_raw)
+            except (TypeError, ValueError):
+                candidate = None
+            max_triggers_per_day = max(candidate, 1) if candidate else None
 
-    return evaluation_interval, window, cooldown, daily_cap
+    return {
+        "evaluationIntervalMinutes": evaluation_interval,
+        "windowMinutes": window_minutes,
+        "cooldownMinutes": cooldown_minutes,
+        "maxTriggersPerDay": max_triggers_per_day,
+    }
 
 
 def _next_evaluation_at(rules: Sequence[AlertRule], now: datetime) -> Optional[datetime]:
@@ -753,8 +852,8 @@ def _next_evaluation_at(rules: Sequence[AlertRule], now: datetime) -> Optional[d
     for rule in rules:
         if rule.status != "active":
             continue
-        if rule.throttle_until and rule.throttle_until > now:
-            due_times.append(rule.throttle_until)
+        if rule.cooled_until and rule.cooled_until > now:
+            due_times.append(rule.cooled_until)
             continue
         interval = max(rule.evaluation_interval_minutes or 1, 1)
         if rule.last_evaluated_at:

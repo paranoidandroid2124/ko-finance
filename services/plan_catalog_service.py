@@ -24,7 +24,7 @@ _DEFAULT_TIER_CARDS: List[Dict[str, Any]] = [
         "tier": "free",
         "title": "무료로 시작하는 리서치 파이프라인",
         "tagline": "기업 뉴스와 공시를 한곳에 모으고 RAG 워크플로를 가볍게 체험해 보세요.",
-        "badge": "Starter",
+        "badge": "Free",
         "price": {"amount": 0, "currency": "KRW", "interval": "월"},
         "ctaLabel": "무료로 시작하기",
         "ctaHref": "/auth/register?plan=free",
@@ -35,12 +35,29 @@ _DEFAULT_TIER_CARDS: List[Dict[str, Any]] = [
             {"text": "간단한 PDF 다운로드 및 공유"},
         ],
         "imageUrl": None,
-        "supportNote": "셀프 온보딩 가이드 제공",
+        "supportNote": "셀프 온보딩 가이드를 제공합니다",
+    },
+    {
+        "tier": "starter",
+        "title": "Starter · 경량 리서치 자동화",
+        "tagline": "워치리스트·알림·근거 스니펫까지 하루 업무 흐름을 자동화합니다.",
+        "badge": "Starter",
+        "price": {"amount": 9900, "currency": "KRW", "interval": "월", "note": "VAT 별도"},
+        "ctaLabel": "Starter 업그레이드",
+        "ctaHref": "/checkout?plan=starter",
+        "features": [
+            {"text": "워치리스트 50 · 알림 룰 10개", "highlight": True},
+            {"text": "하루 80회 RAG 질문과 증거 링크"},
+            {"text": "PDF 하이라이트 · 요약 스니펫 저장"},
+            {"text": "Starter 30일 Pro 체험 쿠폰 포함"},
+        ],
+        "imageUrl": None,
+        "supportNote": "이메일 지원 · 알림 템플릿 제공",
     },
     {
         "tier": "pro",
-        "title": "팀 협업을 위한 Pro",
-        "tagline": "워치리스트 알림과 비교 분석을 연결해 팀 업무에 바로 적용하세요.",
+        "title": "파일럿 협업을 위한 Pro",
+        "tagline": "워치리스트 알림과 비교 분석을 연계해 팀 업무에 바로 적용하세요.",
         "badge": "Best",
         "price": {"amount": 14900, "currency": "KRW", "interval": "월", "note": "부가세 포함"},
         "ctaLabel": "Pro 구독하기",
@@ -63,7 +80,7 @@ _DEFAULT_TIER_CARDS: List[Dict[str, Any]] = [
         "ctaLabel": "담당자에게 문의",
         "ctaHref": "/contact?plan=enterprise",
         "features": [
-            {"text": "챗·검색 무제한 · RAG Top-K 20", "highlight": True},
+            {"text": "차트·검색 무제한 · RAG Top-K 20", "highlight": True},
             {"text": "데이터 익스포트와 증거 Diff 비교"},
             {"text": "타임라인 풀 액세스 · 협업 워크스페이스"},
             {"text": "전담 컨설턴트 · 보안/감사 맞춤 지원"},
@@ -71,6 +88,7 @@ _DEFAULT_TIER_CARDS: List[Dict[str, Any]] = [
         "imageUrl": None,
         "supportNote": "보안·감사 자료 세트 포함",
     },
+]
 ]
 
 

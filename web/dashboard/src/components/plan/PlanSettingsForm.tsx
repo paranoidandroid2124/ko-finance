@@ -33,12 +33,17 @@ const PLAN_TIER_OPTIONS: Array<{ value: PlanTier; label: string; helper: string 
   {
     value: "free",
     label: "Free",
-    helper: "처음 둘러보는 팀을 위한 맛보기 플랜이에요.",
+    helper: "처음 둘러보는 파워를 위한 맛보기 플랜이에요.",
+  },
+  {
+    value: "starter",
+    label: "Starter",
+    helper: "워치리스트·RAG 자동화를 가볍게 시작하는 경량 유료 플랜입니다.",
   },
   {
     value: "pro",
     label: "Pro",
-    helper: "자동화와 알림 채널을 한층 넓힐 때 어울리는 옵션이에요.",
+    helper: "자동화와 알림 채널을 한층 넓혀 줄 옵션이에요.",
   },
   {
     value: "enterprise",

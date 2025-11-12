@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
 from pathlib import Path
 from statistics import mean
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -42,6 +43,13 @@ _PARAGRAPH_MAX_CHARS = env_int("OCR_VISION_PARAGRAPH_MAX_CHARS", 1200, minimum=2
 def is_enabled() -> bool:
     """Return True if OCR is allowed and the Vision client is importable."""
     return _OCR_ENABLED and vision is not None
+
+
+def _sentence_hash(text: str) -> Optional[str]:
+    normalized = normalize_text(text) if text else ""
+    if not normalized:
+        return None
+    return hashlib.sha1(normalized.encode("utf-8", errors="ignore")).hexdigest()
 
 
 def _get_client() -> "vision.ImageAnnotatorClient":
@@ -273,12 +281,22 @@ def extract_text_chunks_from_pdf(
     if not page_entries:
         return []
 
-    edge_lines = _collect_common_edge_lines([entry["paragraphs"] for entry in page_entries]) if len(page_entries) > 1 else set()
+    edge_lines = (
+        _collect_common_edge_lines([entry["paragraphs"] for entry in page_entries]) if len(page_entries) > 1 else set()
+    )
     chunks: List[Dict[str, Any]] = []
     for entry in page_entries:
         filtered_paragraphs = [paragraph for paragraph in entry["paragraphs"] if paragraph.strip() not in edge_lines]
         chunk_texts = _chunk_paragraphs(filtered_paragraphs)
+        char_cursor = 0
         for idx, content in enumerate(chunk_texts, start=1):
+            text = content.strip()
+            if not text:
+                continue
+            length = len(text)
+            start = char_cursor
+            end = start + length
+            char_cursor = end + (1 if length else 0)
             metadata: Dict[str, Any] = {
                 "engine": "gcp_vision",
                 "language_hints": hints,
@@ -287,14 +305,19 @@ def extract_text_chunks_from_pdf(
                 "mime_type": entry["mime"],
                 "image_bytes": entry["bytes"],
                 "chunk_index": idx,
+                "char_start": start,
+                "char_end": end,
             }
             if entry["avg_conf"] is not None:
                 metadata["avg_confidence"] = round(float(entry["avg_conf"]), 4)
+            hash_value = _sentence_hash(text)
+            if hash_value:
+                metadata["sentence_hash"] = hash_value
             chunks.append(
                 build_chunk(
                     f"{Path(pdf_path).stem}-ocr-{entry['page_number']}-{idx}",
                     chunk_type="text",
-                    content=content,
+                    content=text,
                     section="ocr",
                     source="ocr",
                     page_number=entry["page_number"],

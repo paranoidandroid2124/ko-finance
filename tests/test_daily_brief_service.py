@@ -1,4 +1,13 @@
 from datetime import date
+import sys
+import types
+from uuid import uuid4
+
+fake_org_module = types.ModuleType("models.org")
+fake_org_module.Org = type("Org", (), {})
+fake_org_module.OrgRole = type("OrgRole", (), {})
+fake_org_module.UserOrg = type("UserOrg", (), {})
+sys.modules.setdefault("models.org", fake_org_module)
 
 import pytest
 
@@ -141,3 +150,14 @@ def test_build_digest_preview_payload():
     assert payload["news"], "news section should include mocked entry"
     assert payload["watchlist"], "watchlist section should include mapped entry"
     assert payload["sentiment"] is not None
+
+
+def test_build_digest_preview_respects_quota(monkeypatch):
+    monkeypatch.setattr(svc.quota_guard, "consume_quota", lambda *_, **__: False)
+    with pytest.raises(svc.DigestQuotaExceeded):
+        svc.build_digest_preview(
+            reference_date=date(2025, 1, 5),
+            session=object(),
+            owner_filters={"user_id": uuid4()},
+            enforce_quota_action="watchlist.preview",
+        )

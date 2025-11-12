@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from core.env import env_bool, env_int, env_str
 from core.logging import get_logger
+from services.audit_log import audit_rbac_event
 
 logger = get_logger(__name__)
 
@@ -246,3 +247,14 @@ def record_admin_audit_event(
     )
     db.commit()
     logger.debug("Recorded admin audit event %s for actor=%s.", event_type, actor)
+    audit_rbac_event(
+        action=f"admin.{event_type}",
+        actor=actor,
+        org_id=None,
+        target_id=session_id,
+        extra={
+            "route": route,
+            "method": method,
+            "metadata": metadata or {},
+        },
+    )

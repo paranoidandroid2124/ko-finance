@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -13,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 _WEBHOOK_STATE_PATH = Path("uploads") / "admin" / "toss_webhook_events.json"
 _MAX_RECORDED_EVENTS = 200
+
+from services.json_state_store import JsonStateStore
 
 
 @dataclass(slots=True)
@@ -25,29 +26,11 @@ class _StoredWebhookEvent:
     processed_at: str
 
 
-_EVENT_CACHE: Optional[List[_StoredWebhookEvent]] = None
-_EVENT_CACHE_PATH: Optional[Path] = None
+_EVENT_STORE = JsonStateStore(_WEBHOOK_STATE_PATH, "events", logger=logger)
 
 
 def _load_events(*, reload: bool = False) -> List[_StoredWebhookEvent]:
-    global _EVENT_CACHE_PATH, _EVENT_CACHE
-
-    if _event_cache_path_mismatch(_WEBHOOK_STATE_PATH) or reload:
-        _EVENT_CACHE = None
-
-    if _EVENT_CACHE is not None:
-        return list(_EVENT_CACHE)
-
-    try:
-        raw = _WEBHOOK_STATE_PATH.read_text(encoding="utf-8")
-        payload = json.loads(raw)
-        items = payload.get("events", [])
-    except FileNotFoundError:
-        items = []
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("Failed to load Toss webhook state: %s", exc)
-        items = []
-
+    items = _EVENT_STORE.load(reload=reload)
     events: List[_StoredWebhookEvent] = []
     for item in items:
         if not isinstance(item, dict):
@@ -67,13 +50,7 @@ def _load_events(*, reload: bool = False) -> List[_StoredWebhookEvent]:
             )
         )
 
-    _EVENT_CACHE = events
-    _EVENT_CACHE_PATH = _WEBHOOK_STATE_PATH
     return list(events)
-
-
-def _event_cache_path_mismatch(path: Path) -> bool:
-    return _EVENT_CACHE_PATH is not None and _EVENT_CACHE_PATH != path
 
 
 def _normalize_optional(value: object) -> Optional[str]:
@@ -84,18 +61,8 @@ def _normalize_optional(value: object) -> Optional[str]:
 
 
 def _store_events(events: List[_StoredWebhookEvent]) -> None:
-    global _EVENT_CACHE, _EVENT_CACHE_PATH
-    data = {"events": [asdict(event) for event in events[-_MAX_RECORDED_EVENTS:]]}
-    try:
-        path = _WEBHOOK_STATE_PATH
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, ensure_ascii=True, indent=2), encoding="utf-8")
-    except OSError as exc:
-        logger.error("Failed to persist Toss webhook state: %s", exc)
-        raise
-    else:
-        _EVENT_CACHE = list(events[-_MAX_RECORDED_EVENTS:])
-        _EVENT_CACHE_PATH = _WEBHOOK_STATE_PATH
+    trimmed = events[-_MAX_RECORDED_EVENTS:]
+    _EVENT_STORE.store([asdict(event) for event in trimmed])
 
 
 def has_processed_webhook(key: Optional[str]) -> bool:
@@ -138,8 +105,7 @@ def record_webhook_event(
 
 def reset_state_for_tests(*, path: Optional[Path] = None) -> None:  # pragma: no cover - testing helper
     """Clear cached state and optionally point storage to a new path."""
-    global _WEBHOOK_STATE_PATH, _EVENT_CACHE, _EVENT_CACHE_PATH
+    global _WEBHOOK_STATE_PATH, _EVENT_STORE
     if path is not None:
         _WEBHOOK_STATE_PATH = Path(path)
-    _EVENT_CACHE = None
-    _EVENT_CACHE_PATH = None
+    _EVENT_STORE.reset(path=_WEBHOOK_STATE_PATH)

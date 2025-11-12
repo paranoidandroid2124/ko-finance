@@ -7,21 +7,28 @@ import { useRouter } from "next/navigation";
 import { usePlanStore, type PlanTier } from "@/store/planStore";
 import { useToastStore } from "@/store/toastStore";
 import { getTrialCountdownLabel } from "@/lib/trialUtils";
+import { usePlanUpgrade } from "@/hooks/usePlanUpgrade";
+import { logEvent } from "@/lib/telemetry";
+import { recordKpiEvent } from "@/lib/kpi";
+import { FEATURE_STARTER_ENABLED } from "@/config/features";
 
 const PLAN_BADGE_TONE: Record<PlanTier, string> = {
   free: "bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-200",
+  starter: "bg-sky-100 text-sky-600 dark:bg-sky-500/10 dark:text-sky-200",
   pro: "bg-primary/10 text-primary dark:bg-primary/20",
   enterprise: "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-200",
 };
 
 const PLAN_LABEL: Record<PlanTier, string> = {
   free: "Free",
+  starter: "Starter",
   pro: "Pro",
   enterprise: "Enterprise",
 };
 
 const PLAN_BLURB: Record<PlanTier, string> = {
   free: "처음 만나는 분들이 부담 없이 둘러볼 수 있는 체험 플랜이에요.",
+  starter: "워치리스트·RAG 자동화를 가볍게 묶은 경량 유료 플랜이에요.",
   pro: "팀 동료들과 자동화를 키우는 플랜이에요. 이메일·웹훅 채널이 바로 열려요.",
   enterprise: "전용 파트너와 아낌없이 협업하는 플랜이에요. 모든 채널과 맞춤 한도를 함께 드려요.",
 };
@@ -80,6 +87,7 @@ export function PlanSummaryCard({ className }: PlanSummaryCardProps) {
     }),
   );
   const startTrial = usePlanStore((state) => state.startTrial);
+  const { requestUpgrade, isPreparing } = usePlanUpgrade();
 
   const trialActive = Boolean(trial?.active);
   const trialAvailable = Boolean(trial && !trial.active && !trial.used);
@@ -105,6 +113,27 @@ export function PlanSummaryCard({ className }: PlanSummaryCardProps) {
       });
     }
   }, [pushToast, startTrial, trialDurationDays]);
+
+  const handleStarterUpgrade = useCallback(async () => {
+    if (!FEATURE_STARTER_ENABLED) {
+      return;
+    }
+    const redirectPath =
+      typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}` : "/settings";
+    logEvent("plan.starter_upgrade.cta", { currentPlan: planTier });
+    void recordKpiEvent("campaign.starter.settings_cta_click", { currentPlan: planTier }).catch(() => undefined);
+    try {
+      await requestUpgrade("starter", { redirectPath });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Starter 업그레이드를 준비하지 못했어요.";
+      pushToast({
+        id: "plan-starter-upgrade-error",
+        title: "Starter 업그레이드를 진행하지 못했어요",
+        message,
+        intent: "error",
+      });
+    }
+  }, [planTier, pushToast, requestUpgrade]);
 
   const content = useMemo(() => {
     if (!initialized || loading) {
@@ -180,6 +209,28 @@ export function PlanSummaryCard({ className }: PlanSummaryCardProps) {
         </header>
 
         <section className="space-y-3">
+          {FEATURE_STARTER_ENABLED && planTier === "free" ? (
+            <div className="rounded-lg border border-dashed border-sky-400/60 bg-white/80 p-4 text-sm text-text-secondaryLight shadow-sm dark:border-sky-300/60 dark:bg-white/5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">
+                    Starter 플랜으로 알림 자동화를 바로 시작하세요
+                  </p>
+                  <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                    워치리스트 50개 · 알림 룰 10개 · 하루 80회 RAG가 포함돼요.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleStarterUpgrade}
+                  disabled={isPreparing}
+                  className="rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-sky-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isPreparing ? "연결 중..." : "Starter 업그레이드"}
+                </button>
+              </div>
+            </div>
+          ) : null}
           {trialActive ? (
             <div className="rounded-lg border border-primary/40 bg-primary/10 p-4 text-sm text-text-primaryLight dark:border-primary.dark/40 dark:bg-primary.dark/15 dark:text-white">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -269,6 +320,8 @@ export function PlanSummaryCard({ className }: PlanSummaryCardProps) {
     trialDurationDays,
     trialEndsLabel,
     handleStartTrial,
+    handleStarterUpgrade,
+    isPreparing,
     trialStarting,
     router,
   ]);

@@ -70,6 +70,7 @@ export type EvidencePanelProps = {
 
 const PLAN_LABEL: Record<PlanTier, string> = {
   free: "Free",
+  starter: "Starter",
   pro: "Pro",
   enterprise: "Enterprise",
 };

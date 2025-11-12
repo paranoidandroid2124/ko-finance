@@ -28,7 +28,9 @@ import {
   type EvidenceHighlight,
   type GuardrailTelemetry,
   type MetricsTelemetry,
-  type ChatMessageMeta
+  type ChatMessageMeta,
+  type CitationMap,
+  type CitationEntry
 } from '@/store/chatStore';
 import { usePlanTier, usePlanStore } from '@/store/planStore';
 import { useToastStore } from '@/store/toastStore';
@@ -68,7 +70,7 @@ type RagApiHighlight = {
 type RagApiResponse = {
   answer?: string;
   context?: RagApiContext[];
-  citations?: Record<string, string[]>;
+  citations?: CitationMap;
   warnings?: string[];
   highlights?: RagApiHighlight[];
   error?: string | null;
@@ -247,17 +249,6 @@ const buildEvidenceItems = (
 
     return acc;
   }, []);
-
-const buildCitationText = (citations: Record<string, string[]> | undefined) => {
-  if (!citations) return '';
-  const segments = Object.entries(citations)
-    .filter(([, values]) => values && values.length)
-    .map(([key, values]) => {
-      const label = CITATION_LABELS[key] ?? key;
-      return `${label}: ${Array.from(new Set(values)).join(', ')}`;
-    });
-  return segments.length ? `출처: ${segments.join(' | ')}` : '';
-};
 
 const toGuardrailMessage = (code: string, judgeReason?: string): string => {
   if (!code) {
@@ -711,16 +702,22 @@ export default function ChatPage() {
             : streamedAnswer || ASSISTANT_ERROR_RESPONSE;
 
         const rawCitations =
-          payload.citations && typeof payload.citations === 'object' ? payload.citations : {};
-        const sanitizedCitations: Record<string, string[]> = {};
+          payload.citations && typeof payload.citations === 'object' ? (payload.citations as CitationMap) : {};
+        const sanitizedCitations: CitationMap = {};
         Object.entries(rawCitations as Record<string, unknown>).forEach(([key, value]) => {
-          if (Array.isArray(value)) {
-            sanitizedCitations[key] = value.filter((item): item is string => typeof item === 'string');
+          if (!Array.isArray(value)) {
+            return;
+          }
+          const entries = value
+            .filter(
+              (item): item is CitationEntry =>
+                typeof item === 'string' || (item !== null && typeof item === 'object')
+            )
+            .map((item) => (typeof item === 'object' && item !== null ? { ...item } : item));
+          if (entries.length > 0) {
+            sanitizedCitations[key] = entries;
           }
         });
-
-        const citationText = buildCitationText(sanitizedCitations);
-        const combinedAnswer = citationText ? `${answerText}\n\n${citationText}` : answerText;
 
         const payloadWarnings =
           Array.isArray(payload.warnings)
@@ -757,7 +754,7 @@ export default function ChatPage() {
         }
 
         updateMessage(sessionId, assistantMessageId, {
-          content: combinedAnswer,
+          content: answerText,
           meta: nextMeta
         });
 

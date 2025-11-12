@@ -626,17 +626,18 @@ export default function WatchlistRadarPage() {
       name: rule.name,
       description: rule.description,
       status: rule.status,
-      evaluationIntervalMinutes: rule.evaluationIntervalMinutes,
-      windowMinutes: rule.windowMinutes,
-      cooldownMinutes: rule.cooldownMinutes,
-      maxTriggersPerDay: rule.maxTriggersPerDay ?? undefined,
+      evaluationIntervalMinutes: rule.frequency?.evaluationIntervalMinutes ?? rule.evaluationIntervalMinutes,
+      windowMinutes: rule.frequency?.windowMinutes ?? rule.windowMinutes,
+      cooldownMinutes: rule.frequency?.cooldownMinutes ?? rule.cooldownMinutes,
+      maxTriggersPerDay:
+        rule.frequency?.maxTriggersPerDay ?? rule.maxTriggersPerDay ?? undefined,
       condition: {
-        type: rule.condition.type,
-        tickers: rule.condition.tickers ?? [],
-        categories: rule.condition.categories ?? [],
-        sectors: rule.condition.sectors ?? [],
+        type: rule.trigger.type,
+        tickers: rule.trigger.tickers ?? [],
+        categories: rule.trigger.categories ?? [],
+        sectors: rule.trigger.sectors ?? [],
         minSentiment:
-          rule.condition.type === "news" ? rule.condition.minSentiment ?? null : undefined,
+          rule.trigger.type === "news" ? rule.trigger.minSentiment ?? null : undefined,
       },
       channels: (rule.channels ?? []).map(
         (channel): WatchlistRuleChannelSummary => ({
@@ -1028,7 +1029,7 @@ export default function WatchlistRadarPage() {
     async (rule: AlertRule) => {
       const rawTickers = Array.from(
         new Set(
-          (rule.condition?.tickers ?? [])
+          (rule.trigger?.tickers ?? [])
             .map((value) => String(value).trim())
             .filter((value) => value.length > 0),
         ),
@@ -1060,14 +1061,14 @@ export default function WatchlistRadarPage() {
 
       const categories = Array.from(
         new Set(
-          (rule.condition?.categories ?? [])
+          (rule.trigger?.categories ?? [])
             .map((value) => String(value).trim())
             .filter((value) => value.length > 0),
         ),
       );
       setSelectedRuleTags(categories);
 
-      const conditionType = rule.condition?.type;
+      const conditionType = rule.trigger?.type;
       setSelectedEventTypes(conditionType ? [conditionType] : []);
 
       const channelTypes = Array.from(
@@ -1079,7 +1080,7 @@ export default function WatchlistRadarPage() {
       );
       setSelectedChannels(channelTypes);
 
-      setWindowMinutes(rule.windowMinutes || defaultWindowMinutes);
+      setWindowMinutes(rule.frequency?.windowMinutes || defaultWindowMinutes);
       setCustomWindow({ start: null, end: null });
 
       const slackTargetsFromRule = collectChannelTargets(rule, "slack");

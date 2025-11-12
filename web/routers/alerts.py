@@ -7,6 +7,8 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from core.env import env_int
+from core.logging import get_logger
 from database import get_db
 from schemas.api.alerts import (
     AlertChannelSchemaResponse,
@@ -32,13 +34,19 @@ from services.alert_service import (
     archive_alert_rule,
 )
 from services.alert_channel_registry import list_channel_definitions
-from services import watchlist_service
+from services import alert_rate_limiter, watchlist_service
+from services.audit_log import audit_alert_event
 from services.user_settings_service import UserLightMemSettings
 from services import lightmem_gate
 from services.plan_service import PlanContext
 from web.deps import require_plan_feature
+from web.quota_guard import enforce_quota
 
 router = APIRouter(prefix="/alerts", tags=["Alerts"])
+logger = get_logger(__name__)
+
+ALERTS_WRITE_RATE_LIMIT = env_int("ALERTS_WRITE_RATE_LIMIT", 30, minimum=1)
+ALERTS_WRITE_RATE_WINDOW_SECONDS = env_int("ALERTS_WRITE_RATE_WINDOW_SECONDS", 900, minimum=60)
 
 
 def _parse_uuid(value: Optional[str]) -> Optional[uuid.UUID]:
@@ -110,6 +118,60 @@ def _owner_filters(user_id: Optional[uuid.UUID], org_id: Optional[uuid.UUID]) ->
     return {"user_id": user_id, "org_id": org_id}
 
 
+def _rate_limit_identifier(user_id: Optional[uuid.UUID], org_id: Optional[uuid.UUID]) -> str:
+    if org_id:
+        return str(org_id)
+    if user_id:
+        return str(user_id)
+    return "anonymous"
+
+
+def _enforce_write_rate_limit(user_id: Optional[uuid.UUID], org_id: Optional[uuid.UUID]) -> None:
+    if ALERTS_WRITE_RATE_LIMIT <= 0:
+        return
+    result = alert_rate_limiter.check_limit(
+        scope="alerts.write",
+        identifier=_rate_limit_identifier(user_id, org_id),
+        limit=ALERTS_WRITE_RATE_LIMIT,
+        window_seconds=ALERTS_WRITE_RATE_WINDOW_SECONDS,
+    )
+    if result.allowed:
+        return
+    detail = {
+        "code": "alerts.rate_limited",
+        "message": "알림 설정 요청이 현재 제한되어 있습니다.",
+    }
+    if result.reset_at:
+        detail["resetAt"] = result.reset_at.isoformat()
+    raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=detail)
+
+
+def _audit_rule_event(
+    action: str,
+    rule,
+    user_id: Optional[uuid.UUID],
+    org_id: Optional[uuid.UUID],
+) -> None:
+    if rule is None:
+        target_id = None
+        plan_tier = None
+        status_value = None
+    else:
+        target_id = str(getattr(rule, "id", None))
+        plan_tier = getattr(rule, "plan_tier", None)
+        status_value = getattr(rule, "status", None)
+    try:
+        audit_alert_event(
+            action=action,
+            user_id=user_id,
+            org_id=org_id,
+            target_id=target_id,
+            extra={"planTier": plan_tier, "status": status_value},
+        )
+    except Exception:  # pragma: no cover - audit logging best effort
+        logger.debug("Failed to record audit event=%s target=%s", action, target_id, exc_info=True)
+
+
 def _response_from_rule(rule) -> AlertRuleResponse:
     payload = serialize_alert(rule)
     return AlertRuleResponse.model_validate(payload)
@@ -145,6 +207,8 @@ def create_rule(
     user_id = _parse_uuid(x_user_id)
     org_id = _parse_uuid(x_org_id)
     filters = _owner_filters(user_id, org_id)
+    enforce_quota("alerts.rules.create", plan=plan, user_id=user_id, org_id=org_id)
+    _enforce_write_rate_limit(user_id, org_id)
     try:
         rule = create_alert_rule(
             db,
@@ -152,16 +216,14 @@ def create_rule(
             owner_filters=filters,
             name=payload.name,
             description=payload.description,
-            condition=payload.condition.dict(),
+            trigger=payload.trigger.model_dump(),
             channels=[channel.model_dump() for channel in payload.channels],
             message_template=payload.messageTemplate,
-            evaluation_interval_minutes=payload.evaluationIntervalMinutes,
-            window_minutes=payload.windowMinutes,
-            cooldown_minutes=payload.cooldownMinutes,
-            max_triggers_per_day=payload.maxTriggersPerDay,
+            frequency=payload.frequency.model_dump(),
             extras=payload.extras,
         )
         db.commit()
+        _audit_rule_event("alerts.create", rule, user_id, org_id)
     except PlanQuotaError as exc:
         db.rollback()
         raise _plan_http_exception(status.HTTP_403_FORBIDDEN, exc.code, str(exc))
@@ -184,17 +246,23 @@ def update_rule(
     user_id = _parse_uuid(x_user_id)
     org_id = _parse_uuid(x_org_id)
     filters = _owner_filters(user_id, org_id)
+    _enforce_write_rate_limit(user_id, org_id)
     rule = get_alert_rule(db, rule_id=alert_id, owner_filters=filters)
     if rule is None:
         raise _plan_http_exception(status.HTTP_404_NOT_FOUND, "alerts.not_found", "알림을 찾을 수 없습니다.")
     changes = payload.model_dump(exclude_unset=True)
-    if payload.condition is not None:
-        changes["condition"] = payload.condition.dict()
+    if payload.trigger is not None:
+        changes["trigger"] = payload.trigger.model_dump()
+    elif payload.condition is not None:
+        changes["condition"] = payload.condition.model_dump()
+    if payload.frequency is not None:
+        changes["frequency"] = payload.frequency.model_dump()
     if payload.channels is not None:
         changes["channels"] = [channel.model_dump() for channel in payload.channels]
     try:
         updated = update_alert_rule(db, rule=rule, plan_tier=plan.tier, changes=changes)
         db.commit()
+        _audit_rule_event("alerts.update", updated, user_id, org_id)
     except PlanQuotaError as exc:
         db.rollback()
         raise _plan_http_exception(status.HTTP_403_FORBIDDEN, exc.code, str(exc))
@@ -216,11 +284,13 @@ def delete_rule(
     user_id = _parse_uuid(x_user_id)
     org_id = _parse_uuid(x_org_id)
     filters = _owner_filters(user_id, org_id)
+    _enforce_write_rate_limit(user_id, org_id)
     rule = get_alert_rule(db, rule_id=alert_id, owner_filters=filters)
     if rule is None:
         return
     archive_alert_rule(db, rule=rule)
     db.commit()
+    _audit_rule_event("alerts.delete", rule, user_id, org_id)
 
 
 @router.get("/watchlist/radar", response_model=WatchlistRadarResponse)
@@ -245,6 +315,7 @@ def watchlist_radar(
     limit = max(min(int(limit or 100), 200), 1)
     user_id = _resolve_lightmem_user_id(x_user_id)
     org_id = _parse_uuid(x_org_id)
+    enforce_quota("watchlist.radar", plan=plan, user_id=user_id, org_id=org_id)
     owner_filters = _owner_filters(user_id, org_id)
     tenant_token = str(org_id) if org_id else None
     user_token = str(user_id) if user_id else None
@@ -298,6 +369,7 @@ def watchlist_dispatch(
     limit = max(min(int(payload.limit or 20), 200), 1)
     user_id = _resolve_lightmem_user_id(x_user_id)
     org_id = _parse_uuid(x_org_id)
+    enforce_quota("watchlist.digest", plan=plan, user_id=user_id, org_id=org_id)
     owner_filters = _owner_filters(user_id, org_id)
     tenant_token = str(org_id) if org_id else None
     user_token = str(user_id) if user_id else None

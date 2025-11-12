@@ -27,7 +27,7 @@ const wrapWithProviders = (plan?: AlertPlanInfo) => {
 
 const resolvePlanTier = (plan?: AlertPlanInfo): PlanTier => {
   const tier = plan?.planTier;
-  if (tier === "free" || tier === "pro" || tier === "enterprise") {
+  if (tier === "free" || tier === "starter" || tier === "pro" || tier === "enterprise") {
     return tier;
   }
   return "pro";

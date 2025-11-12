@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Union, Literal
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator
@@ -90,6 +91,40 @@ class EvidenceAnchor(BaseModel):
     similarity: Optional[float] = Field(default=None, ge=0, le=1, description="Cosine similarity between query and chunk.")
 
 
+class CitationEvidence(BaseModel):
+    """Structured citation metadata used to render evidence snippets."""
+
+    label: str = Field(..., description="Display label rendered next to the citation (e.g., '(p.5)').")
+    bucket: Optional[Literal["page", "table", "footnote"]] = Field(
+        default=None,
+        description="Citation bucket derived from the source chunk type.",
+    )
+    chunk_id: Optional[str] = Field(default=None, description="Underlying chunk identifier.")
+    page_number: Optional[int] = Field(default=None, ge=1, description="Page number where the snippet originates.")
+    char_start: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Character offset (inclusive) relative to the source page/text.",
+    )
+    char_end: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Character offset (exclusive) relative to the source page/text.",
+    )
+    sentence_hash: Optional[str] = Field(
+        default=None,
+        description="Normalized hash of the quoted sentence used for drift detection.",
+    )
+    document_id: Optional[str] = Field(default=None, description="Identifier of the document/filing.")
+    document_url: Optional[str] = Field(default=None, description="Base URL for the source document.")
+    deeplink_url: Optional[str] = Field(default=None, description="Deep link that opens the highlight in the viewer.")
+    source: Optional[str] = Field(default=None, description="Origin tag of the chunk (pdf/xml/ocr...).")
+    excerpt: Optional[str] = Field(default=None, description="Quote snippet tied to the citation.")
+    anchor: Optional[EvidenceAnchor] = Field(default=None, description="Anchor metadata reused for highlights.")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class SelfCheckResult(BaseModel):
     """Self-check verdict emitted by the judge model."""
 
@@ -165,7 +200,7 @@ class RAGQueryResponse(BaseModel):
     assistant_message_id: Optional[uuid.UUID] = None
     answer: str
     context: List[RAGEvidence] = Field(default_factory=list)
-    citations: Dict[str, List[str]] = Field(default_factory=dict)
+    citations: Dict[str, List[Union[str, CitationEvidence]]] = Field(default_factory=dict)
     warnings: List[str] = Field(default_factory=list)
     highlights: List[Dict[str, Any]] = Field(default_factory=list)
     error: Optional[str] = None
@@ -185,13 +220,69 @@ class RAGQueryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class RAGDeeplinkPayload(BaseModel):
+    """Payload returned when resolving a deeplink token."""
+
+    token: str = Field(..., description="Opaque deeplink token used for auditing.")
+    document_url: str = Field(..., description="Underlying PDF/HTML document URL.")
+    page_number: int = Field(..., ge=1, description="Page number to focus in the viewer.")
+    char_start: Optional[int] = Field(
+        default=None, ge=0, description="Inclusive character offset relative to the page content."
+    )
+    char_end: Optional[int] = Field(
+        default=None, ge=0, description="Exclusive character offset relative to the page content."
+    )
+    sentence_hash: Optional[str] = Field(default=None, description="Hash of the quoted sentence.")
+    chunk_id: Optional[str] = Field(default=None, description="Chunk identifier associated with the citation.")
+    document_id: Optional[str] = Field(default=None, description="Internal document identifier (e.g., filing ID).")
+    excerpt: Optional[str] = Field(default=None, description="Optional snippet attached to the deeplink.")
+    expires_at: datetime = Field(..., description="Timestamp indicating when the token expires.")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RAGTelemetryEvent(BaseModel):
+    """Client-side telemetry event emitted from the dashboard."""
+
+    name: Literal[
+        "rag.deeplink_opened",
+        "rag.deeplink_failed",
+        "rag.deeplink_viewer_ready",
+        "rag.deeplink_viewer_error",
+        "rag.deeplink_viewer_original_opened",
+        "rag.deeplink_viewer_original_failed",
+        "rag.evidence_view",
+        "rag.evidence_diff_toggle",
+    ]
+    source: Optional[str] = Field(default=None, description="Logical source of the event (e.g., 'chat', 'viewer').")
+    timestamp: Optional[datetime] = Field(default=None, description="Client-side timestamp for the event.")
+    payload: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata for the event.")
+
+
+class RAGTelemetryRequest(BaseModel):
+    """Telemetry payload posted from the dashboard."""
+
+    events: List[RAGTelemetryEvent] = Field(..., min_length=1, max_length=50)
+
+
+class RAGTelemetryResponse(BaseModel):
+    """Result of ingesting telemetry events."""
+
+    accepted: int = Field(..., ge=0, description="Number of events accepted for processing.")
+
+
 __all__ = [
+    "CitationEvidence",
     "EvidenceAnchor",
     "FilingFilter",
     "PDFRect",
     "RAGEvidence",
     "RAGQueryRequest",
     "RAGQueryResponse",
+    "RAGDeeplinkPayload",
+    "RAGTelemetryEvent",
+    "RAGTelemetryRequest",
+    "RAGTelemetryResponse",
     "RelatedFiling",
     "SelfCheckResult",
 ]

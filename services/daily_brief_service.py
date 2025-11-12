@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
+import uuid
 
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
@@ -27,7 +28,8 @@ from models.digest import DailyDigestLog
 from models.evidence import EvidenceSnapshot
 from models.filing import Filing
 from models.news import NewsSignal
-from services import admin_rag_service, storage_service
+from services import admin_rag_service, quota_guard, storage_service
+from services.id_utils import normalize_uuid
 from services.aggregation.news_statistics import build_top_topics, summarize_news_signals
 from services.daily_brief_renderer import render_daily_brief
 from services.watchlist_utils import is_watchlist_rule
@@ -54,6 +56,10 @@ ALERT_TOP_CATEGORY_LIMIT = env_int("DAILY_BRIEF_ALERT_TOP_CATEGORY_LIMIT", 5, mi
 DIGEST_PREVIEW_NEWS_LIMIT = env_int("DIGEST_PREVIEW_NEWS_LIMIT", 4, minimum=1)
 DIGEST_PREVIEW_WATCHLIST_LIMIT = env_int("DIGEST_PREVIEW_WATCHLIST_LIMIT", 4, minimum=1)
 DIGEST_SOURCE_LABEL = "공시 · 뉴스 · 시황 지표"
+
+
+class DigestQuotaExceeded(RuntimeError):
+    """Raised when digest preview generation is blocked by plan quota."""
 
 
 def _ensure_session(session: Optional[Session]) -> Tuple[Session, bool]:
@@ -881,6 +887,7 @@ def build_digest_preview(
     tenant_id: Optional[str] = None,
     user_id_hint: Optional[str] = None,
     owner_filters: Optional[Mapping[str, Optional[Any]]] = None,
+    enforce_quota_action: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Assemble a lightweight digest preview payload for the dashboard."""
 
@@ -905,13 +912,33 @@ def build_digest_preview(
 
         window_minutes = max(int(prev_span.total_seconds() // 60), 60)
         digest_session_id = f"digest:{tenant_id or user_id_hint or 'global'}:{normalized_timeframe}"
+        owner_filters = owner_filters or {}
+        owner_user_id = normalize_uuid(owner_filters.get("user_id"))
+        owner_org_id = normalize_uuid(owner_filters.get("org_id"))
+        normalized_owner_filters: Dict[str, Optional[uuid.UUID]] = {}
+        if owner_user_id:
+            normalized_owner_filters["user_id"] = owner_user_id
+        if owner_org_id:
+            normalized_owner_filters["org_id"] = owner_org_id
+
+        if enforce_quota_action:
+            allowed = quota_guard.consume_quota(
+                enforce_quota_action,
+                user_id=owner_user_id,
+                org_id=owner_org_id,
+                context="daily_brief.digest_preview",
+                extra={"timeframe": normalized_timeframe, "reference_date": ref_date.isoformat()},
+            )
+            if not allowed:
+                raise DigestQuotaExceeded(f"{enforce_quota_action}_blocked")
+
         watchlist_result = _dispatch_watchlist_digest(
             db,
             window_minutes=window_minutes,
             limit=watchlist_limit,
             slack_targets=[],
             email_targets=[],
-            owner_filters=owner_filters or {},
+            owner_filters=normalized_owner_filters,
             plan_memory_enabled=plan_memory_enabled,
             session_id=digest_session_id,
             tenant_id=tenant_id,

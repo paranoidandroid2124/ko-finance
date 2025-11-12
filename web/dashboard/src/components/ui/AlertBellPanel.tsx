@@ -403,8 +403,8 @@ function ChatSection({ activeSession, otherSessions, onSelect, onStartNew }: Cha
 }
 
 const formatRuleSubtitle = (rule: AlertRule) => {
-  const tickers = rule.condition?.tickers?.length ? rule.condition.tickers.join(", ") : "전체";
-  const label = rule.condition?.type === "news" ? "뉴스" : "공시";
+  const tickers = rule.trigger?.tickers?.length ? rule.trigger.tickers.join(", ") : "전체";
+  const label = rule.trigger?.type === "news" ? "뉴스" : "공시";
   return `${label} · ${tickers}`;
 };
 

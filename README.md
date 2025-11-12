@@ -42,6 +42,21 @@ pip install -r requirements.txt
 4. **Env vars.** `DATABASE_URL` must be reachable from both FastAPI and Next.js processes (e.g., override to `postgresql://kfinance:your_strong_password@localhost:5432/kfinance_db` when running tests on the host). Set `AUTH_JWT_SECRET`, `NEXTAUTH_URL`, and `NEXT_PUBLIC_API_BASE_URL` for the dashboard.
 5. **Docs & tests.** See `docs/auth/email_password_design.md` for the latest API contract/error table and run `pytest tests/test_auth_api.py` plus `npm run test -- --run tests/auth/formatAuthError.test.ts` after making auth changes.
 
+### Core schema migrations
+새로운 엔타이틀먼트/RBAC/Alert 스키마는 `ops/migrations/apply_all.sh`로 한 번에 적용할 수 있습니다.
+```bash
+# 로컬 환경 (DATABASE_URL 사용)
+DATABASE_URL=postgresql://kfinance:your_strong_password@localhost:5432/kfinance_db \
+  ./ops/migrations/apply_all.sh
+
+# Docker Compose 컨테이너 내부에서 실행
+DOCKER_POSTGRES_CONTAINER=ko-finance-postgres-1 \
+POSTGRES_USER=kfinance \
+POSTGRES_DB=kfinance_db \
+  ./ops/migrations/apply_all.sh
+```
+스크립트는 실패 시 즉시 중단하며, 순서를 보장하므로 수동 `psql -f …` 반복을 피할 수 있습니다. 필요하다면 `DOCKER_POSTGRES_CONTAINER` 대신 `DATABASE_URL`만 지정해도 됩니다.
+
 ### Guest/Public Preview
 - `GET /api/v1/public/filings` · `POST /api/v1/public/chat` 는 인증 없이 최신 공시 목록과 간단한 챗 답변 미리보기를 제공합니다. 기본 rate limit(시간당 5회)이 적용됩니다.
 - Next.js `/public` 페이지에서 위 API를 호출해 “로그인 없이 둘러보기” 경험을 제공합니다. 로그인/가입 CTA가 함께 노출되므로 체험 → 가입 전환 흐름을 구성할 수 있습니다.
@@ -82,6 +97,10 @@ Ensure Redis/Postgres/Qdrant services are reachable via `.env`.
    aggregate_news_data()
    ```
 
+#### 4.4 Ingest reliability quick actions
+- **Viewer fallback + DLQ runbook:** `docs/ops/ingest_reliability.md` covers issuer-level fallback flags, robots/ToS logging fields, Celery retry knobs, DLQ triage, and the Grafana import file (`configs/grafana/ingest_reliability_dashboard.json`).
+- **Backfill CLI:** run `python scripts/ingest_backfill.py --start-date 2024-10-01 --end-date 2024-10-07 --chunk-days 2` to reseed filings idempotently (add `--corp-code 00123456` to scope to one issuer). Each run updates the `ingest_backfill_duration_seconds` Prometheus metric for alerting.
+
 ### 5. Common Commands
 - `pytest tests/test_news_fetcher.py tests/test_news_metrics.py` – Market Mood unit tests
 - `pytest tests/test_parse_tasks.py tests/test_llm_service.py tests/test_rag_api.py` – critical regressions
@@ -108,6 +127,9 @@ Ensure Redis/Postgres/Qdrant services are reachable via `.env`.
 - Call `POST /api/v1/rag/query` with `question`, `filing_id`, and optional `top_k`, `run_self_check` (defaults to `true`).
 - Ensure Celery worker/beat are running so `m3.run_rag_self_check` can log Langfuse telemetry.
 - Tests: `pytest tests/test_rag_api.py tests/test_rag_self_check.py tests/test_llm_service.py`.
+- QA: `python scripts/qa/sample_documents.py --total 60 --min-chunks 10 --min-ocr 15` → `python scripts/qa/verify_sentence_offsets.py --manifest scripts/qa/samples/manifest_<ts>.json --fail-on-issues`.
+- Docs/Runbook: `docs/ops/rag_deeplink_runbook.md`, `docs/ops/rag_deeplink_rollout.md`.
+- QA: `python scripts/qa/sample_documents.py --total 60 --min-chunks 10 --min-ocr 15`로 매니페스트를 뽑은 뒤, `python scripts/qa/verify_sentence_offsets.py --manifest scripts/qa/samples/manifest_<ts>.json --fail-on-issues`로 hash/offset 검사 리포트를 생성할 수 있습니다. CI에서는 `pytest tests/qa/test_sentence_offsets.py`로 리포트 생성 로직을 sanity-check합니다.
 - Vector store prerequisites: Qdrant reachable, embeddings configured via `.env` (`EMBEDDING_MODEL`, `QDRANT_*`).
 - Guardrail violations return the `SAFE_MESSAGE`; see `original_answer` for the redacted text.
 

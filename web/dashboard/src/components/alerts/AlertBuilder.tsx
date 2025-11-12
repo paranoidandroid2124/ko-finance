@@ -11,6 +11,8 @@ import {
   type AlertRule,
   type AlertChannelType,
   type AlertChannel,
+  type AlertTrigger,
+  type AlertFrequency,
   type AlertRuleCreatePayload,
   type AlertRuleUpdatePayload,
 } from "@/lib/alertsApi";
@@ -68,12 +70,16 @@ export function AlertBuilder({
     [pushToast],
   );
 
-  const defaultEvaluationInterval = plan?.defaultEvaluationIntervalMinutes ?? 5;
+  const planFrequencyDefaults = plan?.frequencyDefaults;
+  const defaultEvaluationInterval =
+    planFrequencyDefaults?.evaluationIntervalMinutes ?? plan?.defaultEvaluationIntervalMinutes ?? 5;
   const minEvaluationInterval = plan?.minEvaluationIntervalMinutes ?? 1;
-  const defaultWindowMinutes = plan?.defaultWindowMinutes ?? 60;
-  const defaultCooldownMinutes = plan?.defaultCooldownMinutes ?? 60;
+  const defaultWindowMinutes = planFrequencyDefaults?.windowMinutes ?? plan?.defaultWindowMinutes ?? 60;
+  const defaultCooldownMinutes =
+    planFrequencyDefaults?.cooldownMinutes ?? plan?.defaultCooldownMinutes ?? 60;
   const minCooldownMinutes = plan?.minCooldownMinutes ?? 0;
-  const planDailyCap = plan?.maxDailyTriggers ?? undefined;
+  const planDailyCap =
+    planFrequencyDefaults?.maxTriggersPerDay ?? plan?.maxDailyTriggers ?? undefined;
 
   const initialChannels = useMemo<ChannelState>(
     () => deriveInitialChannels({ plan, editingRule: editingRule ?? null, mode }),
@@ -360,22 +366,33 @@ export function AlertBuilder({
     }
 
     const trimmedName = name.trim();
-    const createPayload: AlertRuleCreatePayload = {
-      name: trimmedName || `새 알림 (${parsedTickers[0]})`,
-      description: description.trim() || null,
-      condition: {
-        type: conditionType,
-        tickers: parsedTickers,
-        categories: conditionType === "filing" ? categoriesList : [],
-        sectors: conditionType === "news" ? sectorsList : [],
-        minSentiment: conditionType === "news" ? sentimentValue : undefined,
-      },
-      channels: channelPayloads,
-      messageTemplate: null,
+    const triggerPayload: AlertTrigger = {
+      type: conditionType,
+      tickers: parsedTickers,
+      categories: conditionType === "filing" ? categoriesList : [],
+      sectors: conditionType === "news" ? sectorsList : [],
+      minSentiment: conditionType === "news" ? sentimentValue ?? undefined : undefined,
+    };
+
+    const frequencyPayload: AlertFrequency = {
       evaluationIntervalMinutes: evaluationValue,
       windowMinutes: windowValue,
       cooldownMinutes: cooldownValue,
       maxTriggersPerDay: maxTriggersValue,
+    };
+
+    const createPayload: AlertRuleCreatePayload = {
+      name: trimmedName || `새 알림 (${parsedTickers[0]})`,
+      description: description.trim() || null,
+      trigger: triggerPayload,
+      frequency: frequencyPayload,
+      condition: triggerPayload,
+      channels: channelPayloads,
+      messageTemplate: null,
+      evaluationIntervalMinutes: frequencyPayload.evaluationIntervalMinutes,
+      windowMinutes: frequencyPayload.windowMinutes,
+      cooldownMinutes: frequencyPayload.cooldownMinutes,
+      maxTriggersPerDay: frequencyPayload.maxTriggersPerDay ?? undefined,
       extras: {},
     };
 

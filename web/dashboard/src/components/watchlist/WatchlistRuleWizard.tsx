@@ -13,7 +13,8 @@ import { useCreateAlertRule, useUpdateAlertRule } from "@/hooks/useAlerts";
 import type {
   AlertChannel,
   AlertChannelType,
-  AlertCondition,
+  AlertTrigger,
+  AlertFrequency,
   AlertRule,
   AlertRuleCreatePayload,
   AlertRuleUpdatePayload,
@@ -37,7 +38,7 @@ type ChannelDraft = {
 type RuleDraft = {
   name: string;
   description: string;
-  conditionType: AlertCondition["type"];
+  conditionType: AlertTrigger["type"];
   tickers: string[];
   sectors: string[];
   categories: string[];
@@ -144,7 +145,7 @@ const CHANNEL_TYPE_OPTIONS: Array<{ value: AlertChannelType; label: string }> = 
   { value: "pagerduty", label: "PagerDuty" },
 ];
 
-const CONDITION_TYPE_OPTIONS: Array<{ value: AlertCondition["type"]; label: string }> = [
+const CONDITION_TYPE_OPTIONS: Array<{ value: AlertTrigger["type"]; label: string }> = [
   { value: "news", label: "뉴스" },
   { value: "filing", label: "공시" },
 ];
@@ -206,7 +207,7 @@ const extractDraftFromRule = (rule?: WatchlistRuleDetail | null): RuleDraft => {
   return {
     name: rule.name ?? "",
     description: rule.description ?? "",
-    conditionType: (rule.condition.type as AlertCondition["type"]) ?? "news",
+    conditionType: (rule.condition.type as AlertTrigger["type"]) ?? "news",
     tickers: Array.isArray(rule.condition.tickers) ? rule.condition.tickers : [],
     sectors: Array.isArray(rule.condition.sectors) ? rule.condition.sectors : [],
     categories: Array.isArray(rule.condition.categories) ? rule.condition.categories : [],
@@ -259,8 +260,8 @@ const toNumberOrNull = (value: string) => {
   return parsed;
 };
 
-const buildConditionPayload = (draft: RuleDraft): AlertCondition => {
-  const base: AlertCondition = {
+const buildTriggerPayload = (draft: RuleDraft): AlertTrigger => {
+  const base: AlertTrigger = {
     type: draft.conditionType,
     tickers: normalizeList(draft.tickers),
     categories: normalizeList(draft.categories),
@@ -276,6 +277,13 @@ const buildConditionPayload = (draft: RuleDraft): AlertCondition => {
 
   return base;
 };
+
+const buildFrequencyPayload = (draft: RuleDraft): AlertFrequency => ({
+  evaluationIntervalMinutes: parsePositiveInt(draft.evaluationIntervalMinutes, 60),
+  windowMinutes: parsePositiveInt(draft.windowMinutes, 1440),
+  cooldownMinutes: parseNonNegativeInt(draft.cooldownMinutes, 60),
+  maxTriggersPerDay: parseOptionalPositiveInt(draft.maxTriggersPerDay),
+});
 
 const sanitizeChannelDraft = (channel: ChannelDraft): AlertChannel | null => {
   const candidates = [
@@ -333,31 +341,43 @@ const parseOptionalPositiveInt = (value: string) => {
   return Math.round(parsed);
 };
 
-const buildCreatePayload = (draft: RuleDraft): AlertRuleCreatePayload => ({
-  name: draft.name.trim(),
-  description: draft.description.trim() || undefined,
-  condition: buildConditionPayload(draft),
-  channels: buildChannelsPayload(draft),
-  messageTemplate: draft.messageTemplate.trim() || undefined,
-  evaluationIntervalMinutes: parsePositiveInt(draft.evaluationIntervalMinutes, 60),
-  windowMinutes: parsePositiveInt(draft.windowMinutes, 1440),
-  cooldownMinutes: parseNonNegativeInt(draft.cooldownMinutes, 60),
-  maxTriggersPerDay: parseOptionalPositiveInt(draft.maxTriggersPerDay),
-  extras: {},
-});
+const buildCreatePayload = (draft: RuleDraft): AlertRuleCreatePayload => {
+  const trigger = buildTriggerPayload(draft);
+  const frequency = buildFrequencyPayload(draft);
+  return {
+    name: draft.name.trim(),
+    description: draft.description.trim() || undefined,
+    trigger,
+    frequency,
+    condition: trigger,
+    channels: buildChannelsPayload(draft),
+    messageTemplate: draft.messageTemplate.trim() || undefined,
+    evaluationIntervalMinutes: frequency.evaluationIntervalMinutes,
+    windowMinutes: frequency.windowMinutes,
+    cooldownMinutes: frequency.cooldownMinutes,
+    maxTriggersPerDay: frequency.maxTriggersPerDay,
+    extras: {},
+  };
+};
 
-const buildUpdatePayload = (draft: RuleDraft): AlertRuleUpdatePayload => ({
-  name: draft.name.trim() || undefined,
-  description: draft.description.trim() || undefined,
-  condition: buildConditionPayload(draft),
-  channels: buildChannelsPayload(draft),
-  messageTemplate: draft.messageTemplate.trim() || undefined,
-  evaluationIntervalMinutes: parsePositiveInt(draft.evaluationIntervalMinutes, 60),
-  windowMinutes: parsePositiveInt(draft.windowMinutes, 1440),
-  cooldownMinutes: parseNonNegativeInt(draft.cooldownMinutes, 60),
-  maxTriggersPerDay: parseOptionalPositiveInt(draft.maxTriggersPerDay),
-  extras: {},
-});
+const buildUpdatePayload = (draft: RuleDraft): AlertRuleUpdatePayload => {
+  const trigger = buildTriggerPayload(draft);
+  const frequency = buildFrequencyPayload(draft);
+  return {
+    name: draft.name.trim() || undefined,
+    description: draft.description.trim() || undefined,
+    trigger,
+    frequency,
+    condition: trigger,
+    channels: buildChannelsPayload(draft),
+    messageTemplate: draft.messageTemplate.trim() || undefined,
+    evaluationIntervalMinutes: frequency.evaluationIntervalMinutes,
+    windowMinutes: frequency.windowMinutes,
+    cooldownMinutes: frequency.cooldownMinutes,
+    maxTriggersPerDay: frequency.maxTriggersPerDay,
+    extras: {},
+  };
+};
 type WatchlistRuleWizardProps = {
   open: boolean;
   mode?: WizardMode;

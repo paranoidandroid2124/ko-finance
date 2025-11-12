@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+import hashlib
 
 import fitz  # PyMuPDF
 
@@ -58,6 +60,13 @@ def _sanitize_rect(rect: Any) -> List[float]:
     if isinstance(rect, (list, tuple)) and len(rect) >= 4:
         return [float(rect[0]), float(rect[1]), float(rect[2]), float(rect[3])]
     return [0.0, 0.0, 0.0, 0.0]
+
+
+def _sentence_hash(text: str) -> Optional[str]:
+    normalized = normalize_text(text) if text else ""
+    if not normalized:
+        return None
+    return hashlib.sha1(normalized.encode("utf-8", errors="ignore")).hexdigest()
 
 
 def _table_to_text(table_data: List[List[str]]) -> str:
@@ -150,6 +159,15 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
             pending_blocks: List[Any] = []
             pending_bbox = [float("inf"), float("inf"), 0.0, 0.0]
             current_span: Optional[Dict[str, Any]] = None
+            page_char_cursor = 0
+
+            def _allocate_char_span(text: str) -> Tuple[int, int]:
+                nonlocal page_char_cursor
+                safe_len = len(text or "")
+                start = page_char_cursor
+                end = start + safe_len
+                page_char_cursor = end + (1 if safe_len else 0)
+                return start, end
 
             def _reset_pending() -> None:
                 nonlocal pending_lines, pending_blocks, pending_bbox, current_span
@@ -167,10 +185,16 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
                     _reset_pending()
                     return
 
+                char_start, char_end = _allocate_char_span(content)
                 base_meta: Dict[str, Any] = {
                     "block_indices": [idx for idx in pending_blocks if idx is not None],
                     "approx_char_length": len(content),
+                    "char_start": char_start,
+                    "char_end": char_end,
                 }
+                hash_value = _sentence_hash(content)
+                if hash_value:
+                    base_meta["sentence_hash"] = hash_value
                 metadata = _enrich_metadata(
                     pending_bbox[0],
                     pending_bbox[1],
@@ -243,6 +267,8 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
                     _flush_pending()
 
                 if has_footnote and (info["y0"] / page_height) >= FOOTNOTE_Y_RATIO:
+                    footnote_content = " ".join(info["footnote_lines"])
+                    char_start, char_end = _allocate_char_span(footnote_content)
                     metadata = _enrich_metadata(
                         info["x0"],
                         info["y0"],
@@ -253,13 +279,18 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
                         base={
                             "block_index": info["block_index"],
                             "footnote_lines": info["footnote_lines"],
+                            "char_start": char_start,
+                            "char_end": char_end,
                         },
                     )
+                    hash_value = _sentence_hash(footnote_content)
+                    if hash_value:
+                        metadata["sentence_hash"] = hash_value
                     chunks.append(
                         build_chunk(
                             f"pdf-footnote-{page_number}-{chunk_counter}",
                             chunk_type="footnote",
-                            content=" ".join(info["footnote_lines"]),
+                            content=footnote_content,
                             section="footnote",
                             source="pdf",
                             page_number=page_number,
@@ -277,6 +308,7 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
                     continue
 
                 table_text = _table_to_text(table_data)
+                char_start, char_end = _allocate_char_span(table_text)
                 cells_metadata: List[Dict[str, Any]] = []
                 try:
                     for cell in table.cells or []:
@@ -310,8 +342,13 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
                         "table_json": table_data,
                         "cell_coordinates": cells_metadata,
                         "table_index": table_index,
+                        "char_start": char_start,
+                        "char_end": char_end,
                     },
                 )
+                hash_value = _sentence_hash(table_text)
+                if hash_value:
+                    table_metadata["sentence_hash"] = hash_value
 
                 chunks.append(
                     build_chunk(
@@ -331,6 +368,8 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
                 if block.get("type") != 1:
                     continue
                 bbox = block.get("bbox", [0, 0, 0, 0])
+                figure_content = f"Figure image on page {page_number}"
+                char_start, char_end = _allocate_char_span(figure_content)
                 figure_metadata = _enrich_metadata(
                     float(bbox[0]),
                     float(bbox[1]),
@@ -338,13 +377,16 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
                     float(bbox[3]),
                     page_width=page_width,
                     page_height=page_height,
-                    base={"image": block.get("image")},
+                    base={"image": block.get("image"), "char_start": char_start, "char_end": char_end},
                 )
+                hash_value = _sentence_hash(figure_content)
+                if hash_value:
+                    figure_metadata["sentence_hash"] = hash_value
                 chunks.append(
                     build_chunk(
                         f"pdf-figure-{page_number}-{chunk_counter}",
                         chunk_type="figure",
-                        content=f"Figure image on page {page_number}",
+                        content=figure_content,
                         section="figure",
                         source="pdf",
                         page_number=page_number,

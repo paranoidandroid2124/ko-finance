@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from services.plan_service import resolve_plan_context
 from web import routers
+from web.middleware.rbac import rbac_context_middleware
 
 app = FastAPI(
     title="K-Finance AI Research Copilot",
@@ -33,6 +34,12 @@ async def inject_plan_context(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def apply_rbac_context(request: Request, call_next):
+    """Hydrate RBAC context + enforce global guardrails."""
+    return await rbac_context_middleware(request, call_next)
+
+
 @app.get("/", summary="Health Check", tags=["Default"])
 def health_check():
     """API 상태를 확인하는 헬스 체크 엔드포인트입니다."""
@@ -51,8 +58,11 @@ app.include_router(routers.company.router, prefix="/api/v1")
 app.include_router(routers.event_study.router, prefix="/api/v1")
 app.include_router(routers.payments.router, prefix="/api/v1")
 app.include_router(routers.plan.router, prefix="/api/v1")
+app.include_router(routers.orgs.router, prefix="/api/v1")
 app.include_router(routers.auth.router, prefix="/api/v1")
 app.include_router(routers.user_settings.router, prefix="/api/v1")
+app.include_router(routers.campaign.router, prefix="/api/v1")
+app.include_router(routers.analytics.router, prefix="/api/v1")
 app.include_router(routers.reports.router, prefix="/api/v1")
 app.include_router(routers.health.router, prefix="/api/v1")
 app.include_router(routers.ops.router, prefix="/ops/api")

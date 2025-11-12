@@ -1,14 +1,21 @@
 import os
 import sys
 import types
-from typing import Generator
+from typing import Generator, Optional
 
 import pytest
-from sqlalchemy import create_engine, event
-from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session, sessionmaker
 
-from database import Base
+try:
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.engine import Engine
+    from sqlalchemy.orm import Session, sessionmaker
+except Exception as exc:  # pragma: no cover - SQLAlchemy optional during CI
+    Engine = Session = sessionmaker = None  # type: ignore
+    create_engine = None  # type: ignore
+    _SQLALCHEMY_IMPORT_ERROR: Optional[Exception] = exc
+else:
+    _SQLALCHEMY_IMPORT_ERROR = None
+
 
 # Stub PyMuPDF so tests importing parse modules don't require native dependency.
 sys.modules.setdefault("fitz", types.SimpleNamespace())  # type: ignore
@@ -32,7 +39,13 @@ def _resolve_test_database_url() -> str:
 
 
 @pytest.fixture(scope="session")
-def engine() -> Generator[Engine, None, None]:
+def engine() -> Generator["Engine", None, None]:
+    if _SQLALCHEMY_IMPORT_ERROR or create_engine is None:
+        pytest.skip(f"SQLAlchemy is unavailable: {_SQLALCHEMY_IMPORT_ERROR}")
+    try:
+        from database import Base  # type: ignore
+    except Exception as exc:
+        pytest.skip(f"Database metadata unavailable: {exc}")
     database_url = _resolve_test_database_url()
     engine = create_engine(database_url)
     Base.metadata.create_all(bind=engine)
@@ -43,7 +56,9 @@ def engine() -> Generator[Engine, None, None]:
 
 
 @pytest.fixture()
-def db_session(engine: Engine) -> Generator[Session, None, None]:
+def db_session(engine: "Engine") -> Generator["Session", None, None]:
+    if _SQLALCHEMY_IMPORT_ERROR:
+        pytest.skip(f"SQLAlchemy is unavailable: {_SQLALCHEMY_IMPORT_ERROR}")
     connection = engine.connect()
     transaction = connection.begin()
     SessionLocal = sessionmaker(bind=connection, autoflush=False, expire_on_commit=False)

@@ -29,24 +29,28 @@ type PlanLockProps = {
 
 const PLAN_LABEL: Record<PlanTier, string> = {
   free: "Free",
+  starter: "Starter",
   pro: "Pro",
   enterprise: "Enterprise",
 };
 
 const PLAN_TONE: Record<PlanTier, string> = {
   free: "bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-200",
+  starter: "bg-sky-100 text-sky-600 dark:bg-sky-500/10 dark:text-sky-200",
   pro: "bg-primary/10 text-primary dark:bg-primary/20",
   enterprise: "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-200",
 };
 
 const PLAN_ICON: Record<PlanTier, ComponentType<{ className?: string }>> = {
   free: Sparkles,
+  starter: Sparkles,
   pro: Lock,
   enterprise: Crown,
 };
 
 const PLAN_ICON_TONE: Record<PlanTier, string> = {
   free: "text-slate-500 dark:text-slate-300",
+  starter: "text-sky-500 dark:text-sky-200",
   pro: "text-primary",
   enterprise: "text-emerald-500 dark:text-emerald-300",
 };

@@ -3,8 +3,9 @@
 import { create } from 'zustand';
 import { logEvent } from '@/lib/telemetry';
 import { resolveApiBase } from '@/lib/apiBase';
+import { FEATURE_STARTER_ENABLED } from '@/config/features';
 
-export type PlanTier = 'free' | 'pro' | 'enterprise';
+export type PlanTier = 'free' | 'starter' | 'pro' | 'enterprise';
 
 export type PlanFeatureFlags = {
   searchCompare: boolean;
@@ -76,6 +77,17 @@ export type PlanContextUpdateInput = {
   triggerCheckout?: boolean;
 };
 
+export type PlanDebugOverride = {
+  enabled: boolean;
+  planTier?: PlanTier;
+  entitlements?: string[];
+  featureFlags?: Partial<PlanFeatureFlags>;
+  memoryFlags?: Partial<PlanMemoryFlags>;
+  quota?: Partial<PlanQuota>;
+  expiresAt?: string | null;
+  checkoutRequested?: boolean;
+};
+
 type PlanStoreState = {
   planTier: PlanTier;
   expiresAt?: string | null;
@@ -98,17 +110,23 @@ type PlanStoreState = {
   presets: Record<PlanTier, PlanPreset> | null;
   presetsLoading: boolean;
   presetsError?: string | null;
+  lastServerPlan: PlanContextPayload;
+  debugToolsEnabled: boolean;
+  debugOverride: PlanDebugOverride | null;
   fetchPlan: (options?: { signal?: AbortSignal }) => Promise<void>;
   setPlanFromServer: (payload: PlanContextPayload) => void;
   savePlan: (input: PlanContextUpdateInput) => Promise<PlanContextPayload>;
   startTrial: (input?: PlanTrialStartInput) => Promise<PlanContextPayload>;
   fetchPlanPresets: (options?: { signal?: AbortSignal }) => Promise<void>;
+  applyDebugOverride: (override: PlanDebugOverride) => void;
+  clearDebugOverride: () => void;
 };
 
 const PLAN_TIER_ORDER: Record<PlanTier, number> = {
   free: 0,
-  pro: 1,
-  enterprise: 2,
+  starter: 1,
+  pro: 2,
+  enterprise: 3,
 };
 
 const DEFAULT_FEATURE_FLAGS: PlanFeatureFlags = {
@@ -154,6 +172,11 @@ const DEFAULT_PLAN_PAYLOAD: PlanContextPayload = {
     used: false,
   },
 };
+
+const PLAN_DEBUG_STORAGE_KEY = '__ko_plan_debug_override__';
+const PLAN_DEBUG_TOOLS_ENABLED =
+  process.env.NEXT_PUBLIC_ENABLE_PLAN_DEBUG_TOOLS === '1' ||
+  (process.env.NEXT_PUBLIC_ENABLE_PLAN_DEBUG_TOOLS !== '0' && process.env.NODE_ENV !== 'production');
 
 function mergeFeatureFlags(flags?: PlanFeatureFlags): PlanFeatureFlags {
   return { ...DEFAULT_FEATURE_FLAGS, ...(flags ?? {}) };
@@ -232,331 +255,407 @@ function mapPayload(payload: PlanContextPayload) {
   };
 }
 
-export const usePlanStore = create<PlanStoreState>((set, get) => ({
-  planTier: DEFAULT_PLAN_PAYLOAD.planTier,
-  expiresAt: DEFAULT_PLAN_PAYLOAD.expiresAt,
-  entitlements: DEFAULT_PLAN_PAYLOAD.entitlements,
-  featureFlags: DEFAULT_FEATURE_FLAGS,
-  memoryFlags: DEFAULT_MEMORY_FLAGS,
-  quota: DEFAULT_QUOTA,
-  updatedAt: DEFAULT_PLAN_PAYLOAD.updatedAt,
-  updatedBy: DEFAULT_PLAN_PAYLOAD.updatedBy,
-  changeNote: DEFAULT_PLAN_PAYLOAD.changeNote,
-  checkoutRequested: DEFAULT_PLAN_PAYLOAD.checkoutRequested ?? false,
-  initialized: false,
-  loading: false,
-  saving: false,
-  error: undefined,
-  saveError: undefined,
-  trial: mergeTrial(DEFAULT_PLAN_PAYLOAD.trial),
-  trialStarting: false,
-  trialError: undefined,
-  presets: null,
-  presetsLoading: false,
-  presetsError: undefined,
+type NormalizedPlanContext = ReturnType<typeof mapPayload>;
 
-  async fetchPlan(options) {
-    if (get().loading) {
-      return;
+const DEFAULT_NORMALIZED_PLAN: NormalizedPlanContext = mapPayload(DEFAULT_PLAN_PAYLOAD);
+
+const readDebugOverrideFromStorage = (): PlanDebugOverride | null => {
+  if (!PLAN_DEBUG_TOOLS_ENABLED || typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(PLAN_DEBUG_STORAGE_KEY);
+    if (!raw) {
+      return null;
     }
-    set({ loading: true, error: undefined });
-
-    try {
-      const baseUrl = resolveApiBase();
-      const response = await fetch(`${baseUrl}/api/v1/plan/context`, {
-        cache: 'no-store',
-        credentials: 'include',
-        headers: { Accept: 'application/json' },
-        signal: options?.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`failed to load plan context (${response.status})`);
-      }
-
-      const payload = (await response.json()) as PlanContextPayload;
-      logEvent('plan.context.fetched', {
-        planTier: payload.planTier,
-        entitlements: payload.entitlements ?? [],
-      });
-
-      const mapped = mapPayload(payload);
-      set({
-        planTier: mapped.planTier,
-        expiresAt: mapped.expiresAt,
-        entitlements: mapped.entitlements,
-        featureFlags: mapped.featureFlags,
-        memoryFlags: mapped.memoryFlags,
-        quota: mapped.quota,
-        updatedAt: mapped.updatedAt,
-        updatedBy: mapped.updatedBy,
-        changeNote: mapped.changeNote,
-        checkoutRequested: mapped.checkoutRequested,
-        initialized: true,
-        loading: false,
-        saving: false,
-        error: undefined,
-        saveError: undefined,
-        trial: mapped.trial,
-        trialStarting: false,
-        trialError: undefined,
-      });
-      if (!get().presets && !get().presetsLoading) {
-        void get()
-          .fetchPlanPresets(options)
-          .catch(() => undefined);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'plan context fetch failed';
-      logEvent('plan.context.fetch_failed', { message });
-
-      set({
-        planTier: DEFAULT_PLAN_PAYLOAD.planTier,
-        expiresAt: DEFAULT_PLAN_PAYLOAD.expiresAt,
-        entitlements: DEFAULT_PLAN_PAYLOAD.entitlements,
-        featureFlags: DEFAULT_FEATURE_FLAGS,
-        memoryFlags: DEFAULT_MEMORY_FLAGS,
-        quota: DEFAULT_QUOTA,
-        updatedAt: DEFAULT_PLAN_PAYLOAD.updatedAt,
-        updatedBy: DEFAULT_PLAN_PAYLOAD.updatedBy,
-        changeNote: DEFAULT_PLAN_PAYLOAD.changeNote,
-        checkoutRequested: DEFAULT_PLAN_PAYLOAD.checkoutRequested ?? false,
-        initialized: true,
-        loading: false,
-        saving: false,
-        error: message,
-        saveError: message,
-        trial: mergeTrial(DEFAULT_PLAN_PAYLOAD.trial),
-        trialStarting: false,
-        trialError: message,
-      });
+    const parsed = JSON.parse(raw) as PlanDebugOverride;
+    if (!parsed?.enabled) {
+      return null;
     }
-  },
+    return parsed;
+  } catch {
+    return null;
+  }
+};
 
-  setPlanFromServer(payload) {
-    logEvent('plan.context.hydrated', { planTier: payload.planTier });
-    const mapped = mapPayload(payload);
+const persistDebugOverrideToStorage = (override: PlanDebugOverride | null) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (!override || !override.enabled) {
+    window.localStorage.removeItem(PLAN_DEBUG_STORAGE_KEY);
+    return;
+  }
+  try {
+    window.localStorage.setItem(PLAN_DEBUG_STORAGE_KEY, JSON.stringify(override));
+  } catch {
+    // noop - storage quota exceeded or unavailable
+  }
+};
+
+const applyDebugOverrideToPayload = (
+  payload: NormalizedPlanContext,
+  override: PlanDebugOverride | null,
+): NormalizedPlanContext => {
+  if (!PLAN_DEBUG_TOOLS_ENABLED || !override?.enabled) {
+    return payload;
+  }
+
+  const next: NormalizedPlanContext = { ...payload };
+
+  if (override.planTier) {
+    next.planTier = override.planTier;
+  }
+
+  if (override.entitlements?.length) {
+    next.entitlements = uniqueEntitlements([...next.entitlements, ...override.entitlements]);
+  }
+
+  if (override.featureFlags) {
+    next.featureFlags = mergeFeatureFlags({
+      ...next.featureFlags,
+      ...override.featureFlags,
+    } as PlanFeatureFlags);
+  }
+
+  if (override.memoryFlags) {
+    next.memoryFlags = mergeMemoryFlags({
+      ...next.memoryFlags,
+      ...override.memoryFlags,
+    } as PlanMemoryFlags);
+  }
+
+  if (override.quota) {
+    next.quota = mergeQuota({
+      ...next.quota,
+      ...override.quota,
+    } as PlanQuota);
+  }
+
+  if (override.expiresAt !== undefined) {
+    next.expiresAt = override.expiresAt ?? null;
+  }
+
+  if (typeof override.checkoutRequested === 'boolean') {
+    next.checkoutRequested = override.checkoutRequested;
+  }
+
+  return next;
+};
+
+export const usePlanStore = create<PlanStoreState>((set, get) => {
+  const initialDebugOverride = PLAN_DEBUG_TOOLS_ENABLED ? readDebugOverrideFromStorage() : null;
+
+  const applyPlanPayloadToState = (payload: NormalizedPlanContext, extra?: Partial<PlanStoreState>) => {
     set({
-      planTier: mapped.planTier,
-      expiresAt: mapped.expiresAt,
-      entitlements: mapped.entitlements,
-      featureFlags: mapped.featureFlags,
-      memoryFlags: mapped.memoryFlags,
-      quota: mapped.quota,
-      updatedAt: mapped.updatedAt,
-      updatedBy: mapped.updatedBy,
-      changeNote: mapped.changeNote,
-      checkoutRequested: mapped.checkoutRequested,
-      initialized: true,
-      loading: false,
-      saving: false,
-      error: undefined,
-      saveError: undefined,
-      trial: mapped.trial,
-      trialStarting: false,
-      trialError: undefined,
+      planTier: payload.planTier,
+      expiresAt: payload.expiresAt,
+      entitlements: payload.entitlements,
+      featureFlags: payload.featureFlags,
+      memoryFlags: payload.memoryFlags,
+      quota: payload.quota,
+      updatedAt: payload.updatedAt,
+      updatedBy: payload.updatedBy,
+      changeNote: payload.changeNote,
+      checkoutRequested: payload.checkoutRequested,
+      trial: payload.trial ?? mergeTrial(DEFAULT_PLAN_PAYLOAD.trial),
+      ...extra,
     });
-  },
+  };
 
-  async savePlan(input) {
-    const current = get();
-    if (current.saving) {
-      return Promise.resolve({
-        planTier: current.planTier,
-        expiresAt: current.expiresAt ?? null,
-        entitlements: current.entitlements,
-        featureFlags: current.featureFlags,
-        memoryFlags: current.memoryFlags,
-        quota: current.quota,
-        updatedAt: current.updatedAt ?? null,
-        updatedBy: current.updatedBy ?? null,
-        changeNote: current.changeNote ?? null,
-        checkoutRequested: current.checkoutRequested,
-        trial: current.trial ?? mergeTrial(DEFAULT_PLAN_PAYLOAD.trial),
-      });
-    }
-    set({ saving: true, saveError: undefined });
+  const initialEffectivePlan = applyDebugOverrideToPayload(DEFAULT_NORMALIZED_PLAN, initialDebugOverride);
 
-    const baseUrl = resolveApiBase();
-    const unique = uniqueEntitlements(input.entitlements);
-    const body = {
-      planTier: input.planTier,
-      expiresAt: input.expiresAt ?? null,
-      entitlements: unique,
-      memoryFlags: input.memoryFlags ?? DEFAULT_MEMORY_FLAGS,
-      quota: input.quota,
-      updatedBy: input.updatedBy ?? null,
-      changeNote: input.changeNote ?? null,
-      triggerCheckout: Boolean(input.triggerCheckout),
-    };
-
-    try {
-      const response = await fetch(`${baseUrl}/api/v1/plan/context`, {
-        method: 'PATCH',
-        credentials: 'include',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-
-      if (!response.ok) {
-        const message = `failed to save plan context (${response.status})`;
-        throw new Error(message);
+  return {
+    planTier: initialEffectivePlan.planTier,
+    expiresAt: initialEffectivePlan.expiresAt,
+    entitlements: initialEffectivePlan.entitlements,
+    featureFlags: initialEffectivePlan.featureFlags,
+    memoryFlags: initialEffectivePlan.memoryFlags,
+    quota: initialEffectivePlan.quota,
+    updatedAt: initialEffectivePlan.updatedAt,
+    updatedBy: initialEffectivePlan.updatedBy,
+    changeNote: initialEffectivePlan.changeNote,
+    checkoutRequested: initialEffectivePlan.checkoutRequested,
+    initialized: false,
+    loading: false,
+    saving: false,
+    error: undefined,
+    saveError: undefined,
+    trial: initialEffectivePlan.trial,
+    trialStarting: false,
+    trialError: undefined,
+    presets: null,
+    presetsLoading: false,
+    presetsError: undefined,
+    lastServerPlan: DEFAULT_NORMALIZED_PLAN,
+    debugToolsEnabled: PLAN_DEBUG_TOOLS_ENABLED,
+    debugOverride: initialDebugOverride,
+    async fetchPlan(options) {
+      if (get().loading) {
+        return;
       }
+      set({ loading: true, error: undefined });
 
-      const payload = (await response.json()) as PlanContextPayload;
+      try {
+        const baseUrl = resolveApiBase();
+        const response = await fetch(`${baseUrl}/api/v1/plan/context`, {
+          cache: 'no-store',
+          credentials: 'include',
+          headers: { Accept: 'application/json' },
+          signal: options?.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`failed to load plan context (${response.status})`);
+        }
+
+        const payload = (await response.json()) as PlanContextPayload;
+        logEvent('plan.context.fetched', {
+          planTier: payload.planTier,
+          entitlements: payload.entitlements ?? [],
+        });
+
+        const mapped = mapPayload(payload);
+        const effective = applyDebugOverrideToPayload(mapped, get().debugOverride);
+        applyPlanPayloadToState(effective, {
+          initialized: true,
+          loading: false,
+          saving: false,
+          error: undefined,
+          saveError: undefined,
+          trialStarting: false,
+          trialError: undefined,
+          lastServerPlan: mapped,
+        });
+        if (!get().presets && !get().presetsLoading) {
+          void get()
+            .fetchPlanPresets(options)
+            .catch(() => undefined);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'plan context fetch failed';
+        logEvent('plan.context.fetch_failed', { message });
+
+        const fallback = applyDebugOverrideToPayload(DEFAULT_NORMALIZED_PLAN, get().debugOverride);
+        applyPlanPayloadToState(fallback, {
+          initialized: true,
+          loading: false,
+          saving: false,
+          error: message,
+          saveError: message,
+          trialStarting: false,
+          trialError: message,
+        });
+      }
+    },
+
+    setPlanFromServer(payload) {
+      logEvent('plan.context.hydrated', { planTier: payload.planTier });
       const mapped = mapPayload(payload);
-      logEvent('plan.context.saved', {
-        planTier: mapped.planTier,
-        entitlements: mapped.entitlements,
-        checkoutRequested: mapped.checkoutRequested,
-      });
-
-      set({
-        planTier: mapped.planTier,
-        expiresAt: mapped.expiresAt,
-        entitlements: mapped.entitlements,
-        featureFlags: mapped.featureFlags,
-        memoryFlags: mapped.memoryFlags,
-        quota: mapped.quota,
-        updatedAt: mapped.updatedAt,
-        updatedBy: mapped.updatedBy ?? body.updatedBy ?? null,
-        changeNote: mapped.changeNote ?? body.changeNote ?? null,
-        checkoutRequested: mapped.checkoutRequested,
+      const effective = applyDebugOverrideToPayload(mapped, get().debugOverride);
+      applyPlanPayloadToState(effective, {
         initialized: true,
         loading: false,
         saving: false,
         error: undefined,
         saveError: undefined,
-        trial: mapped.trial,
         trialStarting: false,
         trialError: undefined,
+        lastServerPlan: mapped,
       });
+    },
 
-      return payload;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'plan context save failed';
-      logEvent('plan.context.save_failed', { message });
-      set({ saving: false, saveError: message });
-      throw error instanceof Error ? error : new Error(String(error));
-    }
-  },
-
-  async startTrial(input) {
-    const { trialStarting } = get();
-    if (trialStarting) {
-      return Promise.reject(new Error('trial request already in progress'));
-    }
-    set({ trialStarting: true, trialError: undefined });
-
-    const baseUrl = resolveApiBase();
-    const payloadBody: Record<string, unknown> = {};
-    if (input?.actor) {
-      payloadBody.actor = input.actor;
-    }
-    if (typeof input?.durationDays === 'number') {
-      payloadBody.durationDays = input.durationDays;
-    }
-    if (input?.tier) {
-      payloadBody.tier = input.tier;
-    }
-
-    try {
-      const response = await fetch(`${baseUrl}/api/v1/plan/trial`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payloadBody),
-      });
-
-      if (!response.ok) {
-        throw new Error(`failed to start plan trial (${response.status})`);
+    async savePlan(input) {
+      const current = get();
+      if (current.saving) {
+        return Promise.resolve({
+          planTier: current.planTier,
+          expiresAt: current.expiresAt ?? null,
+          entitlements: current.entitlements,
+          featureFlags: current.featureFlags,
+          memoryFlags: current.memoryFlags,
+          quota: current.quota,
+          updatedAt: current.updatedAt ?? null,
+          updatedBy: current.updatedBy ?? null,
+          changeNote: current.changeNote ?? null,
+          checkoutRequested: current.checkoutRequested,
+          trial: current.trial ?? mergeTrial(DEFAULT_PLAN_PAYLOAD.trial),
+        });
       }
+      set({ saving: true, saveError: undefined });
 
-      const payload = (await response.json()) as PlanContextPayload;
-      const mapped = mapPayload(payload);
-      logEvent('plan.trial.started', {
-        planTier: mapped.planTier,
-        trialTier: mapped.trial.tier,
-        trialActive: mapped.trial.active,
-      });
-
-      set({
-        planTier: mapped.planTier,
-        expiresAt: mapped.expiresAt,
-        entitlements: mapped.entitlements,
-        featureFlags: mapped.featureFlags,
-        memoryFlags: mapped.memoryFlags,
-        quota: mapped.quota,
-        updatedAt: mapped.updatedAt,
-        updatedBy: mapped.updatedBy,
-        changeNote: mapped.changeNote,
-        checkoutRequested: mapped.checkoutRequested,
-        initialized: true,
-        loading: false,
-        saving: false,
-        error: undefined,
-        saveError: undefined,
-        trial: mapped.trial,
-        trialStarting: false,
-        trialError: undefined,
-      });
-
-      return payload;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'plan trial request failed';
-      logEvent('plan.trial.failed', { message });
-      set({ trialStarting: false, trialError: message });
-      throw error instanceof Error ? error : new Error(String(error));
-    }
-  },
-
-  async fetchPlanPresets(options) {
-    if (get().presetsLoading) {
-      return;
-    }
-    set({ presetsLoading: true, presetsError: undefined });
-    try {
       const baseUrl = resolveApiBase();
-      const response = await fetch(`${baseUrl}/api/v1/plan/presets`, {
-        cache: 'no-store',
-        credentials: 'include',
-        headers: { Accept: 'application/json' },
-        signal: options?.signal,
-      });
-      if (!response.ok) {
-        throw new Error(`failed to load plan presets (${response.status})`);
-      }
-      const payload = (await response.json()) as PlanPresetResponsePayload;
-      const mapping = payload.presets.reduce((acc, preset) => {
-        const tier = preset.tier;
-        const normalized: PlanPreset = {
-          tier,
-          entitlements: uniqueEntitlements(preset.entitlements ?? []),
-          featureFlags: mergeFeatureFlags(preset.featureFlags),
-          quota: mergeQuota(preset.quota ?? undefined),
-        };
-        acc[tier] = normalized;
-        return acc;
-      }, {} as Record<PlanTier, PlanPreset>);
-      set({
-        presets: mapping,
-        presetsLoading: false,
-        presetsError: undefined,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'plan preset fetch failed';
-      set({ presetsLoading: false, presetsError: message });
-      throw error instanceof Error ? error : new Error(String(error));
-    }
-  },
-}));
+      const unique = uniqueEntitlements(input.entitlements);
+      const body = {
+        planTier: input.planTier,
+        expiresAt: input.expiresAt ?? null,
+        entitlements: unique,
+        memoryFlags: input.memoryFlags ?? DEFAULT_MEMORY_FLAGS,
+        quota: input.quota,
+        updatedBy: input.updatedBy ?? null,
+        changeNote: input.changeNote ?? null,
+        triggerCheckout: Boolean(input.triggerCheckout),
+      };
 
+      try {
+        const response = await fetch(`${baseUrl}/api/v1/plan/context`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+          throw new Error(`failed to update plan context (${response.status})`);
+        }
+
+        const payload = (await response.json()) as PlanContextPayload;
+        const mapped = mapPayload(payload);
+        const effective = applyDebugOverrideToPayload(mapped, get().debugOverride);
+        applyPlanPayloadToState(effective, {
+          saving: false,
+          saveError: undefined,
+          lastServerPlan: mapped,
+        });
+
+        return payload;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'plan context update failed';
+        set({ saving: false, saveError: message });
+        throw error instanceof Error ? error : new Error(String(error));
+      }
+    },
+
+    async startTrial(input) {
+      if (get().trialStarting) {
+        return;
+      }
+      set({ trialStarting: true, trialError: undefined });
+
+      const baseUrl = resolveApiBase();
+      const payloadBody: Record<string, unknown> = {};
+      if (input?.actor) {
+        payloadBody.actor = input.actor;
+      }
+      if (typeof input?.durationDays === 'number') {
+        payloadBody.durationDays = input.durationDays;
+      }
+      if (input?.tier) {
+        payloadBody.tier = input.tier;
+      }
+
+      try {
+        const response = await fetch(`${baseUrl}/api/v1/plan/trial`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payloadBody),
+        });
+
+        if (!response.ok) {
+          throw new Error(`failed to start plan trial (${response.status})`);
+        }
+
+        const payload = (await response.json()) as PlanContextPayload;
+        const mapped = mapPayload(payload);
+        const effective = applyDebugOverrideToPayload(mapped, get().debugOverride);
+        logEvent('plan.trial.started', {
+          planTier: mapped.planTier,
+          trialTier: mapped.trial.tier,
+          trialActive: mapped.trial.active,
+        });
+
+        applyPlanPayloadToState(effective, {
+          initialized: true,
+          loading: false,
+          saving: false,
+          error: undefined,
+          saveError: undefined,
+          trialStarting: false,
+          trialError: undefined,
+          lastServerPlan: mapped,
+        });
+
+        return payload;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'plan trial request failed';
+        logEvent('plan.trial.failed', { message });
+        set({ trialStarting: false, trialError: message });
+        throw error instanceof Error ? error : new Error(String(error));
+      }
+    },
+
+    async fetchPlanPresets(options) {
+      if (get().presetsLoading) {
+        return;
+      }
+      set({ presetsLoading: true, presetsError: undefined });
+      try {
+        const baseUrl = resolveApiBase();
+        const response = await fetch(`${baseUrl}/api/v1/plan/presets`, {
+          cache: 'no-store',
+          credentials: 'include',
+          headers: { Accept: 'application/json' },
+          signal: options?.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`failed to load plan presets (${response.status})`);
+        }
+        const payload = (await response.json()) as PlanPresetResponsePayload;
+        const mapping = payload.presets.reduce((acc, preset) => {
+          const tier = preset.tier;
+          const normalized: PlanPreset = {
+            tier,
+            entitlements: uniqueEntitlements(preset.entitlements ?? []),
+            featureFlags: mergeFeatureFlags(preset.featureFlags),
+            quota: mergeQuota(preset.quota ?? undefined),
+          };
+          acc[tier] = normalized;
+          return acc;
+        }, {} as Record<PlanTier, PlanPreset>);
+        set({
+          presets: mapping,
+          presetsLoading: false,
+          presetsError: undefined,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'plan preset fetch failed';
+        set({ presetsLoading: false, presetsError: message });
+        throw error instanceof Error ? error : new Error(String(error));
+      }
+    },
+
+    applyDebugOverride(override) {
+      if (!PLAN_DEBUG_TOOLS_ENABLED) {
+        return;
+      }
+      const normalized: PlanDebugOverride = { ...override, enabled: true };
+      persistDebugOverrideToStorage(normalized);
+      const base = get().lastServerPlan ?? DEFAULT_NORMALIZED_PLAN;
+      const effective = applyDebugOverrideToPayload(base, normalized);
+      applyPlanPayloadToState(effective, { debugOverride: normalized });
+      logEvent('plan.debug.override_applied', {
+        planTier: normalized.planTier ?? base.planTier,
+      });
+    },
+
+    clearDebugOverride() {
+      if (!PLAN_DEBUG_TOOLS_ENABLED) {
+        return;
+      }
+      persistDebugOverrideToStorage(null);
+      const base = get().lastServerPlan ?? DEFAULT_NORMALIZED_PLAN;
+      applyPlanPayloadToState(base, { debugOverride: null });
+      logEvent('plan.debug.override_cleared', {});
+    },
+  };
+});
 export const usePlanTier = () => usePlanStore((state) => state.planTier);
 export const usePlanTrial = () => usePlanStore((state) => state.trial);
 export const usePlanTrialRequestState = () =>
@@ -569,6 +668,9 @@ export const isTierAtLeast = (tier: PlanTier, required: PlanTier): boolean =>
   planTierRank(tier) >= planTierRank(required);
 export const nextTier = (tier: PlanTier): PlanTier | null => {
   if (tier === 'free') {
+    return FEATURE_STARTER_ENABLED ? 'starter' : 'pro';
+  }
+  if (tier === 'starter') {
     return 'pro';
   }
   if (tier === 'pro') {

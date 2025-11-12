@@ -1,6 +1,6 @@
 ﻿import type { PlanTier } from "@/store/planStore";
 
-type AlertPlanTier = PlanTier | "free" | "pro" | "enterprise";
+type AlertPlanTier = PlanTier;
 
 type QuotaInfo = {
   remaining: number;
@@ -85,6 +85,40 @@ const PLAN_COPY: Record<AlertPlanTier, PlanCopy> = {
             info,
             'Free 플랜에서는 최대 {max}개의 알림만 유지할 수 있어요. 기존 알림을 정리하거나 업그레이드해 주세요.',
             'Free 플랜에서는 추가 알림을 만들 수 없어요. 플랜을 업그레이드해 주세요.'
+          ),
+      },
+    },
+  },
+  starter: {
+    builder: {
+      disabledTooltip: '남은 Starter 슬롯이 없어요.',
+      disabledHint: 'Starter 한도에 도달했습니다. Pro로 업그레이드하면 Slack·Webhook 채널과 더 넉넉한 슬롯을 사용할 수 있어요.',
+      quotaToast: {
+        title: 'Starter 한도를 모두 사용했습니다',
+        description: (info) =>
+          formatLimitDescription(
+            info,
+            'Starter 플랜에서는 최대 {max}개의 알림만 만들 수 있어요. 기존 알림을 정리하거나 Pro로 업그레이드해 주세요.',
+            'Starter 플랜 한도를 모두 사용했습니다. 업그레이드 후 다시 시도해 주세요.'
+          ),
+      },
+      quotaBanner: (info) =>
+        formatLimitDescription(
+          info,
+          'Starter 플랜 한도 {max}개를 모두 사용했습니다. Pro로 업그레이드하면 Slack/Webhook 등 고급 채널과 더 많은 슬롯을 제공해요.',
+          'Starter 플랜 한도를 모두 사용했습니다. 업그레이드하면 제한이 해제됩니다.'
+        ),
+    },
+    bell: {
+      disabledTooltip: 'Starter 플랜 한도를 모두 사용했습니다.',
+      disabledHint: 'Pro로 업그레이드하면 Slack/Webhook 채널과 더 높은 룰 한도를 사용할 수 있어요.',
+      quotaToast: {
+        title: '알림 한도를 넘었어요',
+        description: (info) =>
+          formatLimitDescription(
+            info,
+            'Starter 플랜에서는 최대 {max}개의 알림만 유지할 수 있어요. 기존 알림을 비활성화하거나 업그레이드해 주세요.',
+            'Starter 플랜에서는 추가 알림을 만들 수 없어요. 플랜을 업그레이드해 주세요.'
           ),
       },
     },
@@ -185,6 +219,9 @@ export const parsePlanTier = (value?: string | null): AlertPlanTier => {
   }
   if (value === 'pro') {
     return 'pro';
+  }
+  if (value === 'starter') {
+    return 'starter';
   }
   return 'free';
 };

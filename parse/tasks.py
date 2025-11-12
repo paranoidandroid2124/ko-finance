@@ -7,6 +7,7 @@ import os
 import uuid
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -38,6 +39,7 @@ from models.filing import (
 )
 from models.digest import DailyDigestLog
 from models.news import NewsObservation, NewsSignal, NewsWindowAggregate
+from models.ingest_dead_letter import IngestDeadLetter
 from services.memory.offline_pipeline import run_long_term_update
 from services.memory.health import lightmem_health_summary
 from models.evidence import EvidenceSnapshot
@@ -57,6 +59,7 @@ from services import (
     event_study_service,
     market_data_service,
     security_metadata_service,
+    ingest_dlq_service,
 )
 import services.lightmem_gate as lightmem_gate
 from services.lightmem_config import DIGEST_RATE_LIMIT_PER_MINUTE
@@ -69,6 +72,7 @@ from services.aggregation.news_statistics import summarize_news_signals, build_t
 from services.daily_brief_service import (
     DAILY_BRIEF_CHANNEL,
     DAILY_BRIEF_OUTPUT_ROOT,
+    DigestQuotaExceeded,
     build_digest_preview,
     build_daily_brief_payload,
     cleanup_daily_brief_artifacts,
@@ -78,6 +82,14 @@ from services.daily_brief_service import (
 )
 from services.news_text import sanitize_news_summary
 from services.news_ticker_resolver import resolve_news_ticker
+from services.audit_log import audit_ingest_event
+from services.ingest_metrics import (
+    observe_latency as ingest_observe_latency,
+    record_error as ingest_record_error,
+    record_result as ingest_record_result,
+    record_retry as ingest_record_retry,
+    set_dlq_size,
+)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -86,6 +98,10 @@ _OCR_MIN_TEXT_LENGTH = env_int("OCR_TRIGGER_MIN_TEXT_LENGTH", 400, minimum=0)
 _OCR_ENABLE_LOG = env_bool("OCR_LOG_DECISIONS", True)
 _OCR_PAGE_LIMIT = env_int("OCR_TRIGGER_MAX_PAGES", 15, minimum=1)
 TELEGRAM_NOTIFY_POS_NEG_ONLY = env_bool("TELEGRAM_NOTIFY_POS_NEG_ONLY", True)
+INGEST_TASK_MAX_RETRIES = env_int("INGEST_TASK_MAX_RETRIES", 4, minimum=0)
+INGEST_RETRY_BASE_SECONDS = env_int("INGEST_TASK_RETRY_BASE_SECONDS", 30, minimum=5)
+INGEST_RETRY_MAX_SECONDS = env_int("INGEST_TASK_RETRY_MAX_SECONDS", 600, minimum=30)
+PROCESS_STAGE = "process.filing"
 
 
 @dataclass
@@ -198,6 +214,76 @@ DIGEST_CHANNEL = "telegram"
 DIGEST_LIGHTMEM_RATE_LIMIT_PER_MINUTE = DIGEST_RATE_LIMIT_PER_MINUTE
 SUMMARY_RECENT_TURNS = env_int("CHAT_MEMORY_RECENT_TURNS", 3, minimum=1)
 SUMMARY_TRIGGER_MESSAGES = env_int("CHAT_SUMMARY_TRIGGER_MESSAGES", 20, minimum=6)
+
+
+def _ingest_retry_delay(attempt: int) -> int:
+    clamped = max(0, attempt)
+    delay = INGEST_RETRY_BASE_SECONDS * (2 ** clamped)
+    return min(delay, INGEST_RETRY_MAX_SECONDS)
+
+
+def _refresh_dlq_metrics(db: Session) -> None:
+    try:
+        for status in ("pending", "requeued", "completed"):
+            count = (
+                db.query(IngestDeadLetter)
+                .filter(IngestDeadLetter.status == status)
+                .count()
+            )
+            set_dlq_size(status, count)
+    except Exception as exc:  # pragma: no cover - metrics best-effort
+        logger.debug("Failed to refresh DLQ gauge: %s", exc)
+
+
+def _retry_or_dead_letter(
+    task,
+    *,
+    db: Session,
+    filing_id: str,
+    filing: Optional[Filing],
+    exc: Exception,
+) -> None:
+    receipt_no = getattr(filing, "receipt_no", None)
+    corp_code = getattr(filing, "corp_code", None)
+    ticker = getattr(filing, "ticker", None)
+    retries = getattr(task.request, "retries", 0)
+
+    if retries >= INGEST_TASK_MAX_RETRIES:
+        try:
+            letter = ingest_dlq_service.record_dead_letter(
+                db,
+                task_name=getattr(task, "name", "m1.process_filing"),
+                payload={"filing_id": filing_id},
+                error=str(exc),
+                retries=retries,
+                receipt_no=receipt_no or filing_id,
+                corp_code=corp_code,
+                ticker=ticker,
+            )
+            _refresh_dlq_metrics(db)
+            audit_ingest_event(
+                action="ingest.dlq",
+                target_id=receipt_no or filing_id,
+                extra={
+                    "task": getattr(task, "name", "m1.process_filing"),
+                    "retries": retries,
+                    "corp_code": corp_code,
+                    "ticker": ticker,
+                    "dlq_id": str(letter.id),
+                },
+            )
+        except Exception as log_exc:  # pragma: no cover - best-effort logging
+            logger.warning(
+                "Failed to record ingest DLQ entry for filing %s: %s",
+                filing_id,
+                log_exc,
+                exc_info=True,
+            )
+        raise
+
+    countdown = _ingest_retry_delay(retries)
+    ingest_record_retry(getattr(task, "name", "m1.process_filing"))
+    raise task.retry(exc=exc, countdown=countdown)
 NEWS_FETCH_LIMIT = env_int("NEWS_FETCH_LIMIT", 5, minimum=1)
 NEWS_SUMMARY_MAX_CHARS = env_int("NEWS_SUMMARY_MAX_CHARS", 480, minimum=120)
 NEWS_RETENTION_DAYS = env_int("NEWS_RETENTION_DAYS", 45, minimum=7)
@@ -566,10 +652,19 @@ def monitor_lightmem_health() -> Dict[str, Any]:
     return summary
 
 
-@shared_task(name="m1.seed_recent_filings")
-def seed_recent_filings_task(days_back: int = 1) -> int:
+@shared_task(name="m1.seed_recent_filings", bind=True, max_retries=INGEST_TASK_MAX_RETRIES)
+def seed_recent_filings_task(self, days_back: int = 1) -> int:
     logger.info("Running DART seeding task for the last %d day(s).", days_back)
-    created = seed_recent_filings_job(days_back=days_back)
+    try:
+        created = seed_recent_filings_job(days_back=days_back)
+    except Exception as exc:
+        retries = getattr(self.request, "retries", 0)
+        if retries >= INGEST_TASK_MAX_RETRIES:
+            logger.error("DART seeding task failed after %d retries: %s", retries, exc)
+            raise
+        countdown = _ingest_retry_delay(retries)
+        ingest_record_retry(getattr(self, "name", "m1.seed_recent_filings"))
+        raise self.retry(exc=exc, countdown=countdown)
 
     # Kick off event study ingest/aggregation asynchronously so the dashboard stays fresh.
     try:
@@ -585,15 +680,23 @@ def seed_recent_filings_task(days_back: int = 1) -> int:
     return created
 
 
-@shared_task(name="m1.process_filing")
-def process_filing(filing_id: str) -> str:
+@shared_task(name="m1.process_filing", bind=True, max_retries=INGEST_TASK_MAX_RETRIES)
+def process_filing(self, filing_id: str) -> str:
     db = _open_session()
     stage_results: List[StageResult] = []
+    stage_started = time.perf_counter()
+    filing: Optional[Filing] = None
+
+    def _finish_stage(result: str) -> str:
+        ingest_observe_latency(PROCESS_STAGE, time.perf_counter() - stage_started)
+        ingest_record_result(PROCESS_STAGE, result)
+        return result
+
     try:
         filing = db.query(Filing).filter(Filing.id == filing_id).one_or_none()
         if not filing:
             logger.error("Filing %s not found.", filing_id)
-            return "missing"
+            return _finish_stage("missing")
 
         raw_content = filing.raw_md or ""
         chunk_count = len(filing.chunks or [])
@@ -798,29 +901,32 @@ def process_filing(filing_id: str) -> str:
             filing.status = STATUS_PARTIAL
             filing.analysis_status = ANALYSIS_PARTIAL
             db.commit()
-            return "skipped"
+            return _finish_stage("skipped")
 
         if critical_failures:
             filing.status = STATUS_FAILED
             filing.analysis_status = ANALYSIS_FAILED
             db.commit()
-            return "failed"
+            return _finish_stage("failed")
 
         if non_critical_failures:
             filing.status = STATUS_PARTIAL
             filing.analysis_status = ANALYSIS_PARTIAL
             db.commit()
-            return "partial"
+            return _finish_stage("partial")
 
         filing.status = STATUS_COMPLETED
         filing.analysis_status = ANALYSIS_ANALYZED
         db.commit()
-        return "completed"
+        return _finish_stage("completed")
 
     except Exception as exc:
         db.rollback()
+        ingest_record_error(PROCESS_STAGE, "task", exc)
         logger.error("Error processing filing %s: %s", filing_id, exc, exc_info=True)
-        return "error"
+        _finish_stage("failure")
+        _retry_or_dead_letter(self, db=db, filing_id=filing_id, filing=filing, exc=exc)
+        raise
     finally:
         db.close()
 
@@ -1452,6 +1558,7 @@ def send_filing_digest(target_date_iso: Optional[str] = None, timeframe: str = "
                 plan_memory_enabled=memory_allowed,
                 tenant_id=None,
                 user_id_hint=str(user_id) if user_id else None,
+                enforce_quota_action="watchlist.preview",
             )
             logger.info(
                 "digest.delivery.payload",
@@ -1479,6 +1586,17 @@ def send_filing_digest(target_date_iso: Optional[str] = None, timeframe: str = "
                 )
             except Exception as snapshot_exc:  # pragma: no cover - best effort
                 logger.warning("Digest snapshot upsert failed: %s", snapshot_exc, exc_info=True)
+        except DigestQuotaExceeded as quota_exc:
+            preview_failed = True
+            preview_payload = None
+            logger.info(
+                "digest.delivery.quota_blocked",
+                extra={
+                    "timeframe": normalized_timeframe,
+                    "user_id": str(user_id) if user_id else None,
+                    "reason": str(quota_exc),
+                },
+            )
         except Exception as exc:
             preview_failed = True
             preview_payload = None

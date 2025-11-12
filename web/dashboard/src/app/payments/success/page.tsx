@@ -13,7 +13,7 @@ import { PaymentResultCard } from "@/components/payments/PaymentResultCard";
 type Status = "confirming" | "success" | "error";
 
 const isPlanTier = (value: string | null): value is PlanTier =>
-  value === "free" || value === "pro" || value === "enterprise";
+  value === "free" || value === "starter" || value === "pro" || value === "enterprise";
 
 const safeRedirectPath = (value?: string | null) => {
   if (!value || !value.startsWith("/")) {
@@ -74,6 +74,7 @@ export default function TossPaymentSuccessPage() {
             paymentKey,
             orderId,
             amount,
+            planTier: targetTier ?? undefined,
           }),
         });
 

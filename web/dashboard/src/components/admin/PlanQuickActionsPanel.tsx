@@ -8,7 +8,15 @@ import { useAdminSession } from "@/hooks/useAdminSession";
 import { resolveApiBase } from "@/lib/apiBase";
 import { updatePlanPresets } from "@/lib/adminApi";
 import { useToastStore } from "@/store/toastStore";
-import { planTierRank, usePlanStore, type PlanMemoryFlags, type PlanPreset, type PlanQuota, type PlanTier } from "@/store/planStore";
+import {
+  planTierRank,
+  usePlanStore,
+  type PlanDebugOverride,
+  type PlanMemoryFlags,
+  type PlanPreset,
+  type PlanQuota,
+  type PlanTier,
+} from "@/store/planStore";
 import { LIGHTMEM_FLAG_OPTIONS, type LightMemFlagKey } from "@/constants/lightmemFlags";
 import { usePlanPresets } from "@/hooks/usePlanPresets";
 
@@ -20,22 +28,23 @@ type EntitlementOption = {
 };
 
 const ENTITLEMENT_OPTIONS: EntitlementOption[] = [
-  { value: "search.compare", label: "비교 검색", description: "동시에 여러 회사를 비교 검색해요.", minTier: "pro" },
-  { value: "search.alerts", label: "알림 검색", description: "조건 기반 알림을 설정하고 Slack/Email로 전달해요.", minTier: "pro" },
-  { value: "search.export", label: "데이터 내보내기", description: "검색 결과를 CSV로 추출해요.", minTier: "pro" },
-  { value: "rag.core", label: "AI 애널리스트 Chat", description: "RAG 기반 대화형 분석과 근거 리포트를 생성해요.", minTier: "pro" },
-  { value: "evidence.inline_pdf", label: "PDF 인라인 뷰어", description: "대시보드에서 바로 PDF를 확인해요.", minTier: "pro" },
+  { value: "search.compare", label: "비교 검색", description: "동시에 여러 회사를 비교 검색하세요.", minTier: "pro" },
+  { value: "search.alerts", label: "알림 검색", description: "조건 기반 알림을 설정하고 Slack/Email로 전달하세요.", minTier: "free" },
+  { value: "search.export", label: "데이터 내보내기", description: "검색 결과를 CSV로 추출하세요.", minTier: "starter" },
+  { value: "rag.core", label: "AI 애널리스트 Chat", description: "RAG 기반 대화형 분석과 근거 리포트를 생성하세요.", minTier: "free" },
+  { value: "evidence.inline_pdf", label: "PDF 인라인 뷰어", description: "대시보드에서 바로 PDF를 확인하세요.", minTier: "starter" },
   { value: "evidence.diff", label: "정정 Diff 비교", description: "정정 공시 Diff 분석을 제공합니다.", minTier: "enterprise" },
-  { value: "timeline.full", label: "전체 타임라인", description: "기업 이벤트 전체 타임라인을 확인해요.", minTier: "enterprise" },
+  { value: "timeline.full", label: "전체 타임라인", description: "기업 이벤트 전체 타임라인을 확인하세요.", minTier: "enterprise" },
 ];
 
 const PLAN_TIER_LABEL: Record<PlanTier, string> = {
   free: "Free",
+  starter: "Starter",
   pro: "Pro",
   enterprise: "Enterprise",
 };
 
-const PLAN_TIERS: PlanTier[] = ["free", "pro", "enterprise"];
+const PLAN_TIERS: PlanTier[] = ["free", "starter", "pro", "enterprise"];
 
 const labelForEntitlement = (value: string) =>
   ENTITLEMENT_OPTIONS.find((item) => item.value === value)?.label ?? value;
@@ -101,6 +110,7 @@ type BaseEntitlementMap = Record<PlanTier, ReadonlySet<string>>;
 
 const buildBaseEntitlementMap = (presets: Record<PlanTier, PlanPreset> | null): BaseEntitlementMap => ({
   free: new Set<string>(presets?.free?.entitlements ?? []),
+  starter: new Set<string>(presets?.starter?.entitlements ?? []),
   pro: new Set<string>(presets?.pro?.entitlements ?? []),
   enterprise: new Set<string>(presets?.enterprise?.entitlements ?? []),
 });
@@ -169,6 +179,12 @@ export function PlanQuickActionsPanel() {
     memoryFlags: state.memoryFlags,
     checkoutRequested: state.checkoutRequested,
     fetchPlan: state.fetchPlan,
+  }));
+  const { debugToolsEnabled, debugOverride, applyDebugOverride, clearDebugOverride } = usePlanStore((state) => ({
+    debugToolsEnabled: state.debugToolsEnabled,
+    debugOverride: state.debugOverride,
+    applyDebugOverride: state.applyDebugOverride,
+    clearDebugOverride: state.clearDebugOverride,
   }));
   const { presets, loading: presetsLoading, error: presetsError } = usePlanPresets();
   const baseEntitlementSets = useMemo(() => buildBaseEntitlementMap(presets), [presets]);
@@ -329,6 +345,18 @@ export function PlanQuickActionsPanel() {
         <p className="mt-2">
           접근 권한이 없거나 세션이 만료된 것 같아요. 새로운 토큰을 등록했거나 권한이 필요하다면 운영 팀에 편하게 알려 주세요.
         </p>
+        {debugToolsEnabled ? (
+          <PlanDebugOverrideNotice
+            baseEntitlements={baseEntitlementSets}
+            currentOverride={debugOverride}
+            onApply={applyDebugOverride}
+            onClear={clearDebugOverride}
+          />
+        ) : (
+          <p className="mt-3 text-xs text-amber-700 dark:text-amber-100/80">
+            디버그 모드는 개발 환경에서만 사용할 수 있어요. 프로덕션에서는 운영 계정으로 로그인해야 합니다.
+          </p>
+        )}
       </div>
     );
   } else if (sessionError) {
@@ -656,6 +684,87 @@ export function PlanQuickActionsPanel() {
   );
 }
 
+type PlanDebugOverrideNoticeProps = {
+  baseEntitlements: BaseEntitlementMap;
+  currentOverride: PlanDebugOverride | null;
+  onApply: (override: PlanDebugOverride) => void;
+  onClear: () => void;
+};
+
+function PlanDebugOverrideNotice({ baseEntitlements, currentOverride, onApply, onClear }: PlanDebugOverrideNoticeProps) {
+  const handleQuickApply = (tier: PlanTier) => {
+    const allowed = new Set(baseEntitlements[tier] ?? []);
+    ENTITLEMENT_OPTIONS.forEach((option) => {
+      if (planTierRank(tier) >= planTierRank(option.minTier)) {
+        allowed.add(option.value);
+      }
+    });
+
+    const quotaPreset: PlanQuota =
+      tier === 'enterprise'
+        ? { chatRequestsPerDay: null, ragTopK: 10, selfCheckEnabled: true, peerExportRowLimit: null }
+        : tier === 'pro'
+        ? { chatRequestsPerDay: 500, ragTopK: 6, selfCheckEnabled: true, peerExportRowLimit: 100 }
+        : tier === 'starter'
+        ? { chatRequestsPerDay: 80, ragTopK: 5, selfCheckEnabled: true, peerExportRowLimit: 50 }
+        : { chatRequestsPerDay: 20, ragTopK: 4, selfCheckEnabled: false, peerExportRowLimit: 0 };
+
+    const memoryPreset: PlanMemoryFlags =
+      tier === 'free'
+        ? { watchlist: false, digest: false, chat: false }
+        : { watchlist: true, digest: true, chat: true };
+
+    onApply({
+      enabled: true,
+      planTier: tier,
+      entitlements: Array.from(allowed),
+      quota: quotaPreset,
+      memoryFlags: memoryPreset,
+      checkoutRequested: false,
+    });
+  };
+
+  return (
+    <div className="mt-4 rounded-lg border border-dashed border-amber-400/70 bg-white/80 p-4 text-xs text-amber-800 dark:border-amber-300/40 dark:bg-amber-500/10 dark:text-amber-100">
+      <p className="text-sm font-semibold">로컬 플랜 시뮬레이션</p>
+      <p className="mt-1">
+        관리자 토큰 없이도 이 브라우저에서만 유효한 플랜을 강제로 지정할 수 있어요. API나 다른 사용자에게는 영향을 주지
+        않습니다.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2 text-sm">
+        {PLAN_TIERS.map((tier) => (
+          <button
+            key={tier}
+            type="button"
+            onClick={() => handleQuickApply(tier)}
+            className="rounded-lg border border-amber-400/60 bg-white/70 px-3 py-1.5 font-semibold text-amber-700 transition hover:bg-white dark:border-amber-300/50 dark:bg-transparent dark:text-amber-100 dark:hover:border-amber-200"
+          >
+            {PLAN_TIER_LABEL[tier]} 시뮬레이션
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={onClear}
+          disabled={!currentOverride?.enabled}
+          className={clsx(
+            'rounded-lg border border-amber-500/50 px-3 py-1.5 font-semibold transition',
+            currentOverride?.enabled
+              ? 'text-amber-800 hover:bg-amber-100 dark:text-amber-100 dark:hover:bg-amber-500/20'
+              : 'cursor-not-allowed text-amber-500/70 opacity-60 dark:text-amber-200/60',
+          )}
+        >
+          로컬 오버라이드 해제
+        </button>
+      </div>
+      <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-100/80">
+        {currentOverride?.enabled
+          ? `현재 로컬 플랜: ${PLAN_TIER_LABEL[currentOverride.planTier ?? 'enterprise']} (브라우저 전용)`
+          : '적용된 로컬 오버라이드가 없어요.'}
+      </p>
+    </div>
+  );
+}
+
 type PlanPresetEditorProps = {
   presets: Record<PlanTier, PlanPreset> | null;
   presetsLoading: boolean;
@@ -676,6 +785,7 @@ type PresetDraft = {
 
 const EMPTY_CUSTOM_INPUTS: Record<PlanTier, string> = {
   free: "",
+  starter: "",
   pro: "",
   enterprise: "",
 };
@@ -696,6 +806,7 @@ const buildPresetDrafts = (presets: Record<PlanTier, PlanPreset> | null): Record
   }
   const result: Record<PlanTier, PresetDraft> = {
     free: planPresetDraftFromPreset(presets.free),
+    starter: planPresetDraftFromPreset(presets.starter),
     pro: planPresetDraftFromPreset(presets.pro),
     enterprise: planPresetDraftFromPreset(presets.enterprise),
   };

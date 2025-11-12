@@ -10,7 +10,7 @@ import { useToastStore } from "@/store/toastStore";
 import { PaymentResultCard } from "@/components/payments/PaymentResultCard";
 
 const isPlanTier = (value: string | null): value is PlanTier =>
-  value === "free" || value === "pro" || value === "enterprise";
+  value === "free" || value === "starter" || value === "pro" || value === "enterprise";
 
 const safeRedirectPath = (value?: string | null) => {
   if (!value || !value.startsWith("/")) {

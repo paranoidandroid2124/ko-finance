@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
-import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import litellm
 from langfuse import Langfuse
 
+from core.env import env_bool
 from core.logging import get_logger
 from llm import guardrails
 from llm.prompts import (
@@ -27,6 +28,7 @@ from llm.prompts import (
     summarize_report,
     table_aware_rag,
 )
+from services import deeplink_service
 
 logger = get_logger(__name__)
 
@@ -122,9 +124,9 @@ QUALITY_FALLBACK_MODEL = os.getenv("LLM_QUALITY_FALLBACK_MODEL", "fallback_model
 JUDGE_MODEL = os.getenv("LLM_GUARD_JUDGE_MODEL", "judge_model")
 INTENT_MODEL = os.getenv("LLM_INTENT_MODEL", QUALITY_FALLBACK_MODEL)
 
-CITATION_PAGE_RE = re.compile(r"\(p\.\s*\d+\)", re.IGNORECASE)
-CITATION_TABLE_RE = re.compile(r"\(table\s*[^\)]+\)", re.IGNORECASE)
-CITATION_FOOTNOTE_RE = re.compile(r"\(footnote\s*[^\)]+\)", re.IGNORECASE)
+RAG_REQUIRE_SNIPPET = env_bool("RAG_REQUIRE_SNIPPET", False)
+RAG_LINK_DEEPLINK = env_bool("RAG_LINK_DEEPLINK", False)
+MAX_CITATIONS_PER_BUCKET = 5
 
 JUDGE_BLOCK_MESSAGE = guardrails.SAFE_MESSAGE
 
@@ -510,20 +512,239 @@ def _categorize_context(context_chunks: List[Dict[str, Any]]) -> Dict[str, bool]
     return required
 
 
-def _extract_citations(answer: str) -> Dict[str, List[str]]:
-    if not answer:
-        return {"page": [], "table": [], "footnote": []}
-    return {
-        "page": CITATION_PAGE_RE.findall(answer),
-        "table": CITATION_TABLE_RE.findall(answer),
-        "footnote": CITATION_FOOTNOTE_RE.findall(answer),
+def _coerce_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (int, float)):
+            return int(value)
+        text = str(value).strip()
+        if not text:
+            return None
+        return int(float(text))
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_text(value: Any) -> str:
+    if not isinstance(value, str):
+        value = str(value or "")
+    return " ".join(value.split())
+
+
+def _chunk_metadata(chunk: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = chunk.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _bucket_for_chunk(chunk: Dict[str, Any]) -> Optional[str]:
+    chunk_type = (chunk.get("type") or "").lower()
+    if chunk_type == "table":
+        return "table"
+    if chunk_type == "footnote":
+        return "footnote"
+    return "page"
+
+
+def _resolve_page_number(chunk: Dict[str, Any], metadata: Dict[str, Any]) -> Optional[int]:
+    page = _coerce_int(chunk.get("page_number"))
+    if page is None:
+        page = _coerce_int(metadata.get("page_number"))
+    return page
+
+
+def _resolve_offsets(metadata: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
+    start = (
+        _coerce_int(metadata.get("char_start"))
+        or _coerce_int(metadata.get("offset_start"))
+        or _coerce_int(metadata.get("start"))
+    )
+    end = (
+        _coerce_int(metadata.get("char_end"))
+        or _coerce_int(metadata.get("offset_end"))
+        or _coerce_int(metadata.get("end"))
+    )
+    if start is not None and end is not None and end < start:
+        return start, None
+    return start, end
+
+
+def _resolve_sentence_hash(chunk: Dict[str, Any], metadata: Dict[str, Any]) -> Optional[str]:
+    existing = metadata.get("sentence_hash")
+    if isinstance(existing, str) and existing.strip():
+        return existing.strip()
+    quote = chunk.get("quote") or chunk.get("content") or metadata.get("quote")
+    normalized = _normalize_text(quote or "")
+    if not normalized:
+        return None
+    return hashlib.sha1(normalized.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _resolve_document_url(chunk: Dict[str, Any], metadata: Dict[str, Any]) -> Optional[str]:
+    for key in ("document_url", "viewer_url", "download_url"):
+        value = metadata.get(key) or chunk.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    urls = metadata.get("urls") or chunk.get("urls") or {}
+    if isinstance(urls, dict):
+        for key in ("viewer", "download"):
+            candidate = urls.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate
+    return None
+
+
+def _build_deeplink_url(
+    document_url: Optional[str],
+    page_number: Optional[int],
+    *,
+    char_start: Optional[int],
+    char_end: Optional[int],
+    sentence_hash: Optional[str],
+    chunk_id: Optional[str],
+    document_id: Optional[str],
+    excerpt: Optional[str],
+) -> Optional[str]:
+    if not (RAG_LINK_DEEPLINK and document_url and page_number):
+        return None
+    if deeplink_service.is_enabled():
+        try:
+            token = deeplink_service.issue_token(
+                document_url=document_url,
+                page_number=page_number,
+                char_start=char_start,
+                char_end=char_end,
+                sentence_hash=sentence_hash,
+                chunk_id=chunk_id,
+                document_id=document_id,
+                excerpt=excerpt,
+            )
+            return deeplink_service.build_viewer_url(token)
+        except deeplink_service.DeeplinkError as exc:
+            logger.debug("Failed to issue deeplink token: %s", exc)
+    separator = "&" if "#" in document_url else "#"
+    return f"{document_url}{separator}page={page_number}"
+
+
+def _build_citation_label(
+    chunk: Dict[str, Any],
+    bucket: str,
+    metadata: Dict[str, Any],
+    order_index: int,
+) -> str:
+    custom_label = metadata.get("citation_label")
+    if isinstance(custom_label, str) and custom_label.strip():
+        return custom_label.strip()
+    page_number = _resolve_page_number(chunk, metadata)
+    if bucket == "page":
+        return f"(p.{page_number})" if page_number else f"(page {order_index})"
+    if bucket == "table":
+        table_index = _coerce_int(metadata.get("table_index") or metadata.get("tableIndex"))
+        if table_index:
+            return f"(Table {table_index})"
+        return f"(Table p.{page_number})" if page_number else f"(Table {order_index})"
+    if bucket == "footnote":
+        footnote_label = metadata.get("footnote_label") or metadata.get("footnoteLabel")
+        if isinstance(footnote_label, str) and footnote_label.strip():
+            return f"(Footnote {footnote_label.strip()})"
+        return f"(Footnote p.{page_number})" if page_number else f"(Footnote {order_index})"
+    return f"({bucket} {order_index})"
+
+
+def _build_citation_entry(
+    chunk: Dict[str, Any],
+    bucket: str,
+    label: str,
+) -> Dict[str, Any]:
+    metadata = _chunk_metadata(chunk)
+    page_number = _resolve_page_number(chunk, metadata)
+    char_start, char_end = _resolve_offsets(metadata)
+    sentence_hash = _resolve_sentence_hash(chunk, metadata)
+    document_url = _resolve_document_url(chunk, metadata)
+    document_id = chunk.get("filing_id") or metadata.get("filing_id")
+    excerpt = chunk.get("quote") or chunk.get("content") or metadata.get("quote")
+    chunk_identifier = chunk.get("chunk_id") or chunk.get("id")
+    entry: Dict[str, Any] = {
+        "label": label,
+        "bucket": bucket,
+        "chunk_id": chunk_identifier,
+        "page_number": page_number,
+        "char_start": char_start,
+        "char_end": char_end,
+        "sentence_hash": sentence_hash,
+        "document_id": document_id,
+        "document_url": document_url,
+        "source": chunk.get("source") or metadata.get("source"),
+        "excerpt": excerpt,
     }
+    anchor = chunk.get("anchor") or metadata.get("anchor")
+    if isinstance(anchor, dict) and anchor:
+        entry["anchor"] = anchor
+    chunk_id_value = chunk_identifier if isinstance(chunk_identifier, str) else None
+    deeplink = _build_deeplink_url(
+        document_url,
+        page_number,
+        char_start=char_start,
+        char_end=char_end,
+        sentence_hash=sentence_hash,
+        chunk_id=chunk_id_value,
+        document_id=document_id if isinstance(document_id, str) else None,
+        excerpt=excerpt if isinstance(excerpt, str) else None,
+    )
+    if deeplink:
+        entry["deeplink_url"] = deeplink
+    return entry
 
 
-def _find_missing_citations(required: Dict[str, bool], citations: Dict[str, List[str]]) -> List[str]:
+def _build_structured_citations(context_chunks: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    buckets: Dict[str, List[Dict[str, Any]]] = {"page": [], "table": [], "footnote": []}
+    seen_chunks: Dict[str, set[str]] = {key: set() for key in buckets}
+    for chunk in context_chunks:
+        bucket = _bucket_for_chunk(chunk)
+        if not bucket:
+            continue
+        entries = buckets.setdefault(bucket, [])
+        if len(entries) >= MAX_CITATIONS_PER_BUCKET:
+            continue
+        raw_chunk_id = chunk.get("chunk_id") or chunk.get("id")
+        chunk_id = raw_chunk_id.strip() if isinstance(raw_chunk_id, str) else raw_chunk_id
+        if isinstance(chunk_id, str) and chunk_id in seen_chunks[bucket]:
+            continue
+        metadata = _chunk_metadata(chunk)
+        label = _build_citation_label(chunk, bucket, metadata, len(entries) + 1)
+        entry = _build_citation_entry(chunk, bucket, label)
+        entries.append(entry)
+        if isinstance(chunk_id, str):
+            seen_chunks[bucket].add(chunk_id)
+    return {bucket: entries for bucket, entries in buckets.items() if entries}
+
+
+def _has_complete_snippet(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    char_start = entry.get("char_start")
+    char_end = entry.get("char_end")
+    sentence_hash = entry.get("sentence_hash")
+    if char_start is None or char_end is None or sentence_hash is None:
+        return False
+    try:
+        return int(char_end) > int(char_start)
+    except (TypeError, ValueError):
+        return False
+
+
+def _find_missing_citations(required: Dict[str, bool], citations: Dict[str, List[Dict[str, Any]]]) -> List[str]:
     missing: List[str] = []
     for key, needed in required.items():
-        if needed and not citations.get(key):
+        if not needed:
+            continue
+        entries = citations.get(key) or []
+        if not entries:
+            missing.append(key)
+            continue
+        if RAG_REQUIRE_SNIPPET and not any(_has_complete_snippet(entry) for entry in entries):
             missing.append(key)
     return missing
 
@@ -584,7 +805,7 @@ def _build_rag_payload(
 ) -> Dict[str, Any]:
     safe_answer, guardrail_error = guardrails.apply_answer_guard(answer)
 
-    citations = _extract_citations(safe_answer)
+    citations = _build_structured_citations(context_chunks)
     missing = _find_missing_citations(_categorize_context(context_chunks), citations)
 
     payload: Dict[str, Any] = {

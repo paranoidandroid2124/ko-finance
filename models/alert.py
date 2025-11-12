@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
+from typing import Dict, Optional
 
 from sqlalchemy import (
     Column,
@@ -49,26 +50,109 @@ class AlertRule(Base):
     name = Column(String(120), nullable=False)
     description = Column(Text, nullable=True)
     status = Column(ALERT_STATUS, nullable=False, default="active", index=True)
-    condition = Column(JSONB, nullable=False, default=dict)
+    trigger = Column(JSONB, nullable=False, default=dict)
     channels = Column(JSONB, nullable=False, default=list)
     message_template = Column(Text, nullable=True)
-    evaluation_interval_minutes = Column(Integer, nullable=False, default=5)
-    window_minutes = Column(Integer, nullable=False, default=60)
-    cooldown_minutes = Column(Integer, nullable=False, default=60)
-    max_triggers_per_day = Column(Integer, nullable=True)
+    frequency = Column(JSONB, nullable=False, default=dict)
     last_triggered_at = Column(DateTime(timezone=True), nullable=True, index=True)
     last_evaluated_at = Column(DateTime(timezone=True), nullable=True)
-    throttle_until = Column(DateTime(timezone=True), nullable=True)
+    cooled_until = Column(DateTime(timezone=True), nullable=True)
     error_count = Column(Integer, nullable=False, default=0)
     extras = Column(JSONB, nullable=False, default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
+    # ------------------------------------------------------------------
+    # Derived helpers for legacy consumers
+    # ------------------------------------------------------------------
+
+    @property
+    def condition(self) -> Dict[str, object]:
+        trigger_payload = self.trigger or {}
+        return trigger_payload if isinstance(trigger_payload, dict) else {}
+
+    @condition.setter
+    def condition(self, value: Optional[Dict[str, object]]) -> None:
+        self.trigger = value or {}
+
+    @property
+    def throttle_until(self) -> Optional[datetime]:
+        return self.cooled_until
+
+    @throttle_until.setter
+    def throttle_until(self, value: Optional[datetime]) -> None:
+        self.cooled_until = value
+
+    def _frequency_payload(self) -> Dict[str, object]:
+        payload = self.frequency or {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _frequency_int(self, key: str, default: int, *, minimum: int = 0) -> int:
+        value = self._frequency_payload().get(key)
+        try:
+            candidate = int(value)
+        except (TypeError, ValueError):
+            candidate = default
+        return max(candidate, minimum)
+
+    def _frequency_optional_int(self, key: str) -> Optional[int]:
+        value = self._frequency_payload().get(key)
+        if value in (None, "", False):
+            return None
+        try:
+            candidate = int(value)
+        except (TypeError, ValueError):
+            return None
+        return candidate if candidate >= 1 else None
+
+    @property
+    def evaluation_interval_minutes(self) -> int:
+        return self._frequency_int("evaluationIntervalMinutes", default=5, minimum=1)
+
+    @evaluation_interval_minutes.setter
+    def evaluation_interval_minutes(self, value: int) -> None:
+        payload = self._frequency_payload()
+        payload["evaluationIntervalMinutes"] = max(int(value or 1), 1)
+        self.frequency = payload
+
+    @property
+    def window_minutes(self) -> int:
+        return self._frequency_int("windowMinutes", default=60, minimum=5)
+
+    @window_minutes.setter
+    def window_minutes(self, value: int) -> None:
+        payload = self._frequency_payload()
+        payload["windowMinutes"] = max(int(value or 5), 5)
+        self.frequency = payload
+
+    @property
+    def cooldown_minutes(self) -> int:
+        return self._frequency_int("cooldownMinutes", default=60, minimum=0)
+
+    @cooldown_minutes.setter
+    def cooldown_minutes(self, value: int) -> None:
+        payload = self._frequency_payload()
+        payload["cooldownMinutes"] = max(int(value or 0), 0)
+        self.frequency = payload
+
+    @property
+    def max_triggers_per_day(self) -> Optional[int]:
+        return self._frequency_optional_int("maxTriggersPerDay")
+
+    @max_triggers_per_day.setter
+    def max_triggers_per_day(self, value: Optional[int]) -> None:
+        payload = self._frequency_payload()
+        if value in (None, "", 0):
+            payload["maxTriggersPerDay"] = None
+        else:
+            payload["maxTriggersPerDay"] = max(int(value), 1)
+        self.frequency = payload
+
     def should_evaluate(self, now: datetime) -> bool:
         """Determine whether the rule is due for evaluation."""
         if self.status != "active":
             return False
-        if self.throttle_until and self.throttle_until > now:
+        if self.cooled_until and self.cooled_until > now:
             return False
         if self.last_evaluated_at is None:
             return True
@@ -77,8 +161,8 @@ class AlertRule(Base):
         return due_at <= now
 
     def remaining_cooldown(self, now: datetime) -> int:
-        if self.throttle_until and self.throttle_until > now:
-            delta = self.throttle_until - now
+        if self.cooled_until and self.cooled_until > now:
+            delta = self.cooled_until - now
             return max(int(delta.total_seconds() // 60), 0)
         if self.last_triggered_at is None:
             return 0

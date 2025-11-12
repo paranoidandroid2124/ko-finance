@@ -52,5 +52,5 @@ def test_unknown_tier_falls_back_to_free():
     plan_config_store.clear_plan_config_cache()
     config = plan_config_store.get_tier_config("custom-tier")
     # free tier defaults
-    assert config["entitlements"] == ["search.alerts"]
+    assert config["entitlements"] == ["search.alerts", "rag.core"]
     assert config["quota"]["chatRequestsPerDay"] == 20

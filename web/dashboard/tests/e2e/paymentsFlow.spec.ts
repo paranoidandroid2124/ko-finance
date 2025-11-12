@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
-type PlanTier = "free" | "pro" | "enterprise";
+type PlanTier = "free" | "starter" | "pro" | "enterprise";
 
 const BASE_URL = process.env.PLAYWRIGHT_TEST_BASE_URL ?? "http://localhost:3000";
 const SUCCESS_ORDER_ID = "kfinance-enterprise-e2e";

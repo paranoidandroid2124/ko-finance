@@ -18,9 +18,9 @@ from services import plan_config_store
 
 logger = logging.getLogger(__name__)
 
-PlanTier = Literal["free", "pro", "enterprise"]
+PlanTier = Literal["free", "starter", "pro", "enterprise"]
 
-SUPPORTED_PLAN_TIERS: Sequence[str] = ("free", "pro", "enterprise")
+SUPPORTED_PLAN_TIERS: Sequence[str] = ("free", "starter", "pro", "enterprise")
 
 
 @dataclass(slots=True)

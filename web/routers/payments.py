@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from schemas.api.payments import (
     TossPaymentsConfigResponse,
@@ -19,6 +21,7 @@ from services.payments import (
     get_toss_public_config,
     verify_toss_webhook_signature,
 )
+from services.payments import order_context_store
 from services.payments.toss_webhook_audit import append_webhook_audit_entry
 from services.payments.toss_webhook_store import has_processed_webhook, record_webhook_event
 from services.payments.toss_webhook_utils import (
@@ -27,7 +30,11 @@ from services.payments.toss_webhook_utils import (
     resolve_order_id,
     resolve_payment_status,
 )
+from services.audit_log import audit_billing_event
+from services.entitlement_service import entitlement_service
+from services.id_utils import normalize_uuid
 from services.plan_service import PlanTier, SUPPORTED_PLAN_TIERS, apply_checkout_upgrade, clear_checkout_requested
+from web.deps_rbac import RbacState, get_rbac_state
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
@@ -52,7 +59,10 @@ async def read_toss_config() -> TossPaymentsConfigResponse:
     response_model=TossPaymentsConfirmResponse,
     summary="토스 결제를 확인(승인)합니다.",
 )
-async def confirm_toss_payment(payload: TossPaymentsConfirmRequest) -> TossPaymentsConfirmResponse:
+async def confirm_toss_payment(
+    payload: TossPaymentsConfirmRequest,
+    state: RbacState = Depends(get_rbac_state),
+) -> TossPaymentsConfirmResponse:
     try:
         client = get_toss_payments_client()
     except RuntimeError as exc:
@@ -78,6 +88,15 @@ async def confirm_toss_payment(payload: TossPaymentsConfirmRequest) -> TossPayme
                 "payload": exc.payload,
             },
         ) from exc
+
+    normalized_tier = payload.planTier or extract_tier_from_order_id(payload.orderId)
+
+    order_context_store.record_order_context(
+        order_id=payload.orderId,
+        org_id=str(state.org_id) if state.org_id else None,
+        plan_slug=normalized_tier,
+        user_id=str(state.user_id) if state.user_id else None,
+    )
 
     return TossPaymentsConfirmResponse(
         paymentKey=confirmation.get("paymentKey", payload.paymentKey),
@@ -172,8 +191,14 @@ async def handle_toss_webhook(request: Request) -> Dict[str, str]:
         )
         return {"status": "accepted"}
 
+    tier = extract_tier_from_order_id(order_id)
+    order_context = order_context_store.get_order_context(order_id)
+    fallback_org = normalize_uuid(order_context.org_id) if order_context else None
+    fallback_plan = order_context.plan_slug if order_context and order_context.plan_slug in SUPPORTED_PLAN_TIERS else None
+    if tier is None:
+        tier = fallback_plan
+
     if status_value == "DONE":
-        tier = extract_tier_from_order_id(order_id)
         if tier is None:
             logger.error("Unable to infer plan tier from webhook payload.", extra={"webhook": log_context})
             append_webhook_audit_entry(
@@ -196,6 +221,19 @@ async def handle_toss_webhook(request: Request) -> Dict[str, str]:
             logger.info(
                 "Toss webhook applied plan upgrade.",
                 extra={"webhook": {**log_context, "tier": tier}},
+            )
+            synced_org = _sync_entitlement_subscription(
+                plan_slug=tier,
+                status=status_value,
+                order_id=order_id,
+                event=event,
+                log_context=log_context,
+            )
+            audit_billing_event(
+                action="billing.webhook_upgrade",
+                org_id=synced_org,
+                target_id=order_id,
+                extra={"status": status_value, "tier": tier, "transmission_id": transmission_id},
             )
             append_webhook_audit_entry(
                 result="upgrade_applied",
@@ -235,8 +273,8 @@ async def handle_toss_webhook(request: Request) -> Dict[str, str]:
                 )
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail={"code": "payments.webhook_checkout_clear_failed", "message": "결제 요청 상태 해제에 실패했습니다."},
-                ) from exc
+                detail={"code": "payments.webhook_checkout_clear_failed", "message": "결제 요청 상태 해제에 실패했습니다."},
+            ) from exc
         else:
             logger.info("Toss cancellation webhook missing orderId.", extra={"webhook": log_context})
             append_webhook_audit_entry(
@@ -244,6 +282,33 @@ async def handle_toss_webhook(request: Request) -> Dict[str, str]:
                 context=log_context,
                 payload=event,
             )
+        synced_org = None
+        if tier:
+            context_metadata = (
+                {
+                    "orgId": order_context.org_id,
+                    "planSlug": order_context.plan_slug,
+                    "userId": order_context.user_id,
+                    "source": "order_context_store",
+                }
+                if order_context
+                else None
+            )
+            synced_org = _sync_entitlement_subscription(
+                plan_slug=tier,
+                status=status_value,
+                order_id=order_id,
+                event=event,
+                log_context=log_context,
+                fallback_org_id=fallback_org,
+                fallback_metadata=context_metadata,
+            )
+        audit_billing_event(
+            action="billing.webhook_status_change",
+            org_id=synced_org,
+            target_id=order_id,
+            extra={"status": status_value, "tier": tier, "transmission_id": transmission_id},
+        )
     else:
         logger.info(
             "Unhandled Toss payment status transition ignored.",
@@ -253,6 +318,12 @@ async def handle_toss_webhook(request: Request) -> Dict[str, str]:
             result="status_ignored",
             context=log_context,
             payload=event,
+        )
+        audit_billing_event(
+            action="billing.webhook_ignored",
+            org_id=None,
+            target_id=order_id,
+            extra={"status": status_value, "event_type": event_type, "transmission_id": transmission_id},
         )
 
     record_webhook_event(
@@ -269,4 +340,84 @@ async def handle_toss_webhook(request: Request) -> Dict[str, str]:
         payload=event,
     )
 
+    if order_id:
+        order_context_store.pop_order_context(order_id)
+
     return {"status": "accepted"}
+
+
+def _event_metadata(event: Dict[str, Any]) -> Dict[str, Any]:
+    data = event.get("data") or {}
+    metadata = data.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _extract_org_id(metadata: Dict[str, Any]) -> Optional[uuid.UUID]:
+    candidate = metadata.get("orgId") or metadata.get("org_id")
+    if not candidate:
+        return None
+    try:
+        return uuid.UUID(str(candidate))
+    except (ValueError, TypeError):
+        logger.debug("Invalid orgId metadata: %s", candidate)
+        return None
+def _parse_period_end(metadata: Dict[str, Any]) -> Optional[datetime]:
+    candidate = metadata.get("currentPeriodEnd") or metadata.get("current_period_end")
+    if candidate is None:
+        return None
+    if isinstance(candidate, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(candidate), timezone.utc)
+        except (OSError, OverflowError):
+            return None
+    if isinstance(candidate, str):
+        try:
+            return datetime.fromisoformat(candidate)
+        except ValueError:
+            try:
+                return datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+    return None
+
+
+def _sync_entitlement_subscription(
+    *,
+    plan_slug: PlanTier,
+    status: Optional[str],
+    order_id: Optional[str],
+    event: Dict[str, Any],
+    log_context: Dict[str, Any],
+    fallback_org_id: Optional[uuid.UUID] = None,
+    fallback_metadata: Optional[Dict[str, Any]] = None,
+) -> Optional[uuid.UUID]:
+    if not status:
+        return None
+    metadata = _event_metadata(event)
+    org_id = _extract_org_id(metadata)
+    if not org_id:
+        org_id = fallback_org_id
+    if not org_id:
+        return None
+
+    payload_metadata = {**metadata, "orderId": order_id}
+    if fallback_metadata:
+        payload_metadata.setdefault("fallback", fallback_metadata)
+    period_end = _parse_period_end(metadata)
+    try:
+        entitlement_service.sync_subscription_from_billing(
+            org_id=org_id,
+            plan_slug=plan_slug,
+            status=status.lower(),
+            current_period_end=period_end,
+            metadata=payload_metadata,
+        )
+        return org_id
+    except Exception as exc:  # pragma: no cover - logging guard
+        logger.warning(
+            "Failed to sync entitlement subscription for org=%s: %s",
+            org_id,
+            exc,
+            extra={"webhook": {**log_context, "org_id": str(org_id)}},
+        )
+        return None

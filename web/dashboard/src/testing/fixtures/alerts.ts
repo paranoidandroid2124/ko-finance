@@ -36,6 +36,12 @@ export const freePlanInfo: AlertPlanInfo = {
   defaultCooldownMinutes: 120,
   minEvaluationIntervalMinutes: 5,
   minCooldownMinutes: 30,
+  frequencyDefaults: {
+    evaluationIntervalMinutes: 15,
+    windowMinutes: 120,
+    cooldownMinutes: 120,
+    maxTriggersPerDay: 1,
+  },
   nextEvaluationAt: null,
 };
 
@@ -50,6 +56,12 @@ export const proPlanInfo: AlertPlanInfo = {
   defaultCooldownMinutes: 30,
   minEvaluationIntervalMinutes: 1,
   minCooldownMinutes: 5,
+  frequencyDefaults: {
+    evaluationIntervalMinutes: 5,
+    windowMinutes: 60,
+    cooldownMinutes: 30,
+    maxTriggersPerDay: 6,
+  },
   nextEvaluationAt: null,
 };
 
@@ -64,6 +76,12 @@ export const enterprisePlanInfo: AlertPlanInfo = {
   defaultCooldownMinutes: 10,
   minEvaluationIntervalMinutes: 1,
   minCooldownMinutes: 0,
+  frequencyDefaults: {
+    evaluationIntervalMinutes: 2,
+    windowMinutes: 30,
+    cooldownMinutes: 10,
+    maxTriggersPerDay: 12,
+  },
   nextEvaluationAt: null,
 };
 
@@ -82,22 +100,33 @@ export const createAlertRuleFixture = (overrides?: Partial<AlertRule>): AlertRul
   description: "주요 공시가 올라오면 알려드릴게요.",
   planTier: overrides?.planTier ?? "pro",
   status: "active",
-  condition: {
+  trigger: overrides?.trigger ?? {
     type: "filing",
     tickers: ["KOFC"],
     categories: ["10-Q"],
     sectors: [],
     minSentiment: null,
-    ...overrides?.condition,
   },
+  frequency:
+    overrides?.frequency ??
+    {
+      evaluationIntervalMinutes: overrides?.evaluationIntervalMinutes ?? 5,
+      windowMinutes: overrides?.windowMinutes ?? 60,
+      cooldownMinutes: overrides?.cooldownMinutes ?? 30,
+      maxTriggersPerDay: overrides?.maxTriggersPerDay ?? 5,
+    },
+  condition: overrides?.condition,
   channels: overrides?.channels ?? [sampleEmailChannel],
   messageTemplate: overrides?.messageTemplate ?? null,
-  evaluationIntervalMinutes: overrides?.evaluationIntervalMinutes ?? 5,
-  windowMinutes: overrides?.windowMinutes ?? 60,
-  cooldownMinutes: overrides?.cooldownMinutes ?? 30,
-  maxTriggersPerDay: overrides?.maxTriggersPerDay ?? 5,
+  evaluationIntervalMinutes:
+    overrides?.evaluationIntervalMinutes ?? overrides?.frequency?.evaluationIntervalMinutes ?? 5,
+  windowMinutes: overrides?.windowMinutes ?? overrides?.frequency?.windowMinutes ?? 60,
+  cooldownMinutes: overrides?.cooldownMinutes ?? overrides?.frequency?.cooldownMinutes ?? 30,
+  maxTriggersPerDay:
+    overrides?.maxTriggersPerDay ?? overrides?.frequency?.maxTriggersPerDay ?? 5,
   lastTriggeredAt: overrides?.lastTriggeredAt ?? null,
   lastEvaluatedAt: overrides?.lastEvaluatedAt ?? null,
+  cooledUntil: overrides?.cooledUntil ?? null,
   throttleUntil: overrides?.throttleUntil ?? null,
   errorCount: overrides?.errorCount ?? 0,
   extras: overrides?.extras ?? {},

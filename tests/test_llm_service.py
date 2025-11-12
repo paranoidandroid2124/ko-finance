@@ -140,22 +140,61 @@ class RagCitationHelperTests(unittest.TestCase):
         self.assertTrue(categorized["table"])
         self.assertTrue(categorized["footnote"])
 
-    def test_extract_and_find_citations(self):
-        answer = "Revenue increased (p.5) according to (Table 2, p.5) and see details (Footnote 1, p.5)."
-        citations = llm_service._extract_citations(answer)
-        self.assertTrue(citations["page"])
-        self.assertTrue(citations["table"])
-        self.assertTrue(citations["footnote"])
+    def test_structured_citations_include_metadata(self):
+        context = [
+            {
+                "id": "chunk-1",
+                "chunk_id": "chunk-1",
+                "type": "text",
+                "page_number": 3,
+                "quote": "Sample snippet",
+                "source": "pdf",
+                "metadata": {
+                    "char_start": 10,
+                    "char_end": 42,
+                    "sentence_hash": "abc123",
+                    "document_url": "https://example.com/doc.pdf",
+                },
+            }
+        ]
+        citations = llm_service._build_structured_citations(context)
+        self.assertIn("page", citations)
+        entry = citations["page"][0]
+        self.assertEqual(entry["page_number"], 3)
+        self.assertEqual(entry["char_start"], 10)
+        self.assertEqual(entry["char_end"], 42)
+        self.assertEqual(entry["sentence_hash"], "abc123")
 
-        required = {"page": True, "table": True, "footnote": True}
-        missing = llm_service._find_missing_citations(required, citations)
-        self.assertFalse(missing)
+    def test_missing_citations_detected_when_snippet_incomplete(self):
+        required = {"page": True, "table": False, "footnote": False}
+        context = [{"id": "chunk-1", "type": "text", "quote": "No offsets"}]
+        citations = llm_service._build_structured_citations(context)
+        with patch.object(llm_service, "RAG_REQUIRE_SNIPPET", True):
+            missing = llm_service._find_missing_citations(required, citations)
+        self.assertEqual(missing, ["page"])
 
-    def test_missing_citations_detected(self):
-        required = {"page": True, "table": True, "footnote": False}
-        citations = {"page": ["(p.3)"], "table": [], "footnote": []}
-        missing = llm_service._find_missing_citations(required, citations)
-        self.assertEqual(missing, ["table"])
+    def test_citation_entry_includes_deeplink_when_enabled(self):
+        chunk = {
+            "id": "chunk-token",
+            "chunk_id": "chunk-token",
+            "type": "text",
+            "page_number": 2,
+            "quote": "Example text",
+            "source": "pdf",
+            "metadata": {
+                "char_start": 0,
+                "char_end": 12,
+                "sentence_hash": "sent-hash",
+                "document_url": "https://example.com/filing.pdf",
+            },
+        }
+        with patch.object(llm_service, "RAG_LINK_DEEPLINK", True), patch.object(
+            llm_service.deeplink_service, "is_enabled", return_value=True
+        ), patch.object(llm_service.deeplink_service, "issue_token", return_value="token"), patch.object(
+            llm_service.deeplink_service, "build_viewer_url", return_value="/viewer/token"
+        ):
+            entry = llm_service._build_citation_entry(chunk, "page", "(p.2)")
+        self.assertEqual(entry.get("deeplink_url"), "/viewer/token")
 
     def test_collect_highlights_structure(self):
         context = [

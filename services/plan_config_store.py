@@ -29,6 +29,20 @@ _DEFAULT_PLAN_CONFIG: Dict[str, Any] = {
                 "peerExportRowLimit": 0,
             },
         },
+        "starter": {
+            "entitlements": [
+                "search.alerts",
+                "search.export",
+                "rag.core",
+                "evidence.inline_pdf",
+            ],
+            "quota": {
+                "chatRequestsPerDay": 80,
+                "ragTopK": 5,
+                "selfCheckEnabled": True,
+                "peerExportRowLimit": 50,
+            },
+        },
         "pro": {
             "entitlements": ["search.compare", "search.alerts", "search.export", "evidence.inline_pdf", "rag.core"],
             "quota": {

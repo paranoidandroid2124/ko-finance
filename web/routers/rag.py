@@ -6,9 +6,9 @@ import json
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Mapping
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -25,16 +25,22 @@ from schemas.api.rag import (
     RAGQueryResponse,
     RAGEvidence,
     RelatedFiling,
+    RAGDeeplinkPayload,
+    RAGTelemetryRequest,
+    RAGTelemetryResponse,
     SelfCheckResult,
 )
-from services import chat_service, date_range_parser, vector_service, lightmem_gate, lightmem_rate_limiter
+from services import chat_service, date_range_parser, vector_service, lightmem_gate, deeplink_service
+from services.audit_log import audit_rag_event
 from services.user_settings_service import UserLightMemSettings
 from services.rag_shared import build_anchor_payload, normalize_reliability, safe_float, safe_int
 from services.evidence_service import attach_diff_metadata
 from models.chat import ChatMessage, ChatSession
 from services.memory.facade import MEMORY_SERVICE
 from services.plan_service import PlanContext
+import services.rag_metrics as rag_metrics
 from web.deps import require_plan_feature
+from web.quota_guard import enforce_quota
 
 
 def _extract_anchor(chunk: Dict[str, Any]) -> Optional[EvidenceAnchor]:
@@ -67,6 +73,64 @@ def _normalize_self_check(value: Any) -> Optional[SelfCheckResult]:
     if not payload:
         return None
     return SelfCheckResult.model_validate(payload)
+
+
+_ALLOWED_TELEMETRY_EVENTS: Dict[str, str] = {
+    "rag.deeplink_opened": "deeplink",
+    "rag.deeplink_failed": "deeplink",
+    "rag.deeplink_viewer_ready": "viewer",
+    "rag.deeplink_viewer_error": "viewer",
+    "rag.deeplink_viewer_original_opened": "viewer",
+    "rag.deeplink_viewer_original_failed": "viewer",
+    "rag.evidence_view": "evidence",
+    "rag.evidence_diff_toggle": "evidence",
+}
+_FAILURE_EVENTS = {
+    "rag.deeplink_failed",
+    "rag.deeplink_viewer_error",
+    "rag.deeplink_viewer_original_failed",
+}
+
+
+def _telemetry_source(event: Any) -> str:
+    source = None
+    if isinstance(getattr(event, "source", None), str):
+        source = event.source  # type: ignore[attr-defined]
+    elif isinstance(getattr(event, "payload", None), dict):
+        source = event.payload.get("source")
+    if isinstance(source, str) and source.strip():
+        return source.strip().lower()[:64]
+    return "web"
+
+
+def _telemetry_reason(event_name: str, payload: Mapping[str, Any]) -> Optional[str]:
+    if event_name not in _FAILURE_EVENTS:
+        return None
+    reason = payload.get("reason") or payload.get("error")
+    if isinstance(reason, str) and reason.strip():
+        return reason.strip()[:64]
+    return "unknown"
+
+
+def _telemetry_extra_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    mapping = {
+        "document_id": "document_id",
+        "documentId": "document_id",
+        "chunk_id": "chunk_id",
+        "chunkId": "chunk_id",
+        "page_number": "page_number",
+        "pageNumber": "page_number",
+        "has_deeplink": "has_deeplink",
+        "hasDeeplink": "has_deeplink",
+        "reason": "reason",
+        "error": "error",
+        "bucket": "bucket",
+    }
+    enriched: Dict[str, Any] = {}
+    for key, target in mapping.items():
+        if key in payload and target not in enriched:
+            enriched[target] = payload.get(key)
+    return enriched
 
 
 def _resolve_urn(chunk: Dict[str, Any], *, chunk_id: Optional[str]) -> str:
@@ -328,6 +392,38 @@ def _attach_evidence_diff(
     return evidence, {"enabled": False, "removed": []}
 
 
+def _build_citation_stats(citations: Mapping[str, Any]) -> Dict[str, Any]:
+    total = 0
+    with_offsets = 0
+    with_hash = 0
+    bucket_totals: Dict[str, int] = {}
+    for bucket, entries in (citations or {}).items():
+        if not isinstance(entries, list):
+            continue
+        bucket_count = 0
+        for entry in entries:
+            bucket_count += 1
+            total += 1
+            if isinstance(entry, dict):
+                if entry.get("sentence_hash"):
+                    with_hash += 1
+                char_start = entry.get("char_start")
+                char_end = entry.get("char_end")
+                try:
+                    if char_start is not None and char_end is not None and int(char_end) > int(char_start):
+                        with_offsets += 1
+                except (TypeError, ValueError):
+                    continue
+        if bucket_count:
+            bucket_totals[bucket] = bucket_count
+    return {
+        "total": total,
+        "with_offsets": with_offsets,
+        "with_hash": with_hash,
+        "buckets": bucket_totals,
+    }
+
+
 def _enqueue_evidence_snapshot(
     evidence: List[Dict[str, Any]],
     *,
@@ -358,8 +454,6 @@ NO_CONTEXT_ANSWER = "관련 근거 문서를 찾지 못했습니다. 다른 질�
 INTENT_GENERAL_MESSAGE = "저는 공시·금융 뉴스 정보를 기반으로 답변하는 서비스입니다. 관련된 질문을 입력해 주세요."
 INTENT_BLOCK_MESSAGE = SAFE_MESSAGE
 INTENT_WARNING_CODE = "intent_filter"
-CHAT_QUOTA_SCOPE = "rag.chat.daily"
-CHAT_QUOTA_WINDOW_SECONDS = 24 * 60 * 60
 
 
 def _parse_uuid(value: Optional[str]) -> Optional[uuid.UUID]:
@@ -387,46 +481,103 @@ def _load_user_lightmem_settings(
     return lightmem_gate.load_user_settings(user_id)
 
 
+@router.get(
+    "/deeplink/{token}",
+    response_model=RAGDeeplinkPayload,
+    name="rag.deeplink.resolve",
+)
+def resolve_rag_deeplink(token: str) -> RAGDeeplinkPayload:
+    """Resolve a signed deeplink token and expose the underlying citation metadata."""
+
+    try:
+        payload = deeplink_service.resolve_token(token)
+    except deeplink_service.DeeplinkDisabledError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    except deeplink_service.DeeplinkExpiredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    except deeplink_service.DeeplinkError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    return RAGDeeplinkPayload.model_validate(payload)
+
+
+@router.post(
+    "/telemetry",
+    response_model=RAGTelemetryResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def record_rag_telemetry(
+    telemetry: RAGTelemetryRequest,
+    request: Request,
+    x_user_id: Optional[str] = Header(default=None),
+    x_org_id: Optional[str] = Header(default=None),
+    plan: PlanContext = Depends(require_plan_feature("rag.core")),
+) -> RAGTelemetryResponse:
+    """Capture client-side telemetry for deeplink/viewer UX."""
+
+    user_id = _resolve_lightmem_user_id(x_user_id)
+    org_id = _parse_uuid(x_org_id)
+    accepted = 0
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    for event in telemetry.events:
+        if event.name not in _ALLOWED_TELEMETRY_EVENTS:
+            continue
+        normalized_source = _telemetry_source(event)
+        reason = _telemetry_reason(event.name, event.payload)
+        rag_metrics.record_event(event.name, source=normalized_source, reason=reason)
+
+        event_timestamp = (event.timestamp or datetime.now(timezone.utc)).isoformat()
+        extra_payload = _telemetry_extra_payload(event.payload)
+        extra_payload.update(
+            {
+                "source": normalized_source,
+                "event": event.name,
+                "timestamp": event_timestamp,
+            }
+        )
+        if reason:
+            extra_payload.setdefault("reason", reason)
+        if client_ip:
+            extra_payload["client_ip"] = client_ip
+        if user_agent:
+            extra_payload["user_agent"] = user_agent
+
+        target_id = (
+            extra_payload.get("chunk_id")
+            or extra_payload.get("document_id")
+            or event.payload.get("session_id")
+            or event.payload.get("sessionId")
+        )
+        try:
+            audit_rag_event(
+                action=f"rag.telemetry.{event.name}",
+                user_id=user_id,
+                org_id=org_id,
+                target_id=str(target_id) if target_id else None,
+                feature_flags=plan.feature_flags(),
+                extra=extra_payload,
+            )
+        except Exception:  # pragma: no cover - audit best-effort
+            logger.debug("Failed to persist telemetry audit event for %s", event.name, exc_info=True)
+        accepted += 1
+
+    if accepted == 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid telemetry events supplied.")
+    return RAGTelemetryResponse(accepted=accepted)
+
+
 def _enforce_chat_quota(plan: PlanContext, user_id: Optional[uuid.UUID]) -> None:
-    limit = plan.quota.chat_requests_per_day
-    if limit is None or limit <= 0:
-        return
-
-    identifier = str(user_id or "anonymous")
-    result = lightmem_rate_limiter.check_limit(
-        scope=CHAT_QUOTA_SCOPE,
-        identifier=identifier,
-        limit=limit,
-        window_seconds=CHAT_QUOTA_WINDOW_SECONDS,
-    )
-    if result.backend_error:
-        logger.debug("Chat quota limiter unavailable; allowing request (plan=%s).", plan.tier)
-        return
-    if result.allowed:
-        return
-
-    remaining = max(int(result.remaining or 0), 0)
-    reset_iso = result.reset_at.isoformat() if result.reset_at else None
-    headers: Dict[str, str] = {}
-    if result.reset_at:
-        retry_after = max(int((result.reset_at - datetime.now(timezone.utc)).total_seconds()), 0)
-        headers["Retry-After"] = str(retry_after)
-
-    detail = {
-        "code": "plan.chat_quota_exceeded",
-        "message": "오늘 사용할 수 있는 AI 대화 횟수를 모두 사용했습니다. 내일 다시 이용하거나 Pro 플랜으로 업그레이드해 주세요.",
-        "planTier": plan.tier,
-        "quota": {
-            "chatRequestsPerDay": limit,
-            "remaining": remaining,
-            "resetAt": reset_iso,
-        },
-    }
-    raise HTTPException(
-        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        detail=detail,
-        headers=headers or None,
-    )
+    enforce_quota("rag.chat", plan=plan, user_id=user_id, org_id=None)
 
 def _coerce_uuid(value, *, default=None):
     """Convert an arbitrary identifier to a UUID."""
@@ -1183,7 +1334,7 @@ def query_rag(
         context = _build_evidence_payload(result.get("context") or context_chunks)
         snapshot_payload = deepcopy(context)
         context, diff_meta = _attach_evidence_diff(context, db=db)
-        citations: Dict[str, List[str]] = dict(result.get("citations") or {})
+        citations: Dict[str, List[Any]] = dict(result.get("citations") or {})
         warnings: List[str] = list(result.get("warnings") or [])
         highlights: List[Dict[str, object]] = list(result.get("highlights") or [])
 
@@ -1278,6 +1429,25 @@ def query_rag(
             state=state_value,
             related_filings=related_filings,
             rag_mode=payload_rag_mode,
+        )
+        citation_stats = _build_citation_stats(citations)
+        audit_rag_event(
+            action="rag.query",
+            user_id=user_id,
+            org_id=org_id,
+            target_id=str(session.id),
+            feature_flags=plan.feature_flags(),
+            extra={
+                "trace_id": trace_id,
+                "turn_id": str(turn_id),
+                "rag_mode": payload_rag_mode,
+                "intent_decision": intent_decision,
+                "judge_decision": result.get("judge_decision"),
+                "filing_id": selected_filing_id,
+                "error": error,
+                "context_docs": len(context),
+                "citation_stats": citation_stats,
+            },
         )
 
         if request.run_self_check:
@@ -1569,7 +1739,7 @@ def query_rag_stream(
                 context = _build_evidence_payload(final_payload.get("context") or context_chunks)
                 snapshot_payload = deepcopy(context)
                 context, diff_meta = _attach_evidence_diff(context, db=db)
-                citations: Dict[str, List[str]] = dict(final_payload.get("citations") or {})
+                citations: Dict[str, List[Any]] = dict(final_payload.get("citations") or {})
                 warnings: List[str] = list(final_payload.get("warnings") or [])
                 highlights: List[Dict[str, object]] = list(final_payload.get("highlights") or [])
                 error = final_payload.get("error")

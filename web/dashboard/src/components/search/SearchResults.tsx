@@ -4,6 +4,7 @@ import { Lock } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
+import { planTierLabel } from "@/constants/planPricing";
 import { nextTier, usePlanTier } from "@/store/planStore";
 import type {
   SearchResult as SearchResultItem,
@@ -188,7 +189,7 @@ function LockedButton({ label, isLocked }: { label: string; isLocked?: boolean }
   const router = useRouter();
   const currentTier = usePlanTier();
   const upgradeTier = nextTier(currentTier) ?? "enterprise";
-  const targetLabel = upgradeTier === "enterprise" ? "Enterprise" : "Pro";
+  const targetLabel = planTierLabel(upgradeTier);
 
   if (!isLocked) {
     return (

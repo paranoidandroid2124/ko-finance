@@ -22,6 +22,9 @@ from schemas.api.chat import (
     ChatSessionResponse,
 )
 from services import chat_service
+from services.plan_service import PlanContext
+from web.deps import get_plan_context
+from web.quota_guard import enforce_quota
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -204,6 +207,7 @@ def create_message(
     x_org_id: Optional[str] = Header(default=None),
     idempotency_key_header: Optional[str] = Header(default=None, convert_underscores=False, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
+    plan: PlanContext = Depends(get_plan_context),
 ) -> ChatMessageResponse:
     user_id = _parse_uuid(x_user_id)
     org_id = _parse_uuid(x_org_id)
@@ -211,6 +215,7 @@ def create_message(
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
     _guard_session_owner(session, user_id, org_id)
+    enforce_quota("api.chat", plan=plan, user_id=user_id, org_id=org_id)
     idempotency_key = payload.idempotency_key or idempotency_key_header
     turn_id = _coerce_uuid(payload.turn_id)
     try:

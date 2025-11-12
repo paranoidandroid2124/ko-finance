@@ -61,28 +61,30 @@ export const buildInitialFormState = ({
   planDailyCap,
 }: BuildInitialFormStateArgs): AlertBuilderFormState => {
   if (editingRule) {
-    const conditionType = (editingRule.condition?.type as "filing" | "news") ?? "filing";
+    const trigger = editingRule.trigger;
+    const frequency = editingRule.frequency;
+    const conditionType = (trigger?.type as "filing" | "news") ?? "filing";
+    const frequencyMax =
+      frequency?.maxTriggersPerDay ??
+      editingRule.maxTriggersPerDay ??
+      (planDailyCap !== undefined ? planDailyCap : undefined);
     const maxTriggers =
-      editingRule.maxTriggersPerDay !== null && editingRule.maxTriggersPerDay !== undefined
-        ? String(editingRule.maxTriggersPerDay)
-        : planDailyCap
-        ? String(planDailyCap)
-        : "";
+      frequencyMax !== undefined && frequencyMax !== null ? String(frequencyMax) : planDailyCap ? String(planDailyCap) : "";
     const minSentiment =
-      conditionType === "news" && editingRule.condition?.minSentiment !== undefined
-        ? String(editingRule.condition.minSentiment)
+      conditionType === "news" && typeof trigger?.minSentiment === "number"
+        ? String(trigger.minSentiment)
         : DEFAULT_NEWS_SENTIMENT;
     return {
       name: mode === "duplicate" ? `${editingRule.name} (복사본)` : editingRule.name,
       description: editingRule.description ?? "",
       conditionType,
-      tickers: editingRule.condition?.tickers?.join(", ") ?? "",
-      categories: editingRule.condition?.categories?.join(", ") ?? "",
-      sectors: editingRule.condition?.sectors?.join(", ") ?? "",
+      tickers: trigger?.tickers?.join(", ") ?? "",
+      categories: trigger?.categories?.join(", ") ?? "",
+      sectors: trigger?.sectors?.join(", ") ?? "",
       minSentiment,
-      evaluationMinutes: editingRule.evaluationIntervalMinutes ?? defaultEvaluationInterval,
-      windowMinutes: editingRule.windowMinutes ?? defaultWindowMinutes,
-      cooldownMinutes: editingRule.cooldownMinutes ?? defaultCooldownMinutes,
+      evaluationMinutes: frequency?.evaluationIntervalMinutes ?? defaultEvaluationInterval,
+      windowMinutes: frequency?.windowMinutes ?? defaultWindowMinutes,
+      cooldownMinutes: frequency?.cooldownMinutes ?? defaultCooldownMinutes,
       maxTriggersPerDay: maxTriggers,
     };
   }

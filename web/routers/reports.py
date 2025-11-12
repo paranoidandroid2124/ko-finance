@@ -32,6 +32,7 @@ from services.daily_brief_service import (
 )
 from services.plan_service import PlanContext
 from web.deps import get_plan_context, require_plan_feature
+from web.quota_guard import enforce_quota
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 logger = get_logger(__name__)
@@ -80,6 +81,7 @@ def read_digest_preview(
     normalized = "weekly" if str(timeframe).lower() == "weekly" else "daily"
     user_id = _parse_uuid(x_user_id) if x_user_id else lightmem_gate.default_user_id()
     org_id = _parse_uuid(x_org_id)
+    enforce_quota("watchlist.preview", plan=plan, user_id=user_id, org_id=org_id)
     owner_filters = {"user_id": user_id, "org_id": org_id}
     snapshot_payload = digest_snapshot_service.load_snapshot(
         db,

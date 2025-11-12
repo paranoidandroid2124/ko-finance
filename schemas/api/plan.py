@@ -6,7 +6,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-PlanTier = Literal["free", "pro", "enterprise"]
+PlanTier = Literal["free", "starter", "pro", "enterprise"]
 
 
 class PlanQuotaSchema(BaseModel):

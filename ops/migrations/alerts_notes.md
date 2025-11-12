@@ -42,3 +42,27 @@ DROP TYPE IF EXISTS alert_status;
   - `ALERT_SLACK_WEBHOOK_URL`
   - `PAGERDUTY_ROUTING_KEY`
   - `ALERT_REQUEST_TIMEOUT`, `ALERT_REQUEST_RETRIES` (optional tuning)
+
+---
+
+## 2025-11-12 Schema Unification (trigger/frequency/cooled_until)
+
+- **Migration file**: `ops/migrations/update_alert_rule_schema.sql`
+- **Scope**: Replaces legacy `condition`/interval columns with unified `trigger` JSON, `frequency` JSON, and `cooled_until` timestamp.
+
+### Highlights
+- New API contract uses `trigger` + `frequency` blocks while keeping `condition`/interval fields for backwards compatibility.
+- Feature flags:
+  - `ALERTS_ENABLE_MODEL` – toggles advanced Alert Center responses/audit logging.
+  - `ALERTS_ENFORCE_RL` – enables EntitlementService-backed quota consumption.
+- Global write rate-limit via Redis: configure `ALERTS_WRITE_RATE_LIMIT`, `ALERTS_WRITE_RATE_WINDOW_SECONDS`, and `ALERTS_RATE_LIMIT_REDIS_URL`.
+- Audit log events emitted for create/update/delete and cooldown-blocked evaluations (`alerts.*` actions).
+
+### Rollout checklist
+1. Apply migration:
+   ```bash
+   psql "$DATABASE_URL" -f ops/migrations/update_alert_rule_schema.sql
+   ```
+2. Ensure web/API pods pick up new env vars & restart worker/beat.
+3. Verify `/api/v1/alerts` responses include `trigger`, `frequency`, `cooledUntil`.
+4. Monitor audit log table for `alerts.create/update/delete/cooldown_blocked` entries.

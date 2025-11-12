@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -14,14 +15,20 @@ from sqlalchemy.orm import Session
 from database import SessionLocal
 from ingest.dart_client import DartClient
 from ingest.file_downloader import fetch_viewer_bundle, parse_filing_bundle
+from ingest.legal_guard import evaluate_viewer_access
 from models.filing import Filing, STATUS_PENDING
 from services import storage_service
+from services.audit_log import audit_ingest_event
 from services.dart_sync import sync_additional_disclosures
+from services.ingest_metrics import observe_latency, record_error, record_result
+from services.ingest_policy_service import viewer_fallback_state
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 UPLOAD_DIR = "uploads"
+PACKAGE_STAGE = "seed.package"
+TASK_STAGE = "seed.task"
 
 
 def _insert_filing_record(db: Session, values: Dict[str, object]) -> Optional[Filing]:
@@ -86,6 +93,8 @@ def seed_recent_filings(
         own_session = True
 
     created_count = 0
+    task_stage_result = "success"
+    task_started = time.perf_counter()
 
     try:
         client = DartClient()
@@ -113,9 +122,18 @@ def seed_recent_filings(
             receipt_no = meta.get("rcept_no")
             if not receipt_no or receipt_no in existing_receipts:
                 continue
-
+            viewer_url = client.make_viewer_url(receipt_no)
+            fetch_started = time.perf_counter()
             package_data = None
-            zip_bytes = client.download_document_zip(receipt_no)
+            package_result: Optional[str] = None
+
+            try:
+                zip_bytes = client.download_document_zip(receipt_no)
+            except Exception as exc:  # pragma: no cover - defensive network guard
+                logger.warning("Direct ZIP download failed for %s: %s", receipt_no, exc)
+                record_error(PACKAGE_STAGE, "zip_download", exc)
+                zip_bytes = None
+
             if zip_bytes:
                 package_data = parse_filing_bundle(
                     receipt_no=receipt_no,
@@ -123,14 +141,70 @@ def seed_recent_filings(
                     save_dir=UPLOAD_DIR,
                     download_url=client.make_document_url(receipt_no),
                 )
+                if package_data:
+                    package_result = "success"
+                else:
+                    record_error(PACKAGE_STAGE, "zip_payload", "EmptyPackage")
 
             if not package_data:
+                corp_code = meta.get("corp_code")
+                fallback_allowed, flag_reason = viewer_fallback_state(db, corp_code)
+                legal_meta = evaluate_viewer_access(viewer_url)
+                legal_meta.update(
+                    {
+                        "corp_code": corp_code,
+                        "corp_name": meta.get("corp_name"),
+                        "fallback_allowed": fallback_allowed,
+                        "flag_reason": flag_reason,
+                    }
+                )
+                feature_flags = {"viewer_fallback": fallback_allowed}
+
+                if not fallback_allowed:
+                    logger.warning(
+                        "Viewer fallback blocked for receipt %s (corp_code=%s).",
+                        receipt_no,
+                        corp_code,
+                    )
+                    audit_ingest_event(
+                        action="ingest.viewer_fallback",
+                        target_id=receipt_no,
+                        extra={**legal_meta, "blocked": True},
+                        feature_flags=feature_flags,
+                    )
+                    package_result = "fallback_blocked"
+                    fetch_duration = time.perf_counter() - fetch_started
+                    observe_latency(PACKAGE_STAGE, fetch_duration)
+                    record_result(PACKAGE_STAGE, package_result)
+                    continue
+
                 logger.info("Falling back to viewer download for %s.", receipt_no)
-                package_data = fetch_viewer_bundle(client.make_viewer_url(receipt_no), UPLOAD_DIR)
+                audit_ingest_event(
+                    action="ingest.viewer_fallback",
+                    target_id=receipt_no,
+                    extra=legal_meta,
+                    feature_flags=feature_flags,
+                )
+                package_data = fetch_viewer_bundle(viewer_url, UPLOAD_DIR)
+                if not package_data:
+                    logger.error("Failed to obtain filing package for %s via viewer.", receipt_no)
+                    audit_ingest_event(
+                        action="ingest.viewer_fallback_failed",
+                        target_id=receipt_no,
+                        extra=legal_meta,
+                        feature_flags=feature_flags,
+                    )
+                    record_error(PACKAGE_STAGE, "viewer_fallback", "NoPackage")
+                    package_result = "failure"
+                    fetch_duration = time.perf_counter() - fetch_started
+                    observe_latency(PACKAGE_STAGE, fetch_duration)
+                    record_result(PACKAGE_STAGE, package_result)
+                    continue
+                package_result = "fallback_success"
 
-            if not package_data:
-                logger.error("Failed to obtain filing package for %s. Skipping.", receipt_no)
-                continue
+            fetch_duration = time.perf_counter() - fetch_started
+            observe_latency(PACKAGE_STAGE, fetch_duration)
+            record_result(PACKAGE_STAGE, package_result or "success")
 
             pdf_path = package_data.get("pdf")
             xml_entries = []
@@ -175,7 +249,7 @@ def seed_recent_filings(
                 "status": STATUS_PENDING,
                 "analysis_status": STATUS_PENDING,
                 "urls": {
-                    "viewer": client.make_viewer_url(receipt_no),
+                    "viewer": viewer_url,
                     "download": package_data.get("download_url"),
                 },
                 "source_files": source_files,
@@ -213,9 +287,14 @@ def seed_recent_filings(
 
     except Exception as exc:
         logger.error("Error during DART seed: %s", exc, exc_info=True)
+        task_stage_result = "failure"
+        record_result(TASK_STAGE, "failure")
         raise
 
     finally:
+        observe_latency(TASK_STAGE, time.perf_counter() - task_started)
+        if task_stage_result == "success":
+            record_result(TASK_STAGE, "success")
         if own_session:
             db.close()
 

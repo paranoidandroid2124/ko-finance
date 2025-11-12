@@ -19,6 +19,35 @@ export type ChatRole = 'user' | 'assistant';
 
 export type ChatMessageStatus = 'pending' | 'streaming' | 'ready' | 'error' | 'blocked';
 
+export type CitationObject = {
+  label?: string;
+  bucket?: 'page' | 'table' | 'footnote';
+  chunkId?: string;
+  chunk_id?: string;
+  page?: number;
+  pageNumber?: number;
+  page_number?: number;
+  charStart?: number;
+  charEnd?: number;
+  char_start?: number;
+  char_end?: number;
+  sentenceHash?: string;
+  sentence_hash?: string;
+  documentId?: string;
+  document_id?: string;
+  documentUrl?: string;
+  document_url?: string;
+  deeplinkUrl?: string;
+  deeplink_url?: string;
+  source?: string;
+  excerpt?: string;
+  anchor?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+export type CitationEntry = string | CitationObject;
+export type CitationMap = Record<string, CitationEntry[]>;
+
 export type ChatMessageMeta = {
   status?: ChatMessageStatus;
   errorMessage?: string;
@@ -29,7 +58,7 @@ export type ChatMessageMeta = {
   judgeReason?: string | null;
   traceId?: string | null;
   warnings?: string[];
-  citations?: Record<string, string[]>;
+  citations?: CitationMap;
   model?: string | null;
   [key: string]: unknown;
 };

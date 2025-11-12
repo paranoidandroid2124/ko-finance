@@ -2,6 +2,24 @@ import sys
 import types
 
 sys.modules.setdefault("fitz", types.SimpleNamespace())  # type: ignore
+sys.modules.setdefault(
+    "pyotp",
+    types.SimpleNamespace(
+        TOTP=lambda *args, **kwargs: None,
+        random_base32=lambda: "BASE32",
+    ),
+)  # type: ignore
+
+fake_org_module = types.ModuleType("models.org")
+fake_org_module.Org = type("Org", (), {})
+fake_org_module.OrgRole = type("OrgRole", (), {})
+fake_org_module.UserOrg = type("UserOrg", (), {})
+sys.modules.setdefault("models.org", fake_org_module)
+
+fake_plan_catalog_module = types.ModuleType("services.plan_catalog_service")
+fake_plan_catalog_module.load_plan_catalog = lambda *_, **__: {}
+fake_plan_catalog_module.update_plan_catalog = lambda *_, **__: None
+sys.modules.setdefault("services.plan_catalog_service", fake_plan_catalog_module)
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -13,7 +31,9 @@ from llm import llm_service
 from llm.guardrails import SAFE_MESSAGE
 from services import chat_service, vector_service
 from services.vector_service import VectorSearchResult
-from web.routers import rag
+import importlib
+
+rag = importlib.import_module("web.routers.rag")
 
 app = FastAPI()
 app.include_router(rag.router, prefix="/api/v1")
@@ -90,7 +110,19 @@ def test_rag_query_guardrail(monkeypatch):
         return {
             "answer": SAFE_MESSAGE,
             "context": context_chunks,
-            "citations": {"page": ["(p.1)"]},
+            "citations": {
+                "page": [
+                    {
+                        "label": "(p.5)",
+                        "bucket": "page",
+                        "chunk_id": "chunk-1",
+                        "page_number": 5,
+                        "char_start": 0,
+                        "char_end": 64,
+                        "sentence_hash": "hash-1",
+                    }
+                ]
+            },
             "warnings": ["guardrail_violation:buy\\s+this\\s+stock"],
             "highlights": [],
             "error": "guardrail_violation:buy\\s+this\\s+stock",
@@ -132,6 +164,8 @@ def test_rag_query_guardrail(monkeypatch):
     assert evidence["diff_type"] == "created"
     assert not evidence.get("previous_quote")
     assert payload["meta"]["evidence_diff"] == {"enabled": True, "removed": []}
+    assert payload["citations"]["page"][0]["page_number"] == 5
+    assert payload["citations"]["page"][0]["sentence_hash"] == "hash-1"
 
 def test_rag_query_no_context(monkeypatch):
     monkeypatch.setattr(
@@ -236,3 +270,50 @@ def test_rag_query_intent_semipass(monkeypatch):
     assert payload["answer"] == rag.INTENT_GENERAL_MESSAGE
     assert payload["rag_mode"] == "none"
     assert payload["meta"]["evidence_diff"] == {"enabled": False, "removed": []}
+
+
+def test_rag_telemetry_records_events(monkeypatch):
+    monkeypatch.setattr(rag.rag_metrics, "record_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(rag, "audit_rag_event", lambda **kwargs: None)
+
+    response = client.post(
+        "/api/v1/rag/telemetry",
+        json={
+            "events": [
+                {
+                    "name": "rag.deeplink_opened",
+                    "source": "chat",
+                    "payload": {"documentId": "doc-1", "chunkId": "chunk-1"},
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["accepted"] == 1
+
+
+def test_deeplink_resolve_route(monkeypatch):
+    monkeypatch.setattr(rag.deeplink_service, "DEEPLINK_SECRET", "unit-test-secret", raising=False)
+    monkeypatch.setattr(rag.deeplink_service, "DEEPLINK_TTL_SECONDS", 300, raising=False)
+    monkeypatch.setattr(rag.deeplink_service, "DEEPLINK_VIEWER_BASE_URL", "/viewer", raising=False)
+
+    token = rag.deeplink_service.issue_token(
+        document_url="https://example.com/sample.pdf",
+        page_number=2,
+        char_start=5,
+        char_end=15,
+        sentence_hash="hash-xyz",
+        chunk_id="chunk-xyz",
+        document_id="filing-xyz",
+        excerpt="Snippet",
+    )
+
+    response = client.get(f"/api/v1/rag/deeplink/{token}")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["page_number"] == 2
+    assert payload["document_url"] == "https://example.com/sample.pdf"
+    assert payload["chunk_id"] == "chunk-xyz"
+    assert payload["excerpt"] == "Snippet"

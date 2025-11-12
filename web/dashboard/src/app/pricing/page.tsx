@@ -10,9 +10,11 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { usePlanCatalog } from "@/hooks/usePlanCatalog";
 import type { PlanCatalogTier } from "@/lib/planCatalogApi";
+import { FEATURE_STARTER_ENABLED } from "@/config/features";
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   free: Sparkles,
+  starter: Sparkles,
   pro: TrendingUp,
   enterprise: Building2,
 };
@@ -128,7 +130,13 @@ const PlanCard = ({ tier, isFeatured }: PlanCardProps) => {
 export default function PricingPage() {
   const { data, isLoading, error, refetch } = usePlanCatalog();
 
-  const tiers: PlanCatalogTier[] = useMemo(() => data?.tiers ?? [], [data]);
+  const tiers: PlanCatalogTier[] = useMemo(() => {
+    const all = data?.tiers ?? [];
+    if (FEATURE_STARTER_ENABLED) {
+      return all;
+    }
+    return all.filter((tier) => tier.tier !== "starter");
+  }, [data]);
 
   return (
     <AppShell>
