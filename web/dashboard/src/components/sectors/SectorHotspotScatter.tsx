@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { HelpCircle } from "lucide-react";
 import { useMemo } from "react";
 import type { SectorSignalPoint } from "@/hooks/useSectorSignals";
 
@@ -30,11 +31,13 @@ export function SectorHotspotScatter({ points, isLoading = false, onSelect }: Se
   const chartData = useMemo<ScatterDatum[]>(() => {
     return points.map((point) => {
       const size = Math.min(26, 12 + Math.abs(point.deltaSentiment7d ?? 0) * 18);
+      const sentimentValue = point.sentimentMean ?? 0;
+      const volumeValue = point.volumeZ ?? 0;
       return {
-        value: [point.sentimentZ ?? 0, point.volumeZ ?? 0, size],
+        value: [sentimentValue, volumeValue, size],
         symbolSize: size,
         itemStyle: {
-          color: (point.sentimentZ ?? 0) >= 0 ? POSITIVE_COLOR : NEGATIVE_COLOR,
+          color: sentimentValue >= 0 ? POSITIVE_COLOR : NEGATIVE_COLOR,
         },
         point,
       };
@@ -53,7 +56,7 @@ export function SectorHotspotScatter({ points, isLoading = false, onSelect }: Se
       },
       xAxis: {
         type: "value",
-        name: "감성 Z",
+        name: "평균 감성",
         nameLocation: "middle",
         nameGap: 28,
         axisLine: { lineStyle: { color: "rgba(148, 163, 184, 0.5)" } },
@@ -84,10 +87,14 @@ export function SectorHotspotScatter({ points, isLoading = false, onSelect }: Se
           const headline = top?.title ? `<br/><span style="color:#94a3b8">Top: ${top.title}</span>` : "";
           const delta =
             payload.deltaSentiment7d != null ? `<br/>Δ감성(7d): ${payload.deltaSentiment7d.toFixed(2)}` : "";
+          const meanSentiment = payload.sentimentMean?.toFixed(2) ?? "0.00";
+          const sentimentZ = payload.sentimentZ?.toFixed(2) ?? "0.00";
+          const volumeZ = payload.volumeZ?.toFixed(2) ?? "0.00";
           return `
             <strong>${payload.sector.name}</strong><br/>
-            감성 Z: ${payload.sentimentZ?.toFixed(2) ?? "0.00"}<br/>
-            기사량 Z: ${payload.volumeZ?.toFixed(2) ?? "0.00"}
+            평균 감성: ${meanSentiment}<br/>
+            감성 Z: ${sentimentZ}<br/>
+            기사량 Z: ${volumeZ}
             ${delta}
             ${headline}
           `;
@@ -139,9 +146,18 @@ export function SectorHotspotScatter({ points, isLoading = false, onSelect }: Se
   return (
     <div className="rounded-xl border border-border-light bg-background-cardLight p-4 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
       <div className="mb-3">
-        <h3 className="text-sm font-semibold">섹터 핫스팟 (감성 × 기사량)</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold">섹터 핫스팟 (평균 감성 × 기사량)</h3>
+          <span className="group relative inline-flex items-center text-[11px] text-text-tertiaryLight dark:text-text-tertiaryDark">
+            <HelpCircle className="h-3.5 w-3.5" aria-hidden />
+            <span className="pointer-events-none absolute left-1/2 top-full z-10 w-max -translate-x-1/2 translate-y-2 rounded-md border border-border-light bg-background-cardLight px-3 py-1 text-[11px] text-text-secondaryLight opacity-0 shadow-lg transition-opacity group-hover:opacity-100 dark:border-border-dark dark:bg-background-cardDark dark:text-text-secondaryDark">
+              감성 Z는 과거 평균 대비 감성이 얼마나 이례적인지를, 기사량 Z는 기사 건수가 얼마나 이례적인지를 보여 줍니다. X축은 평균 감성,
+              원 크기는 7일 감성 변화량입니다.
+            </span>
+          </span>
+        </div>
         <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-          사분면을 참고해 지금 주목할 섹터를 빠르게 파악하세요. 원 크기는 7일 감성 변화량입니다.
+          사분면을 참고해 지금 주목할 섹터를 빠르게 파악하세요. X축은 평균 감성, 원 크기는 7일 감성 변화량입니다.
         </p>
       </div>
       {!points.length ? (

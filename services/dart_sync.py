@@ -6,6 +6,8 @@ import re
 from datetime import date, datetime
 from typing import Any, Dict, Optional, Sequence, Tuple
 
+from sqlalchemy import func
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from core.logging import get_logger
@@ -181,57 +183,51 @@ def _persist_account_row(
 
         period_label = _normalize_period_label(row.get(f"{prefix}_nm"), reprt_code, prefix)
         period_end = _parse_date(row.get(f"{prefix}_dt"))
-
-        metric = _get_or_create_metric(
-            db=db,
-            corp_code=filing.corp_code,
-            metric_code=account_code,
-            fiscal_year=_resolve_fiscal_year(row, prefix, filing),
-            fiscal_period=period_label,
-            source=source,
+        _upsert_metric(
+            db,
+            {
+                "corp_code": filing.corp_code,
+                "corp_name": filing.corp_name,
+                "ticker": filing.ticker,
+                "metric_code": account_code,
+                "metric_name": account_name,
+                "metric_group": group_name,
+                "fiscal_year": _resolve_fiscal_year(row, prefix, filing),
+                "fiscal_period": period_label,
+                "period_end_date": period_end,
+                "value": value,
+                "unit": unit,
+                "currency": row.get("currency"),
+                "raw_payload": row,
+                "source": source,
+                "reference_no": filing.receipt_no,
+            },
         )
 
-        metric.corp_name = filing.corp_name
-        metric.ticker = filing.ticker
-        metric.metric_name = account_name
-        metric.metric_group = group_name
-        metric.period_end_date = period_end
-        metric.value = value
-        metric.unit = unit
-        metric.reference_no = filing.receipt_no
-        metric.raw_payload = row
 
-        db.add(metric)
-
-
-def _get_or_create_metric(
-    db: Session,
-    corp_code: str,
-    metric_code: str,
-    fiscal_year: int,
-    fiscal_period: str,
-    source: str,
-) -> CorpMetric:
-    existing = (
-        db.query(CorpMetric)
-        .filter(
-            CorpMetric.corp_code == corp_code,
-            CorpMetric.metric_code == metric_code,
-            CorpMetric.fiscal_year == fiscal_year,
-            CorpMetric.fiscal_period == fiscal_period,
-            CorpMetric.source == source,
-        )
-        .one_or_none()
+def _upsert_metric(db: Session, values: Dict[str, Any]) -> None:
+    stmt = insert(CorpMetric).values(**values)
+    update_columns: Dict[str, Any] = {"updated_at": func.now()}
+    for key in (
+        "corp_name",
+        "ticker",
+        "metric_name",
+        "metric_group",
+        "period_end_date",
+        "value",
+        "unit",
+        "currency",
+        "reference_no",
+        "raw_payload",
+    ):
+        column_value = values.get(key)
+        if column_value is not None:
+            update_columns[key] = column_value
+    stmt = stmt.on_conflict_do_update(
+        constraint="uq_corp_metrics_metric_scope",
+        set_=update_columns,
     )
-    if existing:
-        return existing
-    return CorpMetric(
-        corp_code=corp_code,
-        metric_code=metric_code,
-        fiscal_year=fiscal_year,
-        fiscal_period=fiscal_period,
-        source=source,
-    )
+    db.execute(stmt)
 
 
 def _resolve_fiscal_year(row: Dict[str, Any], prefix: str, filing: Filing) -> int:

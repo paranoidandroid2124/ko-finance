@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { usePlanQuickAdjust } from "@/hooks/useAdminQuickActions";
 import { useAdminSession } from "@/hooks/useAdminSession";
 import { resolveApiBase } from "@/lib/apiBase";
+import { updatePlanPresets } from "@/lib/adminApi";
 import { useToastStore } from "@/store/toastStore";
 import { planTierRank, usePlanStore, type PlanMemoryFlags, type PlanPreset, type PlanQuota, type PlanTier } from "@/store/planStore";
 import { LIGHTMEM_FLAG_OPTIONS, type LightMemFlagKey } from "@/constants/lightmemFlags";
@@ -21,7 +22,8 @@ type EntitlementOption = {
 const ENTITLEMENT_OPTIONS: EntitlementOption[] = [
   { value: "search.compare", label: "비교 검색", description: "동시에 여러 회사를 비교 검색해요.", minTier: "pro" },
   { value: "search.alerts", label: "알림 검색", description: "조건 기반 알림을 설정하고 Slack/Email로 전달해요.", minTier: "pro" },
-  { value: "search.export", label: "데이터 내보내기", description: "검색 결과를 CSV로 추출해요.", minTier: "enterprise" },
+  { value: "search.export", label: "데이터 내보내기", description: "검색 결과를 CSV로 추출해요.", minTier: "pro" },
+  { value: "rag.core", label: "AI 애널리스트 Chat", description: "RAG 기반 대화형 분석과 근거 리포트를 생성해요.", minTier: "pro" },
   { value: "evidence.inline_pdf", label: "PDF 인라인 뷰어", description: "대시보드에서 바로 PDF를 확인해요.", minTier: "pro" },
   { value: "evidence.diff", label: "정정 Diff 비교", description: "정정 공시 Diff 분석을 제공합니다.", minTier: "enterprise" },
   { value: "timeline.full", label: "전체 타임라인", description: "기업 이벤트 전체 타임라인을 확인해요.", minTier: "enterprise" },
@@ -32,6 +34,8 @@ const PLAN_TIER_LABEL: Record<PlanTier, string> = {
   pro: "Pro",
   enterprise: "Enterprise",
 };
+
+const PLAN_TIERS: PlanTier[] = ["free", "pro", "enterprise"];
 
 const labelForEntitlement = (value: string) =>
   ENTITLEMENT_OPTIONS.find((item) => item.value === value)?.label ?? value;
@@ -168,6 +172,7 @@ export function PlanQuickActionsPanel() {
   }));
   const { presets, loading: presetsLoading, error: presetsError } = usePlanPresets();
   const baseEntitlementSets = useMemo(() => buildBaseEntitlementMap(presets), [presets]);
+  const fetchPlanPresetsRef = usePlanStore((state) => state.fetchPlanPresets);
   const {
     data: adminSession,
     isLoading: isAdminSessionLoading,
@@ -342,7 +347,8 @@ export function PlanQuickActionsPanel() {
     );
   } else {
     content = (
-      <form className="mt-4 space-y-6" onSubmit={handleSubmit}>
+      <>
+        <form className="mt-4 space-y-6" onSubmit={handleSubmit}>
         {presetsLoading && !presets && (
           <div className="rounded-lg border border-dashed border-border-light bg-background-base/50 px-3 py-2 text-xs text-text-secondaryLight dark:border-border-dark dark:bg-background-cardDark/40 dark:text-text-secondaryDark">
             플랜 프리셋 정보를 불러오는 중입니다. 잠시만 기다려 주세요.
@@ -611,7 +617,15 @@ export function PlanQuickActionsPanel() {
             {isPending ? "반영 중..." : "플랜 조정 적용"}
           </button>
         </div>
-      </form>
+        </form>
+        <PlanPresetEditor
+          presets={presets}
+          presetsLoading={presetsLoading}
+          presetsError={presetsError}
+          defaultActor={defaultActor}
+          onReloadPresets={async () => fetchPlanPresetsRef().catch(() => undefined)}
+        />
+      </>
     );
   }
 
@@ -641,3 +655,427 @@ export function PlanQuickActionsPanel() {
     </section>
   );
 }
+
+type PlanPresetEditorProps = {
+  presets: Record<PlanTier, PlanPreset> | null;
+  presetsLoading: boolean;
+  presetsError: string | null;
+  defaultActor: string | null;
+  onReloadPresets: () => Promise<void>;
+};
+
+type PresetDraft = {
+  entitlements: Set<string>;
+  quota: {
+    chatRequestsPerDay: string;
+    ragTopK: string;
+    peerExportRowLimit: string;
+    selfCheckEnabled: boolean;
+  };
+};
+
+const EMPTY_CUSTOM_INPUTS: Record<PlanTier, string> = {
+  free: "",
+  pro: "",
+  enterprise: "",
+};
+
+const planPresetDraftFromPreset = (preset?: PlanPreset): PresetDraft => ({
+  entitlements: new Set(preset?.entitlements ?? []),
+  quota: {
+    chatRequestsPerDay: preset?.quota.chatRequestsPerDay != null ? String(preset.quota.chatRequestsPerDay) : "",
+    ragTopK: preset?.quota.ragTopK != null ? String(preset.quota.ragTopK) : "",
+    peerExportRowLimit: preset?.quota.peerExportRowLimit != null ? String(preset.quota.peerExportRowLimit) : "",
+    selfCheckEnabled: Boolean(preset?.quota.selfCheckEnabled),
+  },
+});
+
+const buildPresetDrafts = (presets: Record<PlanTier, PlanPreset> | null): Record<PlanTier, PresetDraft> | null => {
+  if (!presets) {
+    return null;
+  }
+  const result: Record<PlanTier, PresetDraft> = {
+    free: planPresetDraftFromPreset(presets.free),
+    pro: planPresetDraftFromPreset(presets.pro),
+    enterprise: planPresetDraftFromPreset(presets.enterprise),
+  };
+  return result;
+};
+
+const PlanPresetEditor = ({
+  presets,
+  presetsLoading,
+  presetsError,
+  defaultActor,
+  onReloadPresets,
+}: PlanPresetEditorProps) => {
+  const pushToast = useToastStore((state) => state.show);
+  const [drafts, setDrafts] = useState<Record<PlanTier, PresetDraft> | null>(() => buildPresetDrafts(presets));
+  const [customInputs, setCustomInputs] = useState<Record<PlanTier, string>>(EMPTY_CUSTOM_INPUTS);
+  const [actorInput, setActorInput] = useState<string>(defaultActor ?? "");
+  const [note, setNote] = useState<string>("");
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    setDrafts(buildPresetDrafts(presets));
+    setCustomInputs(EMPTY_CUSTOM_INPUTS);
+    setDirty(false);
+  }, [presets]);
+
+  useEffect(() => {
+    setActorInput(defaultActor ?? "");
+  }, [defaultActor]);
+
+  const toggleEntitlement = (tier: PlanTier, value: string) => {
+    setDrafts((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      const next = new Set(prev[tier].entitlements);
+      if (next.has(value)) {
+        next.delete(value);
+      } else {
+        next.add(value);
+      }
+      setDirty(true);
+      return {
+        ...prev,
+        [tier]: {
+          ...prev[tier],
+          entitlements: next,
+        },
+      };
+    });
+  };
+
+  const removeCustomEntitlement = (tier: PlanTier, value: string) => {
+    setDrafts((prev) => {
+      if (!prev || !prev[tier].entitlements.has(value)) {
+        return prev;
+      }
+      const next = new Set(prev[tier].entitlements);
+      next.delete(value);
+      setDirty(true);
+      return {
+        ...prev,
+        [tier]: {
+          ...prev[tier],
+          entitlements: next,
+        },
+      };
+    });
+  };
+
+  const handleQuotaInput = (tier: PlanTier, field: keyof Omit<PresetDraft["quota"], "selfCheckEnabled">, value: string) => {
+    setDrafts((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      setDirty(true);
+      return {
+        ...prev,
+        [tier]: {
+          ...prev[tier],
+          quota: {
+            ...prev[tier].quota,
+            [field]: value,
+          },
+        },
+      };
+    });
+  };
+
+  const handleSelfCheckToggle = (tier: PlanTier) => {
+    setDrafts((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      setDirty(true);
+      return {
+        ...prev,
+        [tier]: {
+          ...prev[tier],
+          quota: {
+            ...prev[tier].quota,
+            selfCheckEnabled: !prev[tier].quota.selfCheckEnabled,
+          },
+        },
+      };
+    });
+  };
+
+  const handleCustomInputChange = (tier: PlanTier, value: string) => {
+    setCustomInputs((prev) => ({
+      ...prev,
+      [tier]: value,
+    }));
+  };
+
+  const handleAddCustomEntitlement = (tier: PlanTier) => {
+    const value = customInputs[tier].trim();
+    if (!value) {
+      return;
+    }
+    setDrafts((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      const next = new Set(prev[tier].entitlements);
+      next.add(value);
+      setDirty(true);
+      return {
+        ...prev,
+        [tier]: {
+          ...prev[tier],
+          entitlements: next,
+        },
+      };
+    });
+    setCustomInputs((prev) => ({
+      ...prev,
+      [tier]: "",
+    }));
+  };
+
+  const handleResetPresets = () => {
+    setDrafts(buildPresetDrafts(presets));
+    setCustomInputs(EMPTY_CUSTOM_INPUTS);
+    setNote("");
+    setActorInput(defaultActor ?? "");
+    setDirty(false);
+  };
+
+  const handleSavePresets = async () => {
+    if (!drafts) {
+      return;
+    }
+    setSaving(true);
+    try {
+      const tiersPayload = PLAN_TIERS.map((tier) => {
+        const entry = drafts[tier];
+        return {
+          tier,
+          entitlements: Array.from(entry.entitlements),
+          quota: {
+            chatRequestsPerDay: sanitizeNumber(entry.quota.chatRequestsPerDay),
+            ragTopK: sanitizeNumber(entry.quota.ragTopK),
+            peerExportRowLimit: sanitizeNumber(entry.quota.peerExportRowLimit),
+            selfCheckEnabled: entry.quota.selfCheckEnabled,
+          },
+        };
+      });
+      await updatePlanPresets({
+        tiers: tiersPayload,
+        actor: actorInput.trim() || defaultActor || undefined,
+        note: note.trim() || undefined,
+      });
+      pushToast({
+        id: `admin/plan/presets/${Date.now()}`,
+        title: "플랜 프리셋이 저장됐어요",
+        message: "Free/Pro/Enterprise 기본 권한과 쿼터가 업데이트됐습니다.",
+        intent: "success",
+      });
+      setDirty(false);
+      await onReloadPresets();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "프리셋 저장 중 오류가 발생했어요.";
+      pushToast({
+        id: `admin/plan/presets/error/${Date.now()}`,
+        title: "프리셋 저장 실패",
+        message,
+        intent: "error",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const renderTierCard = (tier: PlanTier) => {
+    if (!drafts) {
+      return null;
+    }
+    const draft = drafts[tier];
+    const customEntitlements = Array.from(draft.entitlements).filter(
+      (value) => !ENTITLEMENT_OPTIONS.some((option) => option.value === value),
+    );
+
+    return (
+      <div key={tier} className="rounded-xl border border-border-light/70 p-4 dark:border-border-dark/60">
+        <h3 className="text-base font-semibold text-text-primaryLight dark:text-text-primaryDark">{PLAN_TIER_LABEL[tier]}</h3>
+        <p className="mb-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">기본 권한 선택</p>
+        <div className="flex flex-wrap gap-2">
+          {ENTITLEMENT_OPTIONS.map((option) => {
+            const selected = draft.entitlements.has(option.value);
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => toggleEntitlement(tier, option.value)}
+                className={clsx(
+                  "rounded-full border px-3 py-1 text-xs font-semibold transition",
+                  selected
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border-light text-text-secondaryLight hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark",
+                )}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+        {customEntitlements.length > 0 && (
+          <div className="mt-3 space-y-1">
+            <p className="text-xs font-semibold text-text-tertiaryLight dark:text-text-tertiaryDark">추가 권한</p>
+            <div className="flex flex-wrap gap-2">
+              {customEntitlements.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => removeCustomEntitlement(tier, value)}
+                  className="rounded-full border border-amber-400/60 px-2 py-0.5 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-300/60 dark:text-amber-200 dark:hover:bg-amber-400/20"
+                >
+                  {value} ×
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="mt-3 flex items-center gap-2">
+          <input
+            type="text"
+            value={customInputs[tier]}
+            onChange={(event) => handleCustomInputChange(tier, event.target.value)}
+            placeholder="커스텀 권한 추가"
+            className="flex-1 rounded-lg border border-border-light px-3 py-1 text-sm dark:border-border-dark dark:bg-background-cardDark dark:text-text-primaryDark"
+          />
+          <button
+            type="button"
+            onClick={() => handleAddCustomEntitlement(tier)}
+            className="rounded-lg border border-border-light px-3 py-1 text-xs font-semibold text-text-secondaryLight transition hover:bg-border-light/40 dark:border-border-dark dark:text-text-secondaryDark dark:hover:bg-border-dark/40"
+          >
+            추가
+          </button>
+        </div>
+        <div className="mt-4 space-y-2 text-sm text-text-secondaryLight dark:text-text-secondaryDark">
+          <label className="flex items-center gap-2 text-xs font-semibold uppercase text-text-tertiaryLight dark:text-text-tertiaryDark">
+            Self-check 활성화
+            <input
+              type="checkbox"
+              checked={draft.quota.selfCheckEnabled}
+              onChange={() => handleSelfCheckToggle(tier)}
+              className="h-4 w-4 rounded border-border-light text-primary focus:ring-primary dark:border-border-dark"
+            />
+          </label>
+          <div className="grid gap-3">
+            <div>
+              <label className="text-xs font-semibold uppercase text-text-tertiaryLight dark:text-text-tertiaryDark">
+                Chat Requests/Day
+              </label>
+              <input
+                type="number"
+                placeholder="무제한이면 비워두기"
+                value={draft.quota.chatRequestsPerDay}
+                onChange={(event) => handleQuotaInput(tier, "chatRequestsPerDay", event.target.value)}
+                className="mt-1 w-full rounded-lg border border-border-light px-3 py-1.5 text-sm text-text-primaryLight dark:border-border-dark dark:bg-background-cardDark dark:text-text-primaryDark"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold uppercase text-text-tertiaryLight dark:text-text-tertiaryDark">
+                RAG Top-K
+              </label>
+              <input
+                type="number"
+                value={draft.quota.ragTopK}
+                onChange={(event) => handleQuotaInput(tier, "ragTopK", event.target.value)}
+                className="mt-1 w-full rounded-lg border border-border-light px-3 py-1.5 text-sm text-text-primaryLight dark:border-border-dark dark:bg-background-cardDark dark:text-text-primaryDark"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold uppercase text-text-tertiaryLight dark:text-text-tertiaryDark">
+                Peer Export Rows
+              </label>
+              <input
+                type="number"
+                value={draft.quota.peerExportRowLimit}
+                onChange={(event) => handleQuotaInput(tier, "peerExportRowLimit", event.target.value)}
+                className="mt-1 w-full rounded-lg border border-border-light px-3 py-1.5 text-sm text-text-primaryLight dark:border-border-dark dark:bg-background-cardDark dark:text-text-primaryDark"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <section className="mt-8 rounded-xl border border-dashed border-border-light/80 bg-background-base/60 p-5 dark:border-border-dark/70 dark:bg-background-cardDark/30">
+      <div className="flex flex-col gap-1 border-b border-border-light pb-4 dark:border-border-dark">
+        <h3 className="text-base font-semibold text-text-primaryLight dark:text-text-primaryDark">플랜 프리셋 편집</h3>
+        <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+          Free/Pro/Enterprise 기본 권한과 쿼터를 수정하면 신규 고객의 플랜 모드에 즉시 반영됩니다.
+        </p>
+      </div>
+      {presetsLoading && !presets ? (
+        <p className="mt-4 rounded-lg border border-dashed border-border-light/70 bg-background-base/40 p-3 text-sm text-text-secondaryLight dark:border-border-dark dark:bg-background-cardDark/30 dark:text-text-secondaryDark">
+          플랜 프리셋을 불러오는 중입니다...
+        </p>
+      ) : null}
+      {presetsError ? (
+        <p className="mt-4 rounded-lg border border-dashed border-amber-400 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/70 dark:bg-amber-500/10 dark:text-amber-100">
+          프리셋을 불러오지 못했습니다. 저장 시 기본값으로 덮어쓸 수 있습니다.
+        </p>
+      ) : null}
+      {presets && drafts ? (
+        <>
+          <div className="mt-5 grid gap-4 md:grid-cols-3">{PLAN_TIERS.map((tier) => renderTierCard(tier))}</div>
+          <div className="mt-6 grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="text-xs font-semibold uppercase text-text-tertiaryLight dark:text-text-tertiaryDark">
+                변경 주체(Actor)
+              </label>
+              <input
+                type="text"
+                value={actorInput}
+                onChange={(event) => setActorInput(event.target.value)}
+                placeholder="admin@kfinance.ai"
+                className="mt-1 w-full rounded-lg border border-border-light px-3 py-1.5 text-sm text-text-primaryLight dark:border-border-dark dark:bg-background-cardDark dark:text-text-primaryDark"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold uppercase text-text-tertiaryLight dark:text-text-tertiaryDark">변경 노트</label>
+              <input
+                type="text"
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                placeholder="예: Alert Builder free tier 적용"
+                className="mt-1 w-full rounded-lg border border-border-light px-3 py-1.5 text-sm text-text-primaryLight dark:border-border-dark dark:bg-background-cardDark dark:text-text-primaryDark"
+              />
+            </div>
+          </div>
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+            <span>{dirty ? "저장되지 않은 변경 사항이 있습니다." : "현재 저장된 프리셋과 일치합니다."}</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleResetPresets}
+                disabled={!dirty || saving}
+                className="rounded-lg border border-border-light px-3 py-1.5 font-semibold text-text-secondaryLight transition hover:bg-border-light/40 disabled:cursor-not-allowed disabled:opacity-50 dark:border-border-dark dark:text-text-secondaryDark dark:hover:bg-border-dark/40"
+              >
+                되돌리기
+              </button>
+              <button
+                type="button"
+                onClick={handleSavePresets}
+                disabled={saving || !dirty}
+                className="rounded-lg bg-primary px-4 py-1.5 font-semibold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? "저장 중..." : "프리셋 저장"}
+              </button>
+            </div>
+          </div>
+        </>
+      ) : null}
+    </section>
+  );
+};

@@ -24,7 +24,7 @@ from schemas.api.sectors import (
     SectorTopArticlesResponse,
 )
 from services.aggregation.sector_metrics import list_top_articles_for_sector
-from services.news_text import sanitize_news_summary
+from services.news_summary_service import get_or_generate_summary
 
 router = APIRouter(prefix="/sectors", tags=["Sectors"])
 
@@ -61,10 +61,11 @@ def list_sector_signals(
     for window_metric, sector, article in records:
         top_article = None
         if article:
+            summary = get_or_generate_summary(article)
             top_article = SectorTopArticle(
                 id=article.id,
                 title=article.headline,
-                summary=sanitize_news_summary(article.summary),
+                summary=summary,
                 url=article.url,
                 targetUrl=article.url,
                 tone=article.sentiment,
@@ -159,17 +160,19 @@ def get_sector_top_articles(
         limit=limit,
     )
 
-    items = [
-        SectorTopArticle(
-            id=signal.id,
-            title=signal.headline,
-            summary=sanitize_news_summary(signal.summary),
-            url=signal.url,
-            targetUrl=signal.url,
-            tone=signal.sentiment,
-            publishedAt=signal.published_at,
+    items = []
+    for signal, _score in articles:
+        summary = get_or_generate_summary(signal)
+        items.append(
+            SectorTopArticle(
+                id=signal.id,
+                title=signal.headline,
+                summary=summary,
+                url=signal.url,
+                targetUrl=signal.url,
+                tone=signal.sentiment,
+                publishedAt=signal.published_at,
+            ),
         )
-        for signal, _ in articles
-    ]
 
     return SectorTopArticlesResponse(sector=_to_sector_ref(sector), items=items)

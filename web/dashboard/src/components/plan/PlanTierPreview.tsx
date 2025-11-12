@@ -23,9 +23,10 @@ type PlanTierPreviewProps = {
 };
 
 export function PlanTierPreview({ className, variant = "card", focusTier }: PlanTierPreviewProps) {
-  const { planTier, expiresAt } = usePlanStore((state) => ({
+  const { planTier, expiresAt, memoryFlags } = usePlanStore((state) => ({
     planTier: state.planTier,
     expiresAt: state.expiresAt,
+    memoryFlags: state.memoryFlags,
   }));
   const startTrial = usePlanStore((state) => state.startTrial);
   const setPlanFromServer = usePlanStore((state) => state.setPlanFromServer);
@@ -78,6 +79,7 @@ export function PlanTierPreview({ className, variant = "card", focusTier }: Plan
       expiresAt: expiresAt ?? null,
       entitlements: preset.entitlements,
       featureFlags: preset.featureFlags,
+      memoryFlags,
       quota: preset.quota,
     });
     pushToast({
@@ -238,4 +240,3 @@ export function PlanTierPreview({ className, variant = "card", focusTier }: Plan
     </section>
   );
 }
-

@@ -13,13 +13,14 @@ type PlanState = {
   checkoutRequested: boolean;
 };
 
-const PRO_ENTITLEMENTS = ["search.compare", "search.alerts", "evidence.inline_pdf"];
+const PRO_ENTITLEMENTS = ["search.compare", "search.alerts", "search.export", "evidence.inline_pdf", "rag.core"];
 const ENTERPRISE_ENTITLEMENTS = [
   "search.compare",
   "search.alerts",
   "search.export",
   "evidence.inline_pdf",
   "evidence.diff",
+  "rag.core",
   "timeline.full",
 ];
 
@@ -27,6 +28,7 @@ const PLAN_FEATURE_FLAGS = (entitlements: string[]) => ({
   searchCompare: entitlements.includes("search.compare"),
   searchAlerts: entitlements.includes("search.alerts"),
   searchExport: entitlements.includes("search.export"),
+  ragCore: entitlements.includes("rag.core"),
   evidenceInlinePdf: entitlements.includes("evidence.inline_pdf"),
   evidenceDiff: entitlements.includes("evidence.diff"),
   timelineFull: entitlements.includes("timeline.full"),

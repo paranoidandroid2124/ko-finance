@@ -4,6 +4,7 @@ import { MoonStar, SunMedium } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import { AlertBell } from "../ui/AlertBell";
+import { UserMenu } from "./UserMenu";
 
 export function TopBar() {
   const { theme, setTheme } = useTheme();
@@ -33,11 +34,8 @@ export function TopBar() {
           {isDark ? <SunMedium className="h-5 w-5" aria-hidden /> : <MoonStar className="h-5 w-5" aria-hidden />}
           <span className="sr-only">테마 전환</span>
         </button>
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-tr from-primary to-accent-positive text-sm font-semibold text-white ring-2 ring-primary/40">
-          <span className="sr-only">사용자 프로필</span>
-        </div>
+        <UserMenu />
       </div>
     </header>
   );
 }
-

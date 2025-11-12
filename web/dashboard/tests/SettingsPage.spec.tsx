@@ -22,14 +22,20 @@ vi.mock("@/components/layout/AppShell", () => ({
 const mockedPlan: PlanContextPayload = {
   planTier: "pro",
   expiresAt: "2025-12-31T00:00:00+00:00",
-  entitlements: ["search.compare", "search.alerts", "evidence.inline_pdf"],
+  entitlements: ["search.compare", "search.alerts", "search.export", "evidence.inline_pdf", "rag.core"],
   featureFlags: {
     searchCompare: true,
     searchAlerts: true,
     searchExport: true,
+    ragCore: true,
     evidenceInlinePdf: true,
     evidenceDiff: false,
     timelineFull: false,
+  },
+  memoryFlags: {
+    watchlist: true,
+    digest: true,
+    chat: true,
   },
   quota: {
     chatRequestsPerDay: 500,
@@ -70,6 +76,7 @@ describe("SettingsPage", () => {
       expiresAt: mockedPlan.expiresAt,
       entitlements: mockedPlan.entitlements,
       featureFlags: mockedPlan.featureFlags,
+      memoryFlags: mockedPlan.memoryFlags,
       quota: mockedPlan.quota,
       initialized: true,
       loading: false,

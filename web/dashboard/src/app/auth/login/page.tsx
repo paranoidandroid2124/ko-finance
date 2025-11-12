@@ -4,19 +4,40 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { FormEvent, useState } from "react";
+import type { Route } from "next";
 
 import OAuthButtonGroup from "@/components/auth/OAuthButtonGroup";
 import AuthPageShell from "@/components/auth/AuthPageShell";
 import { formatAuthError, toApiDetail, type ApiDetail } from "@/lib/authError";
 import { AuthApiError, postAuth } from "@/lib/authClient";
 
-const DEFAULT_REDIRECT = "/app";
+const DEFAULT_REDIRECT = "/app" as Route;
 const DEFAULT_ERROR_MESSAGE = "로그인에 실패했습니다. 다시 시도해 주세요.";
+
+const resolveRedirectTarget = (target: string | null | undefined): Route => {
+  if (!target) {
+    return DEFAULT_REDIRECT;
+  }
+  if (target.startsWith("/")) {
+    return target as Route;
+  }
+  try {
+    if (typeof window !== "undefined") {
+      const url = new URL(target, window.location.origin);
+      if (url.origin === window.location.origin) {
+        return `${url.pathname}${url.search}${url.hash}` as Route;
+      }
+    }
+  } catch {
+    // fall back below
+  }
+  return DEFAULT_REDIRECT;
+};
 
 export default function LoginPage() {
   const params = useSearchParams();
   const router = useRouter();
-  const callbackUrl = params.get("redirect") ?? params.get("callbackUrl") ?? DEFAULT_REDIRECT;
+  const callbackUrl = params?.get("redirect") ?? params?.get("callbackUrl") ?? DEFAULT_REDIRECT;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorDetail, setErrorDetail] = useState<ApiDetail | null>(null);
@@ -53,7 +74,8 @@ export default function LoginPage() {
     }
     setErrorDetail(null);
     setError(null);
-    router.push(result?.url ?? callbackUrl);
+    const resolvedRedirect = resolveRedirectTarget(result?.url ?? callbackUrl);
+    router.push(resolvedRedirect);
   };
 
   const ensureEmail = (): string | null => {
@@ -109,7 +131,7 @@ export default function LoginPage() {
   };
 
   return (
-    <AuthPageShell title="이메일로 로그인" subtitle="OAuth 또는 이메일·비밀번호를 선택하세요.">
+    <AuthPageShell title="이메일로 로그인">
       {error ? (
         <div className="rounded-lg border border-red-500/60 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>
       ) : null}

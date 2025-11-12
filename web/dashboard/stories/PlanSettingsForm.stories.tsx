@@ -21,14 +21,20 @@ const originalState = usePlanStore.getState();
 const defaultPayload: PlanContextPayload = {
   planTier: "pro",
   expiresAt: "2026-01-01T00:00:00+09:00",
-  entitlements: ["search.compare", "search.alerts", "timeline.full"],
+  entitlements: ["search.compare", "search.alerts", "search.export", "rag.core", "timeline.full"],
   featureFlags: {
     searchCompare: true,
     searchAlerts: true,
     searchExport: false,
+    ragCore: true,
     evidenceInlinePdf: false,
     evidenceDiff: false,
     timelineFull: true,
+  },
+  memoryFlags: {
+    watchlist: true,
+    digest: true,
+    chat: true,
   },
   quota: {
     chatRequestsPerDay: 500,

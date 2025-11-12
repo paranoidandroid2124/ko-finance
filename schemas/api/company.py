@@ -31,6 +31,30 @@ class SummaryBlock(BaseModel):
     how: Optional[str] = None
 
 
+class CompanyFilingSummary(BaseModel):
+    """Compact payload for recent filings shown on the company page."""
+
+    id: uuid.UUID
+    receipt_no: Optional[str] = Field(None, description="DART receipt number")
+    report_name: Optional[str] = None
+    title: Optional[str] = None
+    category: Optional[str] = None
+    filed_at: Optional[datetime] = Field(None, serialization_alias="filedAt")
+    viewer_url: Optional[str] = None
+    summary: Optional[SummaryBlock] = None
+    sentiment: Optional[str] = Field(
+        None,
+        description="Heuristic sentiment label derived from summary/category context.",
+    )
+    sentiment_reason: Optional[str] = Field(
+        None,
+        serialization_alias="sentimentReason",
+        description="Human-readable explanation for the sentiment label.",
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class FinancialValue(BaseModel):
     """Time-series value for a financial metric."""
 
@@ -196,6 +220,11 @@ class CompanySnapshotResponse(BaseModel):
     key_metrics: List[KeyMetric] = Field(default_factory=list)
     major_events: List[EventItem] = Field(default_factory=list)
     news_signals: List[NewsWindowInsight] = Field(default_factory=list)
+    recent_filings: List[CompanyFilingSummary] = Field(
+        default_factory=list,
+        serialization_alias="recentFilings",
+        description="Recent filings within the look-back window for the company.",
+    )
     restatement_highlights: List[RestatementHighlight] = Field(
         default_factory=list,
         description="Recent correction filings with detected numeric impact.",

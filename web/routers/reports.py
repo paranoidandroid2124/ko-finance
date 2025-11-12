@@ -31,7 +31,7 @@ from services.daily_brief_service import (
     resolve_daily_brief_paths,
 )
 from services.plan_service import PlanContext
-from web.deps import get_plan_context
+from web.deps import get_plan_context, require_plan_feature
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 logger = get_logger(__name__)
@@ -75,7 +75,7 @@ def read_digest_preview(
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
-    plan: PlanContext = Depends(get_plan_context),
+    plan: PlanContext = Depends(require_plan_feature("search.export")),
 ) -> DigestPreviewResponse:
     normalized = "weekly" if str(timeframe).lower() == "weekly" else "daily"
     user_id = _parse_uuid(x_user_id) if x_user_id else lightmem_gate.default_user_id()
@@ -164,6 +164,7 @@ def read_digest_preview(
 def list_daily_brief_entries(
     limit: int = 10,
     db: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature("search.export")),
 ) -> DailyBriefListResponse:
     runs = list_daily_brief_runs(limit=limit, session=db)
     items = [
@@ -183,6 +184,7 @@ def list_daily_brief_entries(
 @router.post("/daily-brief/generate", response_model=DailyBriefGenerateResponse, status_code=status.HTTP_202_ACCEPTED)
 def trigger_daily_brief(
     payload: DailyBriefGenerateRequest,
+    _: PlanContext = Depends(require_plan_feature("search.export")),
 ) -> DailyBriefGenerateResponse:
     reference_date_iso = payload.referenceDate.isoformat() if payload.referenceDate else None
 
@@ -236,7 +238,7 @@ def trigger_daily_brief(
 
 
 @router.get("/daily-brief/{reference_date}/pdf")
-def download_daily_brief_pdf(reference_date: str):
+def download_daily_brief_pdf(reference_date: str, _: PlanContext = Depends(require_plan_feature("evidence.inline_pdf"))):
     try:
         parsed_date = datetime.fromisoformat(reference_date).date()
     except ValueError:
@@ -250,7 +252,7 @@ def download_daily_brief_pdf(reference_date: str):
 
 
 @router.get("/daily-brief/{reference_date}/tex")
-def download_daily_brief_tex(reference_date: str):
+def download_daily_brief_tex(reference_date: str, _: PlanContext = Depends(require_plan_feature("evidence.inline_pdf"))):
     try:
         parsed_date = datetime.fromisoformat(reference_date).date()
     except ValueError:

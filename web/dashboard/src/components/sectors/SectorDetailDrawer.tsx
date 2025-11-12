@@ -1,5 +1,6 @@
 "use client";
 
+import { HelpCircle } from "lucide-react";
 import { useEffect } from "react";
 import { useSectorTopArticles } from "@/hooks/useSectorTopArticles";
 import type { SectorSignalPoint } from "@/hooks/useSectorSignals";
@@ -13,9 +14,6 @@ type SectorDetailDrawerProps = {
 export function SectorDetailDrawer({ open, point, onClose }: SectorDetailDrawerProps) {
   const sectorId = point?.sector.id ?? null;
   const { data, isLoading, isError, refetch } = useSectorTopArticles(sectorId, 72, 3);
-
-  const sanitizeSummary = (summary: string): string =>
-    summary.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim();
 
   useEffect(() => {
     if (open && sectorId) {
@@ -49,9 +47,27 @@ export function SectorDetailDrawer({ open, point, onClose }: SectorDetailDrawerP
             <div>
               <p className="text-xs uppercase text-text-tertiaryLight dark:text-text-tertiaryDark">{point?.sector.slug}</p>
               <h2 className="text-lg font-semibold">{point?.sector.name ?? "섹터 상세"}</h2>
-              <p className="mt-1 text-sm text-text-secondaryLight dark:text-text-secondaryDark">
-                감성 Z {point?.sentimentZ?.toFixed(2) ?? "--"} · 기사량 Z {point?.volumeZ?.toFixed(2) ?? "--"}
-              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-text-secondaryLight dark:text-text-secondaryDark">
+                <span>평균 감성 {point?.sentimentMean?.toFixed(2) ?? "--"}</span>
+                <span className="inline-flex items-center gap-1">
+                  감성 Z {point?.sentimentZ?.toFixed(2) ?? "--"}
+                  <span className="group relative inline-flex items-center text-[11px] text-text-tertiaryLight dark:text-text-ter티aryDark">
+                    <HelpCircle className="h-3.5 w-3.5" aria-hidden />
+                    <span className="pointer-events-none absolute left-1/2 top-full z-10 w-max -translate-x-1/2 translate-y-2 rounded-md border border-border-light bg-background-cardLight px-3 py-1 text-[11px] text-text-secondaryLight opacity-0 shadow-lg transition-opacity group-hover:opacity-100 dark:border-border-dark dark:bg-background-cardDark dark:text-text-secondaryDark">
+                      감성 Z는 이 섹터의 최근 평균 감성이 과거 평균 대비 몇 표준편차 떨어져 있는지를 나타냅니다.
+                    </span>
+                  </span>
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  기사량 Z {point?.volumeZ?.toFixed(2) ?? "--"}
+                  <span className="group relative inline-flex items-center text-[11px] text-text-ter티aryLight dark:text-text-tertiaryDark">
+                    <HelpCircle className="h-3.5 w-3.5" aria-hidden />
+                    <span className="pointer-events-none absolute left-1/2 top-full z-10 w-max -translate-x-1/2 translate-y-2 rounded-md border border-border-light bg-background-cardLight px-3 py-1 text-[11px] text-text-secondaryLight opacity-0 shadow-lg transition-opacity group-hover:opacity-100 dark:border-border-dark dark:bg-background-cardDark dark:text-text-secondaryDark">
+                      기사량 Z는 최근 기사 건수가 과거 평균 대비 얼마나 이례적인지를 보여 줍니다.
+                    </span>
+                  </span>
+                </span>
+              </div>
             </div>
             <button
               type="button"
@@ -66,17 +82,17 @@ export function SectorDetailDrawer({ open, point, onClose }: SectorDetailDrawerP
             <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
               72시간 기준 주요 기사. 점수를 높인 순서대로 정렬되어 있습니다.
             </p>
-                {isLoading ? (
-                  <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">기사를 불러오는 중...</p>
-                ) : isError ? (
-                  <p className="text-xs text-destructive">주요 기사를 가져오지 못했습니다.</p>
-                ) : (
-                  <ul className="space-y-3">
-                    {data?.items.length ? (
-                      data.items.map((item) => (
-                        <li key={item.id} className="rounded-lg border border-border-light/70 p-3 dark:border-border-dark/70">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
+            {isLoading ? (
+              <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">기사를 불러오는 중...</p>
+            ) : isError ? (
+              <p className="text-xs text-destructive">주요 기사를 가져오지 못했습니다.</p>
+            ) : (
+              <ul className="space-y-3">
+                {data?.items.length ? (
+                  data.items.map((item) => (
+                    <li key={item.id} className="rounded-lg border border-border-light/70 p-3 dark:border-border-dark/70">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
                           <button
                             type="button"
                             onClick={() => window.open(item.targetUrl || item.url, "_blank", "noopener,noreferrer")}
@@ -85,26 +101,20 @@ export function SectorDetailDrawer({ open, point, onClose }: SectorDetailDrawerP
                             {item.title}
                           </button>
                           <p className="mt-1 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-                            {new Date(item.publishedAt).toLocaleString()} · 톤{" "}
-                            {item.tone != null ? item.tone.toFixed(2) : "N/A"}
+                            {new Date(item.publishedAt).toLocaleString()} · 톤 {item.tone != null ? item.tone.toFixed(2) : "N/A"}
                           </p>
-                          {item.summary ? (
-                            <p className="mt-2 text-xs leading-relaxed text-text-secondaryLight dark:text-text-secondaryDark">
-                              {item.summary}
-                            </p>
-                          ) : null}
                         </div>
-                          </div>
-                          {item.summary ? (
-                            <p className="mt-2 text-xs leading-relaxed text-text-secondaryLight dark:text-text-secondaryDark">
-                              {sanitizeSummary(item.summary)}
-                            </p>
-                          ) : null}
-                        </li>
-                      ))
-                    ) : (
-                      <li className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">표시할 기사가 없습니다.</li>
-                    )}
+                      </div>
+                      {item.summary ? (
+                        <p className="mt-2 whitespace-pre-line text-xs leading-relaxed text-text-secondaryLight dark:text-text-secondaryDark">
+                          {item.summary}
+                        </p>
+                      ) : null}
+                    </li>
+                  ))
+                ) : (
+                  <li className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">표시할 기사가 없습니다.</li>
+                )}
               </ul>
             )}
           </div>

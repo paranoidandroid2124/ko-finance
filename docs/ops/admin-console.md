@@ -2,8 +2,9 @@
 
 ## 현행 정리
 - Phase 4 대비로 /api/v1/admin/llm/*, /admin/rag/*, /admin/ops/* 라우터와 스키마 골격을 추가해 LLM·RAG·셀러리/비밀 제어 계약을 선반영했습니다.
-- FastAPI `require_admin_session` 의존성이 `Authorization: Bearer <token>` 또는 `admin_session_token` 쿠키를 통해 운영 세션을 검증합니다.
-- `/api/v1/admin/session` 엔드포인트를 통해 프런트엔드가 관리자 세션 상태를 조회하고, 세션 정보는 Next.js 대시보드의 `useAdminSession` 훅으로 전달됩니다.
+- FastAPI `require_admin_session` 의존성이 우선적으로 서버가 발급한 `admin_session` HttpOnly 쿠키를 검증하고, 부득이한 경우에만 `Authorization: Bearer <token>`·`X-Admin-Token` 헤더에 등록된 정적 토큰을 허용합니다.
+- `/api/v1/admin/session` POST 호출 시 **Google Workspace ID 토큰(`idToken`)** 또는 정적 토큰(`token`) 중 하나를 제출할 수 있습니다. Google ID 토큰을 전달하면 `GOOGLE_ADMIN_CLIENT_ID`·`GOOGLE_ADMIN_ALLOWED_DOMAIN` 규칙으로 검증한 뒤 세션을 발급합니다. Workspace를 쓰지 않는 경우 `/api/v1/admin/auth/login`에서 이메일·비밀번호(+MFA)로 내부 인증 후 `issue_admin_session`을 호출합니다. 이때 `ADMIN_ALLOWED_EMAILS`, `ADMIN_MFA_SECRETS`, `ADMIN_REQUIRE_MFA` 환경 변수를 통해 허용 계정·TOTP 비밀을 제어합니다.
+- 세션 쿠키는 HttpOnly/SameSite 속성으로 내려가며, GET `/api/v1/admin/session` 응답은 Next.js `useAdminSession` 훅에서 사용해 관리자 UI를 제어합니다.
 - Plan Quick Actions 및 Toss 웹훅 감사 패널은 새 훅을 이용해 권한이 없을 때 따뜻한 안내를 보여주고, 재시도 버튼을 잠급니다.
 - RAG 재색인 패널에 실패 큐·상태 필터·검색 입력을 추가해 Langfuse trace ID까지 메타로 기록하며, 실패 항목을 큐에서 바로 재시도하거나 정리할 수 있습니다.
 - Guardrail 평가 UI는 평가 시각과 감사 로그 다운로드 링크를 함께 노출하고, `/api/v1/admin/llm/audit/logs` 파일이 즉시 최신 평가를 반영하도록 표준화했습니다.
@@ -16,6 +17,8 @@
 2. **세션/인증 고도화**
    - Google Identity 또는 IAP를 사용해 관리자 SSO 적용, LiteLLM/Langfuse 권한과 연동.
    - IAP 승인 후 FastAPI는 `X-Goog-Authenticated-User-Email` 헤더로 운영자 식별.
+   - Google Workspace SSO를 직접 사용할 경우 `GOOGLE_ADMIN_CLIENT_ID`, `GOOGLE_ADMIN_ALLOWED_DOMAIN` 환경 변수를 설정하고, 프런트엔드에서 Google OAuth 후 발급받은 `id_token`을 `/api/v1/admin/session`에 전달합니다.
+   - Workspace 미도입 시에는 `ADMIN_ALLOWED_EMAILS`, `ADMIN_MFA_SECRETS`, `ADMIN_REQUIRE_MFA`를 설정하고 `/api/v1/admin/auth/login`을 통해 자체 이메일+비밀번호+MFA 로그인만 허용합니다.
 3. **비밀/구성 관리**
    - `ADMIN_API_TOKENS`는 Secret Manager로 이전하고, Cloud Run 런타임에 버전화된 비밀을 주입.
    - 운영 토큰 변경 시 Slack/Langfuse 알림을 위해 Pub/Sub 트리거 설계.

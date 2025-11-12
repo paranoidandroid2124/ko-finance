@@ -16,6 +16,8 @@ import type { BuilderMode } from "@/components/alerts/channelForm";
 
 const ALERT_LIMIT = 9;
 const CLOSE_DELAY_MS = 120;
+const READ_ALERT_STORAGE_KEY = "kofilot.readAlerts";
+const MAX_STORED_READ_ALERTS = 200;
 
 export type AlertBellTriggerProps = {
   containerId: string;
@@ -66,6 +68,7 @@ export type AlertBellPanelProps = {
   alerts: {
     alerts: DashboardAlert[];
     visibleAlerts: DashboardAlert[];
+     readAlertIds: ReadonlySet<string>;
     isLoading: boolean;
     isError: boolean;
     onNavigate: (alert: DashboardAlert) => void;
@@ -140,8 +143,53 @@ export const useAlertBellController = (): AlertBellController => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const builderReturnFocusRef = useRef<{ node: HTMLElement | null; key?: string }>({ node: null, key: undefined });
 
+  const [readAlertIds, setReadAlertIds] = useState<Set<string>>(new Set());
+  const persistReadAlertIds = useCallback((ids: string[]) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      window.localStorage.setItem(READ_ALERT_STORAGE_KEY, JSON.stringify(ids));
+    } catch {
+      // localStorage failures are non-critical
+    }
+  }, []);
   const alerts = useMemo(() => dashboardData?.alerts ?? [], [dashboardData?.alerts]);
   const visibleAlerts = useMemo(() => alerts.slice(0, ALERT_LIMIT), [alerts]);
+  const unreadAlerts = useMemo(
+    () => alerts.filter((alert) => !readAlertIds.has(alert.id)),
+    [alerts, readAlertIds],
+  );
+
+  const markAlertsAsRead = useCallback(
+    (alertsToMark: DashboardAlert[]) => {
+      if (!alertsToMark.length) {
+        return;
+      }
+      setReadAlertIds((prev) => {
+        const next = new Set(prev);
+        let changed = false;
+        for (const alert of alertsToMark) {
+          const alertId = alert.id;
+          if (alertId && !next.has(alertId)) {
+            next.add(alertId);
+            changed = true;
+          }
+        }
+        if (!changed) {
+          return prev;
+        }
+        const ordered = Array.from(next);
+        const trimmed =
+          ordered.length > MAX_STORED_READ_ALERTS
+            ? ordered.slice(ordered.length - MAX_STORED_READ_ALERTS)
+            : ordered;
+        persistReadAlertIds(trimmed);
+        return new Set(trimmed);
+      });
+    },
+    [persistReadAlertIds],
+  );
   const userAlertRules = useMemo(() => alertRulesData?.items ?? [], [alertRulesData?.items]);
   const alertPlan = alertRulesData?.plan ?? null;
   const alertPlanChannels = alertPlan?.channels ?? [];
@@ -164,6 +212,24 @@ export const useAlertBellController = (): AlertBellController => {
   const isBuilderDisabled = !alertPlan || (builderMode === "create" && builderQuotaReached);
   const builderDisabledReason = !alertPlan ? UNKNOWN_PLAN_COPY.builder.disabledTooltip : builderCopy.disabledTooltip;
   const builderDisabledHint = !alertPlan ? UNKNOWN_PLAN_COPY.builder.disabledHint : builderCopy.disabledHint;
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      const stored = window.localStorage.getItem(READ_ALERT_STORAGE_KEY);
+      if (!stored) {
+        return;
+      }
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed) && parsed.length) {
+        setReadAlertIds(new Set(parsed.filter((value): value is string => typeof value === "string")));
+      }
+    } catch {
+      // ignore invalid storage payloads
+    }
+  }, []);
 
   const resetBuilderReturnFocus = useCallback(() => {
     builderReturnFocusRef.current = { node: null, key: undefined };
@@ -203,8 +269,10 @@ export const useAlertBellController = (): AlertBellController => {
   }, [resetBuilderReturnFocus]);
 
   const isOpen = isPinned || isHovering || hasFocusWithin;
-  const badgeValue = alerts.length > 9 ? "10+" : alerts.length.toString();
-  const showBadge = alerts.length > 0;
+
+  const unreadCount = unreadAlerts.length;
+  const badgeValue = unreadCount > 9 ? "10+" : unreadCount.toString();
+  const showBadge = unreadCount > 0;
 
   const otherSessions = useMemo(
     () => sessions.filter((session) => session.id !== activeSessionId).slice(0, 3),
@@ -358,6 +426,7 @@ export const useAlertBellController = (): AlertBellController => {
 
   const handleAlertNavigate = useCallback(
     (alert: DashboardAlert) => {
+      markAlertsAsRead([alert]);
       const target = alert.targetUrl?.trim();
       if (target) {
         if (/^https?:\/\//i.test(target)) {
@@ -382,7 +451,7 @@ export const useAlertBellController = (): AlertBellController => {
       }
       closeImmediately();
     },
-    [activeSessionId, closeImmediately, pathname, pushRoute],
+    [activeSessionId, closeImmediately, markAlertsAsRead, pathname, pushRoute],
   );
 
   const handleSessionSelect = useCallback(
@@ -600,6 +669,7 @@ export const useAlertBellController = (): AlertBellController => {
     alerts: {
       alerts,
       visibleAlerts,
+      readAlertIds,
       isLoading,
       isError,
       onNavigate: handleAlertNavigate,

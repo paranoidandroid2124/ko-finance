@@ -91,15 +91,15 @@ export function PlanSummaryCard({ className }: PlanSummaryCardProps) {
       await startTrial();
       pushToast({
         id: "plan-trial-started",
-        title: "Pro í”Œëžœ ì²´í—˜ì„ ì‹œìž‘í•˜ì˜¤ìš”!",
-        message: `${trialDurationDays}ì¼ ë™ì•ˆ ì´ë©”ì¼Â·ì›¹í›… ì±„ë„ì™„ì— ëª¨ë“  í”Œëžœ ê¸°ëŠ¥ì„ ê²°ì œ ì—†ì´ ë°”ë¡œ ì“° ìˆ˜ ìžˆì–´ìš”.`,
+        title: "Pro 플랜 체험을 시작해요!",
+        message: `${trialDurationDays}일 동안 이메일·웹훅 채널을 포함한 모든 플랜 기능을 결제 없이 바로 써볼 수 있어요.`,
         intent: "success",
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "ë¬´ë£Œ í²´í—˜ì„ ì‹œìž‘í•˜ì§€ ëª»í–ˆì–´ìš”.";
+      const message = error instanceof Error ? error.message : "무료 체험을 시작하지 못했어요.";
       pushToast({
         id: "plan-trial-failed",
-        title: "í²´í—˜ ì‹œìž‘ì´ ì‹œë„ë˜ì§€ ëª»í–ˆì–´ìš”.",
+        title: "체험 시작을 완료하지 못했어요.",
         message,
         intent: "error",
       });

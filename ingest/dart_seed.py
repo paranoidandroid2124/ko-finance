@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional
 
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from database import SessionLocal
@@ -22,6 +22,22 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 UPLOAD_DIR = "uploads"
+
+
+def _insert_filing_record(db: Session, values: Dict[str, object]) -> Optional[Filing]:
+    """Insert a filing row if it does not already exist."""
+    stmt = (
+        insert(Filing)
+        .values(**values)
+        .on_conflict_do_nothing(index_elements=[Filing.receipt_no])
+        .returning(Filing.id)
+    )
+    result = db.execute(stmt)
+    inserted_id = result.scalar_one_or_none()
+    db.commit()
+    if inserted_id is None:
+        return None
+    return db.get(Filing, inserted_id)
 
 
 def _ensure_storage_copy(receipt_no: str, pdf_path: Optional[str]) -> Dict[str, str]:
@@ -145,35 +161,32 @@ def seed_recent_filings(
             except ValueError:
                 filed_at = None
 
-            new_filing = Filing(
-                id=uuid.uuid4(),
-                corp_code=meta.get("corp_code"),
-                corp_name=meta.get("corp_name"),
-                ticker=meta.get("stock_code"),
-                report_name=meta.get("report_nm"),
-                title=meta.get("report_nm"),
-                receipt_no=receipt_no,
-                filed_at=filed_at,
-                file_name=Path(pdf_path).name if pdf_path else None,
-                file_path=pdf_path,
-                status=STATUS_PENDING,
-                analysis_status=STATUS_PENDING,
-                urls={
+            filing_values: Dict[str, object] = {
+                "id": uuid.uuid4(),
+                "corp_code": meta.get("corp_code"),
+                "corp_name": meta.get("corp_name"),
+                "ticker": meta.get("stock_code"),
+                "report_name": meta.get("report_nm"),
+                "title": meta.get("report_nm"),
+                "receipt_no": receipt_no,
+                "filed_at": filed_at,
+                "file_name": Path(pdf_path).name if pdf_path else None,
+                "file_path": pdf_path,
+                "status": STATUS_PENDING,
+                "analysis_status": STATUS_PENDING,
+                "urls": {
                     "viewer": client.make_viewer_url(receipt_no),
                     "download": package_data.get("download_url"),
                 },
-                source_files=source_files,
-            )
+                "source_files": source_files,
+            }
 
-            try:
-                db.add(new_filing)
-                db.commit()
-                db.refresh(new_filing)
-                existing_receipts.add(receipt_no)
-            except IntegrityError:
-                db.rollback()
+            new_filing = _insert_filing_record(db, filing_values)
+            if not new_filing:
                 logger.info("Filing %s already exists. Skipping duplicate insert.", receipt_no)
+                existing_receipts.add(receipt_no)
                 continue
+            existing_receipts.add(receipt_no)
 
             storage_meta = _ensure_storage_copy(receipt_no, pdf_path)
             if storage_meta:

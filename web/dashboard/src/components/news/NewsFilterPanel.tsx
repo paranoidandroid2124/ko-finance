@@ -1,8 +1,9 @@
 import { ChangeEvent } from "react";
 import { shallow } from "zustand/shallow";
+import { SECTOR_TAXONOMY, type SectorTaxonomyItem } from "@/constants/sectorTaxonomy";
 import { useNewsFilterStore } from "@/store/newsFilterStore";
 
-const SECTOR_OPTIONS = ["반도체", "바이오", "금융", "에너지", "소비재", "모빌리티"];
+const SECTOR_OPTIONS = SECTOR_TAXONOMY;
 
 const WINDOW_OPTIONS: { value: "1h" | "24h" | "7d"; label: string }[] = [
   { value: "1h", label: "최근 1시간" },
@@ -39,19 +40,21 @@ export function NewsFilterPanel() {
     setWindow(value);
   };
 
-  const renderSectorButton = (sector: string) => {
-    const isActive = selectedSectors.includes(sector);
+  const renderSectorButton = (option: SectorTaxonomyItem) => {
+    const { slug, label } = option;
+    const isActive = selectedSectors.includes(slug);
     return (
       <button
-        key={sector}
+        key={slug}
         type="button"
-        onClick={() => toggleSector(sector)}
-        className={`rounded-full border px-3 py-1 text-xs transition-colors ${isActive
-          ? "border-primary bg-primary text-white"
-          : "border-border-light text-text-secondaryLight hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary.dark dark:hover:text-primary.dark"
+        onClick={() => toggleSector(slug)}
+        className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+          isActive
+            ? "border-primary bg-primary text-white"
+            : "border-border-light text-text-secondaryLight hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary.dark dark:hover:text-primary.dark"
         }`}
       >
-        {sector}
+        {label}
       </button>
     );
   };
@@ -62,9 +65,7 @@ export function NewsFilterPanel() {
       <div className="mt-3 space-y-4 text-sm">
         <section>
           <p className="text-xs font-semibold uppercase text-text-secondaryLight dark:text-text-secondaryDark">섹터</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {SECTOR_OPTIONS.map(renderSectorButton)}
-          </div>
+          <div className="mt-2 flex flex-wrap gap-2">{SECTOR_OPTIONS.map(renderSectorButton)}</div>
         </section>
 
         <section>

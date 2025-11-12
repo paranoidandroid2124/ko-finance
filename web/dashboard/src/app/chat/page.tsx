@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Route } from 'next';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { nanoid } from 'nanoid';
@@ -10,8 +10,10 @@ import { ChatMessageBubble } from '@/components/chat/ChatMessage';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { ChatContextPanel } from '@/components/chat/ChatContextPanel';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { PlanLock } from '@/components/ui/PlanLock';
 import {
   createMessage as createChatMessageApi,
+  ApiError,
   postRagQuery,
   streamRagQuery,
   type RagQueryRequestPayload
@@ -28,6 +30,7 @@ import {
   type MetricsTelemetry,
   type ChatMessageMeta
 } from '@/store/chatStore';
+import { usePlanTier, usePlanStore } from '@/store/planStore';
 import { useToastStore } from '@/store/toastStore';
 
 type RagApiContext = {
@@ -78,6 +81,23 @@ type RagApiResponse = {
   meta?: Record<string, unknown>;
 };
 
+type ChatQuotaNotice = {
+  message: string;
+  planTier?: string;
+  limit?: number | null;
+  remaining?: number | null;
+  resetAt?: string | null;
+};
+
+type QuotaErrorContext = {
+  sessionId: string;
+  assistantMessageId: string;
+  question: string;
+  userMessageId: string;
+  documentTitle?: string | null;
+  documentUrl?: string | null;
+};
+
 const ASSISTANT_LOADING_RESPONSE = '답변을 준비하고 있어요. 잠시만 기다려주세요.';
 const ASSISTANT_ERROR_RESPONSE =
   '답변을 생성하는 중 문제가 발생했습니다. 잠시 후 다시 시도하거나 질문을 다시 작성해주세요.';
@@ -94,6 +114,12 @@ const translateCitationKey = (rawKey: string): string => {
     return rawKey;
   }
   return CITATION_LABELS[normalized] ?? rawKey;
+};
+
+const PLAN_TIER_LABELS: Record<string, string> = {
+  free: 'Free',
+  pro: 'Pro',
+  enterprise: 'Enterprise'
 };
 
 const clampPercent = (value: number) => Math.min(100, Math.max(0, value));
@@ -372,9 +398,43 @@ const deriveSessionTitleFromQuestion = (question: string) => {
 
 export default function ChatPage() {
   const searchParams = useSearchParams();
+  const searchParamsString = searchParams?.toString() ?? "";
   const router = useRouter();
   const pathname = usePathname();
   const querySessionId = searchParams?.get('session') ?? null;
+  const planTier = usePlanTier();
+  const { planInitialized, planLoading, ragEnabled, planError, chatDailyLimit } = usePlanStore((state) => ({
+    planInitialized: state.initialized,
+    planLoading: state.loading,
+    ragEnabled: state.featureFlags.ragCore,
+    planError: state.error,
+    chatDailyLimit: state.quota.chatRequestsPerDay
+  }));
+  const [chatQuotaNotice, setChatQuotaNotice] = useState<ChatQuotaNotice | null>(null);
+  const quotaNoticeLimit = chatQuotaNotice?.limit ?? chatDailyLimit ?? null;
+  const quotaPlanLabel = useMemo(() => {
+    const key = (chatQuotaNotice?.planTier ?? planTier) ?? 'free';
+    return PLAN_TIER_LABELS[key] ?? PLAN_TIER_LABELS.free;
+  }, [chatQuotaNotice, planTier]);
+  const quotaResetText = useMemo(() => {
+    if (!chatQuotaNotice?.resetAt) {
+      return '자정이 지나면 자동으로 초기화돼요.';
+    }
+    const resetDate = new Date(chatQuotaNotice.resetAt);
+    if (Number.isNaN(resetDate.getTime())) {
+      return '곧 다시 이용하실 수 있어요.';
+    }
+    return `${new Intl.DateTimeFormat('ko-KR', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric'
+    }).format(resetDate)}에 초기화돼요.`;
+  }, [chatQuotaNotice]);
+  const handlePlanRedirect = useCallback(() => {
+    router.push('/settings?panel=plan');
+  }, [router]);
+  const dismissQuotaNotice = useCallback(() => setChatQuotaNotice(null), []);
 
   const sessions = useChatStore((state) => state.sessions);
   const activeSessionId = useChatStore((state) => state.activeSessionId);
@@ -388,13 +448,75 @@ export default function ChatPage() {
   const renameSession = useChatStore((state) => state.renameSession);
   const setSessionEvidence = useChatStore((state) => state.setSessionEvidence);
   const setSessionTelemetry = useChatStore((state) => state.setSessionTelemetry);
+  const showToast = useToastStore((state) => state.show);
+  const handleChatQuotaExceeded = useCallback(
+    (error: ApiError, context?: QuotaErrorContext) => {
+      if (error.code !== 'plan.chat_quota_exceeded') {
+        return false;
+      }
+      const detail = (error.detail ?? {}) as Record<string, unknown>;
+      const quotaDetail = (detail?.quota ?? {}) as Record<string, unknown>;
+      const limit =
+        typeof quotaDetail.chatRequestsPerDay === 'number'
+          ? quotaDetail.chatRequestsPerDay
+          : chatDailyLimit ?? null;
+      const remaining =
+        typeof quotaDetail.remaining === 'number' ? quotaDetail.remaining : null;
+      const resetAt = typeof quotaDetail.resetAt === 'string' ? quotaDetail.resetAt : null;
+      const message =
+        typeof detail?.message === 'string'
+          ? (detail.message as string)
+          : '오늘 사용할 수 있는 AI 대화 횟수를 모두 사용했습니다.';
+
+      setChatQuotaNotice({
+        message,
+        planTier: typeof detail?.planTier === 'string' ? (detail.planTier as string) : planTier,
+        limit,
+        remaining,
+        resetAt
+      });
+
+      if (context) {
+        updateMessage(context.sessionId, context.assistantMessageId, {
+          content: message,
+          meta: {
+            status: 'error',
+            retryable: false,
+            errorMessage: message,
+            question: context.question,
+            userMessageId: context.userMessageId
+          }
+        });
+        setSessionEvidence(context.sessionId, {
+          status: 'error',
+          items: [],
+          activeId: undefined,
+          confidence: undefined,
+          errorMessage: message,
+          documentTitle: context.documentTitle,
+          documentUrl: context.documentUrl
+        });
+        setSessionTelemetry(context.sessionId, {
+          guardrail: { status: 'error', message },
+          metrics: idleMetricsTelemetry
+        });
+      }
+
+      showToast({
+        intent: 'warning',
+        title: '오늘 할당량을 모두 사용했어요',
+        message: 'Pro 플랜으로 업그레이드하면 더 여유롭게 대화할 수 있어요.'
+      });
+      return true;
+    },
+    [chatDailyLimit, planTier, setSessionEvidence, setSessionTelemetry, showToast, updateMessage]
+  );
   const focusEvidence = useChatStore((state) => state.focus_evidence_item);
   const activeSession = useChatStore(selectActiveSession);
   const persistenceError = useChatStore(selectPersistenceError);
   const isHydrated = useChatStore(selectIsHydrated);
   const isLoading = useChatStore(selectStoreLoading);
   const resetStoreError = useChatStore((state) => state.resetError);
-  const showToast = useToastStore((state) => state.show);
 
   const contextSummary = activeSession?.context?.summary;
   const isFilingContext = activeSession?.context?.type === 'filing';
@@ -403,12 +525,12 @@ export default function ChatPage() {
 
   const navigateToSession = useCallback(
     (sessionId: string) => {
-      const nextQuery = new URLSearchParams(searchParams.toString());
+      const nextQuery = new URLSearchParams(searchParamsString);
       nextQuery.set('session', sessionId);
       const target = `${pathname}?${nextQuery.toString()}` as Route;
       router.push(target);
     },
-    [pathname, router, searchParams]
+    [pathname, router, searchParamsString]
   );
 
   useEffect(() => {
@@ -529,6 +651,14 @@ export default function ChatPage() {
         sessionState?.context?.type === 'filing' ? sessionState.context.referenceId : undefined;
       const documentTitle = sessionState?.evidence?.documentTitle ?? sessionState?.title ?? '대화';
       const documentUrl = sessionState?.evidence?.documentUrl;
+      const quotaContext: QuotaErrorContext = {
+        sessionId,
+        assistantMessageId,
+        question,
+        userMessageId,
+        documentTitle,
+        documentUrl
+      };
 
       updateMessage(sessionId, assistantMessageId, {
         meta: {
@@ -573,6 +703,7 @@ export default function ChatPage() {
       let streamedAnswer = '';
 
       const finalizeResponse = (payload: RagApiResponse) => {
+        setChatQuotaNotice(null);
         completed = true;
         const answerText =
           typeof payload.answer === 'string' && payload.answer.trim().length
@@ -756,6 +887,10 @@ export default function ChatPage() {
           }
         });
       } catch (error) {
+        if (error instanceof ApiError && handleChatQuotaExceeded(error, quotaContext)) {
+          completed = true;
+          return;
+        }
         console.warn('Streaming query failed', error);
       }
 
@@ -770,6 +905,9 @@ export default function ChatPage() {
         }
         finalizeResponse(payload);
       } catch (error) {
+        if (error instanceof ApiError && handleChatQuotaExceeded(error, quotaContext)) {
+          return;
+        }
         console.error('RAG query failed', error);
         const fallbackMessage = error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.';
         updateMessage(sessionId, assistantMessageId, {
@@ -804,6 +942,7 @@ export default function ChatPage() {
     },
     [
       focusEvidence,
+      handleChatQuotaExceeded,
       setSessionEvidence,
       setSessionTelemetry,
       showToast,
@@ -993,8 +1132,74 @@ export default function ChatPage() {
     [],
   );
 
+  if (!planInitialized) {
+    return (
+      <AppShell>
+        <div className='flex min-h-[60vh] items-center justify-center px-6'>
+          <div className='w-full max-w-2xl rounded-xl border border-dashed border-border-light/80 bg-white/70 p-6 text-center text-sm text-text-secondaryLight shadow-card dark:border-border-dark/70 dark:bg-background-cardDark/60 dark:text-text-secondaryDark'>
+            {planLoading ? '플랜 정보를 불러오는 중입니다…' : '플랜 정보를 초기화하는 중입니다.'}
+          </div>
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (!ragEnabled) {
+    return (
+      <AppShell>
+        <div className='flex min-h-[60vh] items-center justify-center px-6'>
+          <div className='w-full max-w-3xl'>
+            <PlanLock
+              requiredTier='pro'
+              currentTier={planTier}
+              title='AI 애널리스트는 Pro 플랜에서 열립니다.'
+              description='근거 기반 Q&A, 증거 Diff, LightMem 문맥 유지는 Pro 업그레이드 후 이용할 수 있어요.'
+            >
+              {planError ? (
+                <p className='mt-3 text-xs text-text-tertiaryLight dark:text-text-tertiaryDark'>
+                  플랜 정보를 불러오지 못했습니다. 새로 고침 후에도 문제가 지속되면 문의해주세요.
+                </p>
+              ) : null}
+            </PlanLock>
+          </div>
+        </div>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
+      {chatQuotaNotice ? (
+        <div className='mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-card dark:border-amber-400/60 dark:bg-amber-950/40 dark:text-amber-100'>
+          <div className='flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between'>
+            <div>
+              <p className='font-semibold text-amber-900 dark:text-amber-50'>{chatQuotaNotice.message}</p>
+              <p className='mt-1 text-xs text-amber-800 dark:text-amber-200'>
+                {quotaNoticeLimit
+                  ? `${quotaPlanLabel} 플랜 하루 ${quotaNoticeLimit.toLocaleString('ko-KR')}회 한도가 모두 사용되었어요.`
+                  : `${quotaPlanLabel} 플랜 하루 한도가 모두 사용되었어요.`}{' '}
+                {quotaResetText}
+              </p>
+            </div>
+            <div className='flex flex-wrap gap-2'>
+              <button
+                type='button'
+                className='rounded-lg border border-primary bg-primary px-4 py-2 text-xs font-semibold text-white transition hover:bg-primary-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary'
+                onClick={handlePlanRedirect}
+              >
+                플랜 카드로 이동
+              </button>
+              <button
+                type='button'
+                className='rounded-lg border border-amber-300 px-4 py-2 text-xs font-semibold text-amber-900 transition hover:bg-amber-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 dark:border-amber-500 dark:text-amber-100 dark:hover:bg-amber-500/10'
+                onClick={dismissQuotaNotice}
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div className='flex flex-col gap-6 lg:flex-row'>
         <ChatHistoryList
           sessions={sessions}

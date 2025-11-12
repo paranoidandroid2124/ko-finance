@@ -24,7 +24,7 @@ export default function DigestLabPage() {
   const isEmpty = Boolean(data) && payload.news.length === 0 && payload.watchlist.length === 0;
 
   return (
-    <AppShell title="Digest 미리보기">
+    <AppShell>
       <div className="flex flex-col gap-6">
         <section className="rounded-2xl border border-border-light bg-background-cardLight p-5 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
           <h1 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">Watchlist Digest 프리뷰</h1>

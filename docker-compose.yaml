@@ -34,6 +34,37 @@ services:
     networks:
       - kfinance_network
 
+  # Admin 전용 FastAPI 서버 (운영 콘솔 API)
+  admin-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint:
+      - uvicorn
+      - web.admin_main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8100"
+      - --reload
+    volumes:
+      - .:/app
+    ports:
+      - "8100:8100"
+    env_file:
+      - .env
+    depends_on:
+      litellm:
+        condition: service_started
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    networks:
+      - kfinance_network
+
   # 백그라운드 작업을 처리하는 Celery 워커
   worker:
     build:
@@ -78,6 +109,10 @@ services:
       DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm_proxy"  # separate LiteLLM DB
       LITELLM_DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm_proxy"
       LITELLM_MIGRATION_DIR: /tmp/litellm_migrations
+      LITELLM_CACHE: "redis"
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "2"
     networks:
       - kfinance_network
 

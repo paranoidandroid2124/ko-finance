@@ -12,6 +12,7 @@ import {
   type FinancialStatementRow,
   type FinancialValue,
 } from "@/hooks/useCompanySnapshot";
+import { useCompanySearch, type CompanySearchResult } from "@/hooks/useCompanySearch";
 import { useToastStore } from "@/store/toastStore";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
@@ -215,6 +216,13 @@ export function FinancialStatementsBoard({
     };
   }, [chartSeries]);
 
+  const {
+    data: peerSearchResults = [],
+    isFetching: isSearchingPeers,
+  } = useCompanySearch(peerInput, 5);
+  const trimmedPeerInput = peerInput.trim();
+  const showPeerSuggestions = trimmedPeerInput.length >= 1 && (isSearchingPeers || peerSearchResults.length > 0);
+
   const handleStatementChange = (code: string) => {
     setActiveStatement(code);
     const nextStatement = statements.find((entry) => entry.statementCode === code);
@@ -223,9 +231,8 @@ export function FinancialStatementsBoard({
     }
   };
 
-  const handleAddPeer = async (event?: React.FormEvent<HTMLFormElement>) => {
-    event?.preventDefault();
-    const normalized = peerInput.trim().toUpperCase();
+  const addPeerByIdentifier = async (rawIdentifier: string) => {
+    const normalized = rawIdentifier.trim().toUpperCase();
     if (!normalized) {
       toast({ message: "추가할 티커 또는 법인코드를 입력해 주세요.", intent: "warning" });
       return;
@@ -268,6 +275,19 @@ export function FinancialStatementsBoard({
     } finally {
       setIsAddingPeer(false);
     }
+  };
+  const handleAddPeer = async (event?: React.FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    await addPeerByIdentifier(peerInput);
+  };
+
+  const handlePeerSuggestionSelect = async (candidate: CompanySearchResult) => {
+    const identifierValue = candidate.corpCode ?? candidate.ticker;
+    if (!identifierValue) {
+      toast({ message: "선택한 기업의 티커/법인코드를 확인할 수 없습니다.", intent: "warning" });
+      return;
+    }
+    await addPeerByIdentifier(identifierValue);
   };
 
   const removePeer = (identifierToRemove: string) => {
@@ -440,23 +460,64 @@ export function FinancialStatementsBoard({
                 최대 {MAX_PEERS}개
               </span>
             </div>
-            <form onSubmit={handleAddPeer} className="flex items-center gap-2">
-              <input
-                type="text"
-                value={peerInput}
-                onChange={(event) => setPeerInput(event.target.value)}
-                placeholder="티커 또는 법인코드"
-                className="flex-1 rounded-lg border border-border-light bg-background-cardLight px-3 py-2 text-sm focus:border-primary focus:outline-none dark:border-border-dark dark:bg-background-cardDark"
-              />
-              <button
-                type="submit"
-                disabled={isAddingPeer}
-                className="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {isAddingPeer ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                추가
-              </button>
-            </form>
+            <div className="space-y-2">
+              <form onSubmit={handleAddPeer} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={peerInput}
+                  onChange={(event) => setPeerInput(event.target.value)}
+                  placeholder="티커 또는 법인코드"
+                  className="flex-1 rounded-lg border border-border-light bg-background-cardLight px-3 py-2 text-sm focus:border-primary focus:outline-none dark:border-border-dark dark:bg-background-cardDark"
+                />
+                <button
+                  type="submit"
+                  disabled={isAddingPeer}
+                  className="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isAddingPeer ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  추가
+                </button>
+              </form>
+              {showPeerSuggestions ? (
+                <div className="max-h-56 overflow-y-auto rounded-xl border border-border-light/80 bg-background-cardLight dark:border-border-dark/70 dark:bg-background-cardDark">
+                  {isSearchingPeers ? (
+                    <div className="px-3 py-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">검색 중...</div>
+                  ) : peerSearchResults.length ? (
+                    <ul className="divide-y divide-border-light/60 text-sm dark:divide-border-dark/60">
+                      {peerSearchResults.map((result) => {
+                        const suggestionKey = `${result.corpCode ?? ""}-${result.ticker ?? ""}-${result.corpName ?? ""}`;
+                        return (
+                          <li key={suggestionKey}>
+                          <button
+                            type="button"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => handlePeerSuggestionSelect(result)}
+                            className="flex w-full flex-col gap-1 px-3 py-2 text-left hover:bg-primary/10"
+                          >
+                            <span className="font-semibold text-text-primaryLight dark:text-text-primaryDark">
+                              {result.corpName ?? result.ticker ?? "기업"}
+                            </span>
+                            <span className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                              {result.ticker ? `티커 ${result.ticker}` : null}
+                              {result.ticker && result.corpCode ? " · " : null}
+                              {result.corpCode ? `법인코드 ${result.corpCode}` : null}
+                            </span>
+                            {result.latestReportName ? (
+                              <span className="text-[11px] text-text-tertiaryLight dark:text-text-tertiaryDark">
+                                {result.latestReportName}
+                              </span>
+                            ) : null}
+                          </button>
+                        </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <div className="px-3 py-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">검색 결과가 없습니다.</div>
+                  )}
+                </div>
+              ) : null}
+            </div>
 
             <div className="space-y-2 text-sm">
               <div className="flex items-center justify-between text-xs text-text-secondaryLight dark:text-text-secondaryDark">

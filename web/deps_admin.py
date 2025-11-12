@@ -10,6 +10,12 @@ from fastapi import HTTPException, Request, status
 
 from core.env import env_str
 from core.logging import get_logger
+from database import SessionLocal
+from services.admin_session_service import (
+    SESSION_COOKIE_NAME,
+    AdminSessionRecord,
+    validate_admin_session,
+)
 
 logger = get_logger(__name__)
 
@@ -21,6 +27,8 @@ class AdminSession:
     actor: str
     issued_at: datetime
     token_hint: Optional[str] = None
+    session_id: Optional[str] = None
+    expires_at: Optional[datetime] = None
 
 
 def _forbidden(code: str, message: str) -> HTTPException:
@@ -35,7 +43,7 @@ def _mask_token(token: str) -> str:
     return f"{token[:2]}***{token[-2:]}"
 
 
-def _load_admin_token_map() -> Dict[str, str]:
+def load_admin_token_map() -> Dict[str, str]:
     mapping: Dict[str, str] = {}
     tokens_env = env_str("ADMIN_API_TOKENS")
     default_actor = env_str("ADMIN_API_ACTOR", "admin") or "admin"
@@ -74,10 +82,18 @@ def _extract_admin_token(request: Request) -> Optional[str]:
     header_token = request.headers.get("x-admin-token")
     if header_token:
         return header_token.strip()
-    cookie_token = request.cookies.get("admin_session_token")
-    if cookie_token:
-        return cookie_token.strip()
     return None
+
+
+def _validate_session_cookie(request: Request) -> Optional[AdminSessionRecord]:
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        return None
+    db = SessionLocal()
+    try:
+        return validate_admin_session(db, token=token, touch=True)
+    finally:
+        db.close()
 
 
 def require_admin_session(
@@ -88,13 +104,25 @@ def require_admin_session(
     """
     Validate that the current request carries a recognised admin credential.
 
-    This helper supports the following credential formats:
-    - Authorization: Bearer <token>
-    - X-Admin-Token header
-    - admin_session_token cookie
+    Validation order:
+    1. Signed admin session cookie (preferred, server-issued)
+    2. Authorization: Bearer <token>
+    3. X-Admin-Token header
     """
 
-    token_map = _load_admin_token_map()
+    cookie_record = _validate_session_cookie(request)
+    if cookie_record:
+        session = AdminSession(
+            actor=cookie_record.actor,
+            issued_at=cookie_record.issued_at,
+            token_hint=cookie_record.token_hint,
+            session_id=cookie_record.id,
+            expires_at=cookie_record.expires_at,
+        )
+        request.state.admin_session = session
+        return session
+
+    token_map = load_admin_token_map()
     if not token_map:
         logger.error("ADMIN_API_TOKEN or ADMIN_API_TOKENS is not configured; admin access blocked.")
         raise _forbidden(error_code, "관리자 인증 설정이 준비되지 않았어요. 운영 팀에 문의해주세요.")
@@ -115,7 +143,11 @@ def require_admin_session(
         if actor_override:
             actor = actor_override
 
-    session = AdminSession(actor=actor, issued_at=datetime.now(timezone.utc), token_hint=_mask_token(provided))
+    session = AdminSession(
+        actor=actor,
+        issued_at=datetime.now(timezone.utc),
+        token_hint=_mask_token(provided),
+    )
     request.state.admin_session = session
     return session
 

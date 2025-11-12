@@ -83,6 +83,13 @@ def format_timespan(timestamp: datetime | None) -> str:
     return f"{days}일 전"
 
 
+def truncate_text(value: str, limit: int = 60) -> str:
+    text = (value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
 def build_metrics(db: Session) -> list[DashboardMetric]:
     now_utc = datetime.now(timezone.utc)
     now_naive = now_utc.replace(tzinfo=None)
@@ -209,14 +216,14 @@ def build_alerts(db: Session) -> list[DashboardAlert]:
     for signal in recent_news:
         base_time = signal.published_at or now_utc
         tone = map_sentiment(signal.sentiment)
-        body = (
-            f"{signal.source} · 감성 {signal.sentiment:.2f}"
-            if signal.sentiment is not None
-            else signal.source
+        headline = truncate_text(signal.headline or signal.summary or signal.url or "뉴스 업데이트", limit=48)
+        sentiment_copy = (
+            f"감성 {signal.sentiment:+.2f}" if isinstance(signal.sentiment, (int, float)) else "감성 정보 없음"
         )
+        body = f"{signal.source} · {sentiment_copy}"
         alert = DashboardAlert(
             id=str(signal.id),
-            title="뉴스 업데이트",
+            title=headline,
             body=body,
             timestamp=format_timespan(signal.published_at),
             tone=tone,

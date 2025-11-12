@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import { shallow } from "zustand/shallow";
 import { AppShell } from "@/components/layout/AppShell";
-import { NewsSentimentHeatmap } from "@/components/charts/NewsSentimentHeatmap";
 import { NewsList } from "@/components/ui/NewsList";
 import { TopicRankingCard } from "@/components/news/TopicRankingCard";
 import { NewsFilterPanel } from "@/components/news/NewsFilterPanel";
@@ -108,14 +107,6 @@ export default function NewsInsightsPage() {
             ) : null}
           </div>
           <NewsList items={news} />
-          <details className="group rounded-xl border border-border-light bg-background-cardLight p-4 shadow-card transition dark:border-border-dark dark:bg-background-cardDark">
-            <summary className="cursor-pointer text-sm font-semibold text-text-primaryLight outline-none marker:text-primary dark:text-text-primaryDark">
-              히트맵(고급 보기)
-            </summary>
-            <div className="mt-4">
-              <NewsSentimentHeatmap />
-            </div>
-          </details>
         </div>
       </div>
       <SectorDetailDrawer open={Boolean(drawerPoint)} point={drawerPoint} onClose={handleCloseDrawer} />

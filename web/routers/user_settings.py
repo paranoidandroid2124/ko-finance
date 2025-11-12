@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from schemas.api.user_settings import (
     UserLightMemSettingsResponse,
@@ -13,6 +13,8 @@ from schemas.api.user_settings import (
     UserLightMemSettingsUpdateRequest,
 )
 from services import lightmem_gate, user_settings_service
+from services.plan_service import PlanContext
+from web.deps import get_plan_context
 
 router = APIRouter(prefix="/user-settings", tags=["User Settings"])
 
@@ -56,6 +58,37 @@ def _serialize(record: user_settings_service.UserLightMemSettingsRecord) -> User
     )
 
 
+def _ensure_lightmem_allowed(plan: PlanContext, settings: UserLightMemSettingsSchema) -> None:
+    plan_flags = plan.memory_flags()
+    if settings.enabled and not any(plan_flags.values()):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "plan.lightmem_unavailable",
+                "message": "현재 플랜에서는 LightMem 개인화를 사용할 수 없습니다. Pro 이상 플랜으로 업그레이드해주세요.",
+                "planTier": plan.tier,
+            },
+        )
+
+    feature_labels = {
+        "watchlist": "워치리스트",
+        "digest": "다이제스트",
+        "chat": "대화 메모리",
+    }
+    for key, allowed in feature_labels.items():
+        plan_allows = bool(plan_flags.get(key, False))
+        requested = bool(getattr(settings, key))
+        if requested and not plan_allows:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": f"plan.lightmem_{key}_locked",
+                    "message": f"{allowed} 기능은 Pro 이상 플랜에서만 사용할 수 있습니다.",
+                    "planTier": plan.tier,
+                },
+            )
+
+
 @router.get(
     "/lightmem",
     response_model=UserLightMemSettingsResponse,
@@ -75,8 +108,10 @@ def read_lightmem_settings(x_user_id: Optional[str] = Header(default=None)) -> U
 def update_lightmem_settings(
     payload: UserLightMemSettingsUpdateRequest,
     x_user_id: Optional[str] = Header(default=None),
+    plan: PlanContext = Depends(get_plan_context),
 ) -> UserLightMemSettingsResponse:
     user_id = _resolve_user_id(x_user_id)
+    _ensure_lightmem_allowed(plan, payload.lightmem)
     record = user_settings_service.write_user_lightmem_settings(
         user_id=user_id,
         settings=user_settings_service.UserLightMemSettings(

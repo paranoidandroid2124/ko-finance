@@ -27,14 +27,14 @@ from schemas.api.rag import (
     RelatedFiling,
     SelfCheckResult,
 )
-from services import chat_service, date_range_parser, vector_service, lightmem_gate
+from services import chat_service, date_range_parser, vector_service, lightmem_gate, lightmem_rate_limiter
 from services.user_settings_service import UserLightMemSettings
 from services.rag_shared import build_anchor_payload, normalize_reliability, safe_float, safe_int
 from services.evidence_service import attach_diff_metadata
 from models.chat import ChatMessage, ChatSession
 from services.memory.facade import MEMORY_SERVICE
 from services.plan_service import PlanContext
-from web.deps import get_plan_context
+from web.deps import require_plan_feature
 
 
 def _extract_anchor(chunk: Dict[str, Any]) -> Optional[EvidenceAnchor]:
@@ -358,6 +358,8 @@ NO_CONTEXT_ANSWER = "관련 근거 문서를 찾지 못했습니다. 다른 질�
 INTENT_GENERAL_MESSAGE = "저는 공시·금융 뉴스 정보를 기반으로 답변하는 서비스입니다. 관련된 질문을 입력해 주세요."
 INTENT_BLOCK_MESSAGE = SAFE_MESSAGE
 INTENT_WARNING_CODE = "intent_filter"
+CHAT_QUOTA_SCOPE = "rag.chat.daily"
+CHAT_QUOTA_WINDOW_SECONDS = 24 * 60 * 60
 
 
 def _parse_uuid(value: Optional[str]) -> Optional[uuid.UUID]:
@@ -383,6 +385,48 @@ def _load_user_lightmem_settings(
     user_id: Optional[uuid.UUID],
 ) -> Optional[UserLightMemSettings]:
     return lightmem_gate.load_user_settings(user_id)
+
+
+def _enforce_chat_quota(plan: PlanContext, user_id: Optional[uuid.UUID]) -> None:
+    limit = plan.quota.chat_requests_per_day
+    if limit is None or limit <= 0:
+        return
+
+    identifier = str(user_id or "anonymous")
+    result = lightmem_rate_limiter.check_limit(
+        scope=CHAT_QUOTA_SCOPE,
+        identifier=identifier,
+        limit=limit,
+        window_seconds=CHAT_QUOTA_WINDOW_SECONDS,
+    )
+    if result.backend_error:
+        logger.debug("Chat quota limiter unavailable; allowing request (plan=%s).", plan.tier)
+        return
+    if result.allowed:
+        return
+
+    remaining = max(int(result.remaining or 0), 0)
+    reset_iso = result.reset_at.isoformat() if result.reset_at else None
+    headers: Dict[str, str] = {}
+    if result.reset_at:
+        retry_after = max(int((result.reset_at - datetime.now(timezone.utc)).total_seconds()), 0)
+        headers["Retry-After"] = str(retry_after)
+
+    detail = {
+        "code": "plan.chat_quota_exceeded",
+        "message": "오늘 사용할 수 있는 AI 대화 횟수를 모두 사용했습니다. 내일 다시 이용하거나 Pro 플랜으로 업그레이드해 주세요.",
+        "planTier": plan.tier,
+        "quota": {
+            "chatRequestsPerDay": limit,
+            "remaining": remaining,
+            "resetAt": reset_iso,
+        },
+    }
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=detail,
+        headers=headers or None,
+    )
 
 def _coerce_uuid(value, *, default=None):
     """Convert an arbitrary identifier to a UUID."""
@@ -964,7 +1008,7 @@ def query_rag(
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
     idempotency_key_header: Optional[str] = Header(default=None, convert_underscores=False, alias="Idempotency-Key"),
-    plan: PlanContext = Depends(get_plan_context),
+    plan: PlanContext = Depends(require_plan_feature("rag.core")),
     db: Session = Depends(get_db),
 ) -> RAGQueryResponse:
     question = request.question.strip()
@@ -979,6 +1023,8 @@ def query_rag(
     org_id = _parse_uuid(x_org_id)
     turn_id = _coerce_uuid(request.turn_id)
     idempotency_key = request.idempotency_key or idempotency_key_header
+
+    _enforce_chat_quota(plan, user_id)
 
     user_meta = dict(request.meta or {})
     user_settings = _load_user_lightmem_settings(user_id)
@@ -1291,7 +1337,7 @@ def query_rag_stream(
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
     idempotency_key_header: Optional[str] = Header(default=None, convert_underscores=False, alias="Idempotency-Key"),
-    plan: PlanContext = Depends(get_plan_context),
+    plan: PlanContext = Depends(require_plan_feature("rag.core")),
     db: Session = Depends(get_db),
 ):
     question = request.question.strip()
@@ -1306,6 +1352,8 @@ def query_rag_stream(
     org_id = _parse_uuid(x_org_id)
     turn_id = _coerce_uuid(request.turn_id)
     idempotency_key = request.idempotency_key or idempotency_key_header
+
+    _enforce_chat_quota(plan, user_id)
 
     user_settings = _load_user_lightmem_settings(user_id)
     plan_memory_enabled = _plan_memory_enabled(plan, user_settings=user_settings)

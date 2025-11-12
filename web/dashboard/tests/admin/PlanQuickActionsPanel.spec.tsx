@@ -9,11 +9,12 @@ const initialState = usePlanStore.getState();
 
 const mutateAsyncMock = vi.fn(async () => ({
   planTier: "enterprise",
-  entitlements: ["search.compare", "search.export"],
+  entitlements: ["search.compare", "search.export", "rag.core"],
   featureFlags: {
     searchCompare: true,
     searchAlerts: false,
     searchExport: true,
+    ragCore: false,
     evidenceInlinePdf: false,
     evidenceDiff: false,
     timelineFull: false,
@@ -54,7 +55,7 @@ describe("PlanQuickActionsPanel", () => {
     usePlanStore.setState(initialState, true);
     usePlanStore.setState({
       planTier: "pro",
-      entitlements: ["search.compare"],
+      entitlements: ["search.compare", "search.export", "rag.core"],
       quota: {
         chatRequestsPerDay: 500,
         ragTopK: 6,

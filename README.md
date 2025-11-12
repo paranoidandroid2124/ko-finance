@@ -52,6 +52,7 @@ pip install -r requirements.txt
 docker compose up --build api worker beat litellm redis postgres
 ```
 - `api`: FastAPI app (`web/main.py`)
+- `admin-api`: Admin FastAPI surface (`web/admin_main.py`, port `8100`)
 - `worker`: Celery worker (`parse.worker`)
 - `beat`: Celery beat scheduling `m1.seed_recent_filings`, `m2.aggregate_news`, `m4.generate_daily_brief`
 - `litellm`: Model gateway for all LLM calls
@@ -111,6 +112,7 @@ Ensure Redis/Postgres/Qdrant services are reachable via `.env`.
 - Guardrail violations return the `SAFE_MESSAGE`; see `original_answer` for the redacted text.
 
 ### Dashboard UI (Frontend)
-- 위치: `web/dashboard`
-- Next.js 기반 데이터 대시보드 UI. 디자인 시스템 문서: `design/ui_design_system.md`, `design/dashboard_wireframes.md`.
-- 개발: 패키지 설치 후 `pnpm dev` 또는 `npm run dev`, Storybook은 `pnpm storybook`.
+- 사용자 대시보드: `web/dashboard` (Next.js 기반 메인 사용자 경험). 디자인 시스템 문서: `design/ui_design_system.md`, `design/dashboard_wireframes.md`. `pnpm dev` 또는 `npm run dev`, Storybook은 `pnpm storybook`.
+- 운영자 콘솔: `web/admin-dashboard` (Next.js App Router · 별도 번들, 기본 포트 `3100`). 기존 컴포넌트는 `web/dashboard/src`를 alias로 재사용하므로 동작을 바꾸지 않고도 빠르게 독립 배포를 실험할 수 있습니다. `pnpm install && pnpm dev`를 `web/admin-dashboard`에서 실행하면 `localhost:3100`에서 admin UI가 구동되고, API는 `web/admin_main.py`/`docker-compose`의 `admin-api`가 담당합니다.
+- Google Workspace SSO를 붙일 경우 `GOOGLE_ADMIN_CLIENT_ID`(OAuth Client ID)와 `GOOGLE_ADMIN_ALLOWED_DOMAIN`을 환경변수로 지정하고, 프런트엔드에서 Google OAuth로 발급받은 `id_token`을 `/api/v1/admin/session`에 전달하면 됩니다. 설정이 없는 경우에는 기존의 정적 토큰(`token`) 흐름이 그대로 유지됩니다.
+- Workspace 없이 자체 인증을 쓰려면 `ADMIN_ALLOWED_EMAILS`, `ADMIN_MFA_SECRETS`, `ADMIN_REQUIRE_MFA`를 지정한 뒤 `/api/v1/admin/auth/login`으로 이메일+비밀번호(+TOTP) 검증을 통과해야 운영 세션을 발급받도록 구성했습니다. Admin UI의 로그인 카드도 해당 엔드포인트를 사용합니다.

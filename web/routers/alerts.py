@@ -36,7 +36,7 @@ from services import watchlist_service
 from services.user_settings_service import UserLightMemSettings
 from services import lightmem_gate
 from services.plan_service import PlanContext
-from web.deps import get_plan_context
+from web.deps import require_plan_feature
 
 router = APIRouter(prefix="/alerts", tags=["Alerts"])
 
@@ -124,7 +124,7 @@ def list_rules(
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
-    plan: PlanContext = Depends(get_plan_context),
+    plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> AlertRuleListResponse:
     user_id = _parse_uuid(x_user_id)
     org_id = _parse_uuid(x_org_id)
@@ -140,7 +140,7 @@ def create_rule(
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
-    plan: PlanContext = Depends(get_plan_context),
+    plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> AlertRuleResponse:
     user_id = _parse_uuid(x_user_id)
     org_id = _parse_uuid(x_org_id)
@@ -179,7 +179,7 @@ def update_rule(
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
-    plan: PlanContext = Depends(get_plan_context),
+    plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> AlertRuleResponse:
     user_id = _parse_uuid(x_user_id)
     org_id = _parse_uuid(x_org_id)
@@ -211,7 +211,7 @@ def delete_rule(
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
-    plan: PlanContext = Depends(get_plan_context),
+    plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> None:
     user_id = _parse_uuid(x_user_id)
     org_id = _parse_uuid(x_org_id)
@@ -219,12 +219,6 @@ def delete_rule(
     rule = get_alert_rule(db, rule_id=alert_id, owner_filters=filters)
     if rule is None:
         return
-    if plan.tier == "free":
-        raise _plan_http_exception(
-            status.HTTP_403_FORBIDDEN,
-            "plan.locked_action",
-            "현재 플랜에서는 알림 삭제가 허용되지 않습니다.",
-        )
     archive_alert_rule(db, rule=rule)
     db.commit()
 
@@ -244,7 +238,7 @@ def watchlist_radar(
     window_end: Optional[str] = Query(default=None, description="ISO8601 종료 시각"),
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
-    plan: PlanContext = Depends(get_plan_context),
+    plan: PlanContext = Depends(require_plan_feature("search.alerts")),
     db: Session = Depends(get_db),
 ) -> WatchlistRadarResponse:
     window_minutes = max(min(int(window_minutes or 1440), 7 * 24 * 60), 5)
@@ -297,7 +291,7 @@ def watchlist_dispatch(
     payload: WatchlistDispatchRequest,
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
-    plan: PlanContext = Depends(get_plan_context),
+    plan: PlanContext = Depends(require_plan_feature("search.alerts")),
     db: Session = Depends(get_db),
 ) -> WatchlistDispatchResponse:
     window_minutes = max(min(int(payload.windowMinutes or 1440), 7 * 24 * 60), 5)
@@ -338,6 +332,7 @@ def watchlist_rule_detail(
     recent_limit: int = Query(default=5, ge=1, le=50),
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
+    _: PlanContext = Depends(require_plan_feature("search.alerts")),
     db: Session = Depends(get_db),
 ) -> WatchlistRuleDetailResponse:
     user_id = _parse_uuid(x_user_id)
@@ -368,7 +363,7 @@ def watchlist_rule_detail(
 
 @router.get("/channels/schema", response_model=AlertChannelSchemaResponse)
 def channel_schema(
-    plan: PlanContext = Depends(get_plan_context),
+    plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> AlertChannelSchemaResponse:
     allowed = allowed_channels(plan.tier)
     definitions = list_channel_definitions(allowed)

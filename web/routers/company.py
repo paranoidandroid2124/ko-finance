@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -27,6 +28,7 @@ from schemas.api.company import (
     FiscalAlignmentInsight,
     KeyMetric,
     NewsWindowInsight,
+    CompanyFilingSummary,
     RestatementHighlight,
     SummaryBlock,
     TopicWeight,
@@ -143,6 +145,7 @@ def company_snapshot(identifier: str, db: Session = Depends(get_db)) -> CompanyS
     financial_statements = _collect_financial_statements(db, corp_code)
     recent_events = _latest_events(db, corp_code, limit=8)
     news_metrics = _collect_news_metrics(db, ticker)
+    recent_filings = _collect_recent_company_filings(db, corp_code)
 
     event_models = [
         EventItem(
@@ -190,6 +193,7 @@ def company_snapshot(identifier: str, db: Session = Depends(get_db)) -> CompanyS
         key_metrics=key_metrics,
         major_events=event_models,
         news_signals=news_models,
+        recent_filings=recent_filings,
         restatement_highlights=restatement_highlights,
         evidence_links=evidence_links,
         fiscal_alignment=fiscal_alignment,
@@ -388,6 +392,79 @@ def _collect_restatement_highlights(db: Session, corp_code: str, limit: int = 3)
         if len(highlights) >= limit:
             break
     return highlights
+
+
+def _collect_recent_company_filings(
+    db: Session,
+    corp_code: str,
+    *,
+    days: int = 30,
+    limit: int = 25,
+) -> List[CompanyFilingSummary]:
+    if limit <= 0:
+        return []
+
+    window_start = datetime.now(timezone.utc) - timedelta(days=days)
+    filings = (
+        db.query(Filing)
+        .filter(
+            Filing.corp_code == corp_code,
+            Filing.filed_at.isnot(None),
+            Filing.filed_at >= window_start,
+        )
+        .order_by(
+            nulls_last(Filing.filed_at.desc()),
+            nulls_last(Filing.created_at.desc()),
+        )
+        .limit(limit)
+        .all()
+    )
+    if not filings:
+        return []
+
+    summaries = _summaries_by_filing_id(db, [filing.id for filing in filings])
+    recent: List[CompanyFilingSummary] = []
+    for filing in filings:
+        summary = summaries.get(filing.id)
+        sentiment, reason = _recent_filing_sentiment(summary)
+        recent.append(
+            CompanyFilingSummary(
+                id=filing.id,
+                receipt_no=filing.receipt_no,
+                report_name=filing.report_name,
+                title=filing.title,
+                category=filing.category,
+                filed_at=filing.filed_at,
+                viewer_url=_viewer_url(filing.receipt_no) if filing.receipt_no else None,
+                summary=_build_summary_block(summary),
+                sentiment=sentiment,
+                sentiment_reason=reason,
+            )
+        )
+    return recent
+
+
+def _summaries_by_filing_id(db: Session, filing_ids: Sequence[uuid.UUID]) -> Dict[uuid.UUID, Summary]:
+    if not filing_ids:
+        return {}
+    rows = (
+        db.query(Summary)
+        .filter(Summary.filing_id.in_(filing_ids))
+        .all()
+    )
+    return {row.filing_id: row for row in rows if row.filing_id}
+
+
+def _recent_filing_sentiment(summary: Optional[Summary]) -> Tuple[str, str]:
+    if summary and summary.sentiment_label:
+        label = summary.sentiment_label.strip().lower()
+        if label in {"positive", "negative", "neutral"}:
+            return (
+                label,
+                summary.sentiment_reason
+                or "요약 분석을 통해 감성 레이블이 판별되었습니다.",
+            )
+    return ("neutral", "감성 분석 결과가 없어 기본값을 사용합니다.")
 
 
 def _compute_restatement_metric_delta(db: Session, filing: Filing) -> Optional[Dict[str, Any]]:

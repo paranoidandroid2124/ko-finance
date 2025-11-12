@@ -5,18 +5,40 @@ import { AppShell } from "@/components/layout/AppShell";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { CompanySummaryCard } from "@/components/company/CompanySummaryCard";
 import { KeyMetricsGrid } from "@/components/company/KeyMetricsGrid";
 import { MajorEventsList } from "@/components/company/MajorEventsList";
 import { NewsSignalCards } from "@/components/company/NewsSignalCards";
 import { FinancialStatementsBoard } from "@/components/company/FinancialStatementsBoard";
 import { EvidenceBundleCard, FiscalAlignmentCard, RestatementRadarCard } from "@/components/company/InsightCards";
+import { RecentFilingsPanel } from "@/components/company/RecentFilingsPanel";
 import { PlanLock } from "@/components/ui/PlanLock";
-import { FinancialStatementsBoard } from "@/components/company/FinancialStatementsBoard";
 import { useCompanySnapshot } from "@/hooks/useCompanySnapshot";
 import { normalizeCompanySearchResult, type CompanySearchResult } from "@/hooks/useCompanySearch";
 
 const RECENT_COMPANIES_KEY = "kofilot_recent_companies";
+
+type CompanyHeaderProps = {
+  name: string;
+  ticker?: string | null;
+  corpCode?: string | null;
+};
+
+function CompanyHeader({ name, ticker, corpCode }: CompanyHeaderProps) {
+  return (
+    <section className="rounded-xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-text-primaryLight dark:text-text-primaryDark">{name}</h1>
+          <div className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+            {ticker ? <span>티커 {ticker}</span> : null}
+            {ticker && corpCode ? <span className="mx-1 text-border-light dark:text-border-dark">•</span> : null}
+            {corpCode ? <span>법인코드 {corpCode}</span> : null}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 type CompanySnapshotPageProps = {
   params: {
@@ -35,7 +57,8 @@ export default function CompanySnapshotPage({ params }: CompanySnapshotPageProps
       statementCount ||
         data.keyMetrics.length ||
         data.majorEvents.length ||
-        data.newsSignals.length,
+        data.newsSignals.length ||
+        data.recentFilings.length,
     );
   }, [data]);
 
@@ -99,12 +122,8 @@ export default function CompanySnapshotPage({ params }: CompanySnapshotPageProps
     return (
       <AppShell>
         <div className="space-y-6">
-          <CompanySummaryCard
-            name={data.corpName ?? identifier}
-            ticker={data.ticker}
-            headline={data.latestFiling}
-            summary={data.summary}
-          />
+          <CompanyHeader name={data.corpName ?? identifier} ticker={data.ticker} corpCode={data.corpCode} />
+          <RecentFilingsPanel filings={data.recentFilings} companyName={data.corpName ?? identifier} />
           <EmptyState
             title="표시할 데이터가 없습니다"
             description="주요 지표, 이벤트, 뉴스 신호를 찾을 수 없습니다. 기간이나 회사를 다시 선택해 주세요."
@@ -117,12 +136,8 @@ export default function CompanySnapshotPage({ params }: CompanySnapshotPageProps
   return (
     <AppShell>
       <div className="space-y-6">
-        <CompanySummaryCard
-          name={data.corpName ?? identifier}
-          ticker={data.ticker}
-          headline={data.latestFiling}
-          summary={data.summary}
-        />
+        <CompanyHeader name={data.corpName ?? identifier} ticker={data.ticker} corpCode={data.corpCode} />
+        <RecentFilingsPanel filings={data.recentFilings} companyName={data.corpName ?? identifier} />
         {data.financialStatements.length ? (
           <FinancialStatementsBoard
             statements={data.financialStatements}

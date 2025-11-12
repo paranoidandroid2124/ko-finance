@@ -25,6 +25,19 @@ CORP_CODE_URL = f"{DART_API_BASE}/corpCode.xml"
 DOCUMENT_URL = f"{DART_API_BASE}/document.xml"
 
 
+def _load_json_payload(text: str, *, context: str) -> Dict[str, Any]:
+    stripped = (text or "").strip()
+    if not stripped:
+        logger.warning("Empty JSON payload received from %s.", context)
+        return {}
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError as exc:
+        preview = stripped[:160]
+        logger.error("Unable to decode JSON payload from %s: %s (body preview=%s)", context, exc, preview)
+        return {}
+
+
 class DartClient:
     """Wrapper around DART OpenAPI endpoints used in M1 pipeline."""
 
@@ -112,7 +125,7 @@ class DartClient:
                         text = response.content.decode("utf-8")
                     except UnicodeDecodeError:
                         text = response.content.decode("euc-kr", errors="replace")
-                    payload = json.loads(text)
+                    payload = _load_json_payload(text, context="list.json")
                     if payload.get("status") != "000":
                         message = payload.get("message", "Unknown DART error")
                         logger.error("DART returned error status (page %s): %s", current_page, message)
@@ -169,6 +182,13 @@ class DartClient:
             return content_bytes
 
         stripped = content_bytes.lstrip()
+        lowered_prefix = stripped[:32].lower()
+        if lowered_prefix.startswith(b"<html") or lowered_prefix.startswith(b"<!doctype html"):
+            logger.warning(
+                "DART document download returned viewer HTML for %s; falling back to viewer scraping.",
+                receipt_no,
+            )
+            return None
         if stripped.startswith(b"<?xml") or stripped.startswith(b"<"):
             try:
                 payload = xmltodict.parse(content_bytes)
@@ -215,11 +235,9 @@ class DartClient:
         except UnicodeDecodeError:
             text = response.content.decode("euc-kr", errors="replace")
 
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            logger.error("Unable to decode DART JSON payload from %s", endpoint)
-            raise
+        payload = _load_json_payload(text, context=endpoint)
+        if not payload:
+            return {}
 
         status = payload.get("status")
         if status and status != "000":

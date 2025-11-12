@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import Request
+from fastapi import Depends, HTTPException, Request, status
 
+from services.plan_guard import PlanGuardError, ensure_entitlement
 from services.plan_service import PlanContext, resolve_plan_context
 
 
@@ -15,3 +16,15 @@ def get_plan_context(request: Request) -> PlanContext:
         request.state.plan_context = context
     return context
 
+
+def require_plan_feature(entitlement: str):
+    """Dependency factory that ensures the active plan exposes the entitlement."""
+
+    def _dependency(plan: PlanContext = Depends(get_plan_context)) -> PlanContext:
+        try:
+            ensure_entitlement(plan, entitlement)
+        except PlanGuardError as exc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=exc.to_detail())
+        return plan
+
+    return _dependency

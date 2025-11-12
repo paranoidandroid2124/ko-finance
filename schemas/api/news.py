@@ -56,31 +56,6 @@ class NewsObservationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class NewsHeatmapArticle(BaseModel):
-    id: uuid.UUID
-    title: str
-    url: str
-    source: Optional[str] = None
-    sentiment: float | None = None
-    summary: Optional[str] = None
-    publishedAt: Optional[str] = None
-    publishedAtIso: Optional[str] = None
-
-
-class NewsSentimentHeatmapPoint(BaseModel):
-    sector_index: int
-    bucket_index: int
-    sentiment: float | None = None
-    article_count: int = 0
-    articles: List[NewsHeatmapArticle] = Field(default_factory=list)
-
-
-class NewsSentimentHeatmapResponse(BaseModel):
-    sectors: List[str]
-    buckets: List[dict]
-    points: List[NewsSentimentHeatmapPoint]
-
-
 class NewsTopicInsight(BaseModel):
     name: str
     change: str

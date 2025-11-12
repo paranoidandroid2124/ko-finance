@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from services.plan_service import resolve_plan_context
 from web import routers
-from web.background.rag_auto_retry import start_retry_scheduler
 
 app = FastAPI(
     title="K-Finance AI Research Copilot",
@@ -55,18 +54,8 @@ app.include_router(routers.plan.router, prefix="/api/v1")
 app.include_router(routers.auth.router, prefix="/api/v1")
 app.include_router(routers.user_settings.router, prefix="/api/v1")
 app.include_router(routers.reports.router, prefix="/api/v1")
-app.include_router(routers.admin.router, prefix="/api/v1")
-app.include_router(routers.admin_llm.router, prefix="/api/v1")
-app.include_router(routers.admin_rag.router, prefix="/api/v1")
-app.include_router(routers.admin_ops.router, prefix="/api/v1")
-app.include_router(routers.admin_ui.router, prefix="/api/v1")
+app.include_router(routers.health.router, prefix="/api/v1")
 app.include_router(routers.ops.router, prefix="/ops/api")
 
 if getattr(routers, "filing", None):
     app.include_router(routers.filing.router, prefix="/api/v1")
-
-
-@app.on_event("startup")
-async def launch_background_jobs() -> None:
-    """Kick off background schedulers used by the admin console."""
-    start_retry_scheduler()

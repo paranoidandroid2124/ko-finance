@@ -12,7 +12,7 @@ import { PaymentResultCard } from "@/components/payments/PaymentResultCard";
 const isPlanTier = (value: string | null): value is PlanTier =>
   value === "free" || value === "pro" || value === "enterprise";
 
-const safeRedirectPath = (value: string | null) => {
+const safeRedirectPath = (value?: string | null) => {
   if (!value || !value.startsWith("/")) {
     return "/settings";
   }
@@ -35,12 +35,12 @@ export default function TossPaymentFailPage() {
   const pushToast = useToastStore((state) => state.show);
   const toastShownRef = useRef(false);
 
-  const orderId = searchParams.get("orderId");
-  const code = searchParams.get("code");
-  const failureMessage = searchParams.get("message");
-  const tierParam = searchParams.get("tier");
-  const amountParam = searchParams.get("amount");
-  const redirectPath = safeRedirectPath(searchParams.get("redirectPath"));
+  const orderId = searchParams?.get("orderId") ?? null;
+  const code = searchParams?.get("code") ?? null;
+  const failureMessage = searchParams?.get("message") ?? null;
+  const tierParam = searchParams?.get("tier") ?? null;
+  const amountParam = searchParams?.get("amount") ?? null;
+  const redirectPath = safeRedirectPath(searchParams?.get("redirectPath"));
 
   const amountLabel = useMemo(() => {
     if (!amountParam) {

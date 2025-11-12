@@ -127,7 +127,7 @@ export function PlanLock({
   return (
     <div
       className={clsx(
-        "motion-shimmer animate-motion-shimmer animate-pulse rounded-xl border border-dashed border-border-light/80 bg-background-cardLight/70 p-4 text-sm text-text-secondaryLight shadow-card dark:border-border-dark/80 dark:bg-background-cardDark/40 dark:text-text-secondaryDark",
+        "rounded-xl border border-dashed border-border-light/80 bg-background-cardLight/80 p-4 text-sm text-text-secondaryLight shadow-card transition-colors dark:border-border-dark/80 dark:bg-background-cardDark/50 dark:text-text-secondaryDark",
         className,
       )}
       data-testid="plan-lock"

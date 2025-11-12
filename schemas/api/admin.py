@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from schemas.api.plan import PlanTier, PlanMemoryFlagsSchema
 PromptChannel = Literal["chat", "rag", "self_check"]
@@ -763,10 +763,34 @@ class TossWebhookReplayResponse(AdminBaseModel):
     noop: Optional[bool] = Field(default=None, description="실행할 작업이 없어 건너뛴 경우 true.")
 
 
+class AdminSessionCreateRequest(AdminBaseModel):
+    token: Optional[str] = Field(default=None, description="정적 운영 토큰.")
+    idToken: Optional[str] = Field(default=None, description="Google Workspace ID 토큰.")
+    actorOverride: Optional[str] = Field(default=None, description="(정적 토큰 전용) actor 라벨을 덮어쓸 때 사용합니다.")
+
+    @model_validator(mode="after")
+    def validate_credentials(cls, values: "AdminSessionCreateRequest") -> "AdminSessionCreateRequest":
+        if not values.token and not values.idToken:
+            raise ValueError("token 또는 idToken 중 하나는 반드시 필요합니다.")
+        return values
+
+
 class AdminSessionResponse(AdminBaseModel):
-    actor: str = Field(..., description="현재 인증된 운영 담당자 식별자.")
-    issuedAt: str = Field(..., description="세션이 확인된 시각 (ISO8601).")
-    tokenHint: Optional[str] = Field(default=None, description="마스킹된 관리자 토큰 힌트.")
+    actor: str = Field(..., description="Administrative actor label.")
+    issuedAt: str = Field(..., description="ISO8601 timestamp when the session was issued.")
+    tokenHint: Optional[str] = Field(default=None, description="Masked credential or session hint.")
+    sessionId: Optional[str] = Field(default=None, description="Server-managed admin session ID.")
+    expiresAt: Optional[str] = Field(default=None, description="ISO8601 expiration timestamp, if tracked.")
+
+
+class AdminSessionRevokeResponse(AdminBaseModel):
+    revoked: bool = Field(..., description="Whether the session was revoked in this call.")
+
+
+class AdminCredentialLoginRequest(AdminBaseModel):
+    email: str = Field(..., description="운영자 계정 이메일.")
+    password: str = Field(..., description="운영자 비밀번호.")
+    otp: Optional[str] = Field(default=None, description="TOTP 또는 일회용 MFA 코드.")
 
 
 __all__ = [
@@ -833,7 +857,10 @@ __all__ = [
     "AdminRagReindexRetryRequest",
     "AdminRagReindexRetryResponse",
     "AdminRagSourceSchema",
+    "AdminSessionCreateRequest",
     "AdminSessionResponse",
+    "AdminSessionRevokeResponse",
+    "AdminCredentialLoginRequest",
     "AdminSystemPromptListResponse",
     "AdminSystemPromptSchema",
     "AdminSystemPromptUpdateRequest",

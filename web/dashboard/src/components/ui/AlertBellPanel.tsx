@@ -93,7 +93,7 @@ function AlertBellHeader({ isPinned, onTogglePin, onClose }: AlertBellHeaderProp
 
 type AlertsSectionProps = AlertBellPanelProps["alerts"];
 
-function AlertsSection({ visibleAlerts, isLoading, isError, onNavigate }: AlertsSectionProps) {
+function AlertsSection({ visibleAlerts, readAlertIds, isLoading, isError, onNavigate }: AlertsSectionProps) {
   return (
     <section className="rounded-xl border border-border-light/70 bg-white/70 px-3 py-3 dark:border-border-dark/70 dark:bg-white/5">
       {isLoading ? (
@@ -116,32 +116,39 @@ function AlertsSection({ visibleAlerts, isLoading, isError, onNavigate }: Alerts
         </div>
       ) : (
         <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
-          {visibleAlerts.map((alert) => (
-            <button
-              key={alert.id}
-              type="button"
-              className="w-full rounded-lg border border-border-light/60 bg-white/80 px-3 py-2 text-left text-sm transition hover:border-primary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 dark:border-border-dark/60 dark:bg-white/10 dark:hover:border-primary.dark dark:hover:text-primary.dark"
-              onClick={() => onNavigate(alert)}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-medium leading-tight">{alert.title}</p>
-                  <p className="mt-1 text-xs text-text-secondaryLight dark:text-text-secondaryDark">{alert.body}</p>
+          {visibleAlerts.map((alert) => {
+            const isRead = readAlertIds.has(alert.id);
+            return (
+              <button
+                key={alert.id}
+                type="button"
+                className={clsx(
+                  "w-full rounded-lg border border-border-light/60 px-3 py-2 text-left text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 dark:border-border-dark/60",
+                  "hover:border-primary hover:text-primary dark:hover:border-primary.dark dark:hover:text-primary.dark",
+                  isRead ? "bg-white/40 text-text-secondaryLight dark:bg-white/5 dark:text-text-secondaryDark" : "bg-white/80 dark:bg-white/10",
+                )}
+                onClick={() => onNavigate(alert)}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium leading-tight">{alert.title}</p>
+                    <p className="mt-1 text-xs text-text-secondaryLight dark:text-text-secondaryDark">{alert.body}</p>
+                  </div>
+                  {alert.tone ? (
+                    <span
+                      className={clsx(
+                        "inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold",
+                        toneStyles[alert.tone],
+                      )}
+                    >
+                      {toneLabelMap[alert.tone] ?? alert.tone}
+                    </span>
+                  ) : null}
                 </div>
-                {alert.tone ? (
-                  <span
-                    className={clsx(
-                      "inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold",
-                      toneStyles[alert.tone],
-                    )}
-                  >
-                    {toneLabelMap[alert.tone] ?? alert.tone}
-                  </span>
-                ) : null}
-              </div>
-              <p className="mt-2 text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">{alert.timestamp}</p>
-            </button>
-          ))}
+                <p className="mt-2 text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">{alert.timestamp}</p>
+              </button>
+            );
+          })}
         </div>
       )}
     </section>

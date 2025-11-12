@@ -3,7 +3,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 
 import type { AlertPlanInfo, AlertRule, AlertChannel } from "@/lib/alertsApi";
 import { createMockQueryClient } from "@/testing/queryClient";
-import { usePlanStore, type PlanContextPayload, type PlanFeatureFlags, type PlanQuota } from "@/store/planStore";
+import { usePlanStore, type PlanContextPayload, type PlanFeatureFlags, type PlanMemoryFlags, type PlanQuota } from "@/store/planStore";
 import { useToastStore } from "@/store/toastStore";
 
 type PlanTier = PlanContextPayload["planTier"];
@@ -12,6 +12,7 @@ const baseFeatureFlags: PlanFeatureFlags = {
   searchCompare: true,
   searchAlerts: false,
   searchExport: false,
+  ragCore: false,
   evidenceInlinePdf: false,
   evidenceDiff: false,
   timelineFull: false,
@@ -107,7 +108,13 @@ export const createAlertRuleFixture = (overrides?: Partial<AlertRule>): AlertRul
 const makePlanContext = (tier: PlanTier): PlanContextPayload => {
   const searchExport = tier !== "free";
   const searchAlerts = tier !== "free";
+  const ragCore = tier !== "free";
   const timelineFull = tier === "enterprise";
+  const memoryFlags: PlanMemoryFlags = {
+    watchlist: tier !== "free",
+    digest: tier !== "free",
+    chat: tier !== "free",
+  };
   return {
     planTier: tier,
     expiresAt: null,
@@ -116,8 +123,10 @@ const makePlanContext = (tier: PlanTier): PlanContextPayload => {
       ...baseFeatureFlags,
       searchAlerts,
       searchExport,
+      ragCore,
       timelineFull,
     },
+    memoryFlags,
     quota: {
       ...baseQuota,
       peerExportRowLimit: tier === "enterprise" ? 500 : tier === "pro" ? 150 : 50,

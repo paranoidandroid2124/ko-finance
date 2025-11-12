@@ -1,40 +1,21 @@
 "use client";
 
 import clsx from "classnames";
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 
 import { useAdminSession } from "@/hooks/useAdminSession";
-import { resolveApiBase } from "@/lib/apiBase";
-import { ADMIN_SESSION_STORAGE_KEY } from "@/lib/adminApi";
+import { AdminApiError, AdminUnauthorizedError, loginAdminWithCredentials } from "@/lib/adminApi";
 import { useToastStore } from "@/store/toastStore";
-
-const COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 
 export function AdminTokenLoginCard() {
   const { isUnauthorized, refetch } = useAdminSession();
   const pushToast = useToastStore((state) => state.show);
 
-  const [token, setToken] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [otp, setOtp] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [hasStoredToken, setHasStoredToken] = useState(false);
-  const [autoRetryAttempted, setAutoRetryAttempted] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const stored = window.localStorage.getItem(ADMIN_SESSION_STORAGE_KEY);
-    setHasStoredToken(Boolean(stored));
-  }, [isUnauthorized]);
-
-  useEffect(() => {
-    if (!isUnauthorized || !hasStoredToken || autoRetryAttempted) {
-      return;
-    }
-    setAutoRetryAttempted(true);
-    refetch({ throwOnError: false }).catch(() => undefined);
-  }, [isUnauthorized, hasStoredToken, autoRetryAttempted, refetch]);
 
   if (!isUnauthorized) {
     return null;
@@ -46,9 +27,8 @@ export function AdminTokenLoginCard() {
       return;
     }
 
-    const trimmedToken = token.trim();
-    if (!trimmedToken) {
-      setErrorMessage("운영 토큰을 입력해 주세요. 받은 값이 없다면 운영 채널에 요청해 주세요.");
+    if (!email || !password) {
+      setErrorMessage("이메일과 비밀번호를 모두 입력해 주세요.");
       return;
     }
 
@@ -56,65 +36,38 @@ export function AdminTokenLoginCard() {
     setErrorMessage(null);
 
     try {
-      const baseUrl = resolveApiBase();
-      const response = await fetch(`${baseUrl}/api/v1/admin/session`, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${trimmedToken}`,
-        },
-        credentials: "include",
-        cache: "no-store",
+      await loginAdminWithCredentials({
+        email: email.trim(),
+        password,
+        otp: otp ? otp.trim() : undefined,
       });
-
-      if (!response.ok) {
-        const friendly =
-          response.status === 403
-            ? "토큰이 맞는지 다시 확인해볼까요? 필요하면 운영 Slack 채널로 새 토큰을 요청해 주세요."
-            : "운영 세션을 확인하는 중에 문제가 있었어요. 잠시 후 다시 시도해 주세요.";
-        setErrorMessage(friendly);
-        pushToast({
-          id: `admin/token-login/error/${Date.now()}`,
-          title: "토큰 확인이 필요해요",
-          message: friendly,
-          intent: "warning",
-        });
-        return;
-      }
-
-      await response.json();
-
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(ADMIN_SESSION_STORAGE_KEY, trimmedToken);
-      }
-
-      const cookieParts = [
-        `admin_session_token=${encodeURIComponent(trimmedToken)}`,
-        "Path=/",
-        "SameSite=Lax",
-        `Max-Age=${COOKIE_MAX_AGE_SECONDS}`,
-      ];
-      if (typeof window !== "undefined" && window.location.protocol === "https:") {
-        cookieParts.push("Secure");
-      }
-      document.cookie = cookieParts.join("; ");
-
       pushToast({
         id: `admin/token-login/success/${Date.now()}`,
         title: "운영 세션이 준비됐어요",
         message: "감사 로그와 플랜 조정 도구를 바로 열어둘게요.",
         intent: "success",
       });
-
-      setToken("");
-      setHasStoredToken(true);
-      setAutoRetryAttempted(false);
+      setPassword("");
+      setOtp("");
       await refetch({ throwOnError: false });
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? `세션을 확인하지 못했어요: ${error.message}`
-          : "세션 확인 중 알 수 없는 오류가 발생했어요.";
+      let message = "세션을 확인하지 못했어요.";
+      if (error instanceof AdminApiError || error instanceof AdminUnauthorizedError) {
+        message = error.message;
+      } else if (error instanceof Error) {
+        try {
+          const parsed = JSON.parse(error.message);
+          const detailMessage =
+            typeof parsed?.detail?.message === "string"
+              ? parsed.detail.message
+              : typeof parsed?.message === "string"
+                ? parsed.message
+                : null;
+          message = detailMessage ?? `세션을 확인하지 못했어요: ${error.message}`;
+        } catch {
+          message = `세션을 확인하지 못했어요: ${error.message}`;
+        }
+      }
       setErrorMessage(message);
       pushToast({
         id: `admin/token-login/unexpected/${Date.now()}`,
@@ -127,60 +80,65 @@ export function AdminTokenLoginCard() {
     }
   };
 
-  const handleClearStoredToken = () => {
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem(ADMIN_SESSION_STORAGE_KEY);
-      document.cookie = "admin_session_token=; Path=/; Max-Age=0; SameSite=Lax";
-    }
-    setHasStoredToken(false);
-    setAutoRetryAttempted(false);
-    pushToast({
-      id: `admin/token-login/cleared/${Date.now()}`,
-      title: "저장된 토큰을 지웠어요",
-      message: "새 토큰으로 다시 로그인하면 쿠키가 갱신돼요.",
-      intent: "info",
-    });
-  };
-
   return (
     <section className="mb-6 rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card dark:border-border-dark dark:bg-background-cardDark">
       <header className="space-y-2">
         <h2 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">운영 전용 로그인</h2>
         <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
-          안녕하세요 운영팀 여러분, 받고 계신 관리자 토큰을 입력하면 감사 로그와 플랜 도구가 바로 열립니다.
+          운영자 이메일·비밀번호와 MFA 코드를 입력하면 서버가 HttpOnly 쿠키로 세션을 개설합니다.
         </p>
-        {hasStoredToken ? (
-          <p className="text-xs text-text-tertiaryLight dark:text-text-tertiaryDark">
-            저장된 토큰으로 자동 인증을 시도했어요. 문제가 계속되면 아래에서 토큰을 초기화하고 새 값을 입력해 주세요.
-          </p>
-        ) : null}
       </header>
 
       <form className="mt-4 space-y-4" onSubmit={handleSubmit} aria-busy={isSubmitting}>
         <div className="space-y-2">
-          <label className="text-sm font-medium text-text-primaryLight dark:text-text-primaryDark" htmlFor="admin-token">
-            관리자 토큰
+          <label className="text-sm font-medium text-text-primaryLight dark:text-text-primaryDark" htmlFor="admin-email">
+            운영자 이메일
           </label>
           <input
-            id="admin-token"
-            name="admin-token"
-            type="password"
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
-            placeholder="예: ops_live_xxx"
-            autoComplete="off"
+            id="admin-email"
+            name="admin-email"
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="ops@your-company.com"
+            autoComplete="email"
             aria-invalid={errorMessage ? "true" : "false"}
-            aria-describedby={errorMessage ? "admin-token-error" : undefined}
-            className={clsx(
-              "w-full rounded-lg border bg-background-base px-3 py-2 text-sm focus:border-primary focus:outline-none dark:bg-background-cardDark",
-              errorMessage
-                ? "border-amber-400 text-amber-900 placeholder:text-amber-400 dark:border-amber-500 dark:text-amber-200"
-                : "border-border-light text-text-primaryLight placeholder:text-text-tertiaryLight dark:border-border-dark dark:text-text-primaryDark dark:placeholder:text-text-tertiaryDark",
-            )}
+            className="w-full rounded-lg border border-border-light bg-background-base px-3 py-2 text-sm focus:border-primary focus:outline-none dark:border-border-dark dark:bg-background-cardDark dark:text-text-primaryDark"
           />
-          <p className="text-xs text-text-tertiaryLight dark:text-text-tertiaryDark">
-            입력하신 토큰은 이 브라우저의 쿠키로만 저장되고, 세션 만료 전까지 다시 묻지 않아요.
-          </p>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-text-primaryLight dark:text-text-primaryDark" htmlFor="admin-password">
+            비밀번호
+          </label>
+          <input
+            id="admin-password"
+            name="admin-password"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="••••••"
+            autoComplete="current-password"
+            className="w-full rounded-lg border border-border-light bg-background-base px-3 py-2 text-sm focus:border-primary focus:outline-none dark:border-border-dark dark:bg-background-cardDark dark:text-text-primaryDark"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-text-primaryLight dark:text-text-primaryDark" htmlFor="admin-otp">
+            MFA 코드(6자리)
+          </label>
+          <input
+            id="admin-otp"
+            name="admin-otp"
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={otp}
+            onChange={(event) => setOtp(event.target.value)}
+            placeholder="123456"
+            className="w-full rounded-lg border border-border-light bg-background-base px-3 py-2 text-sm focus:border-primary focus:outline-none dark:border-border-dark dark:bg-background-cardDark dark:text-text-primaryDark"
+          />
+          <p className="text-xs text-text-tertiaryLight dark:text-text-tertiaryDark">TOTP 앱(예: Google Authenticator)에서 발급받은 코드를 입력하세요.</p>
         </div>
 
         {errorMessage ? (
@@ -194,15 +152,6 @@ export function AdminTokenLoginCard() {
         ) : null}
 
         <div className="flex flex-wrap items-center justify-end gap-3">
-          {hasStoredToken ? (
-            <button
-              type="button"
-              onClick={handleClearStoredToken}
-              className="inline-flex items-center rounded-lg border border-border-light px-4 py-2 text-sm font-semibold text-text-secondaryLight transition hover:bg-border-light/40 dark:border-border-dark dark:text-text-secondaryDark dark:hover:bg-border-dark/40"
-            >
-              저장된 토큰 초기화
-            </button>
-          ) : null}
           <button
             type="submit"
             disabled={isSubmitting}

@@ -66,4 +66,10 @@ app.conf.beat_schedule = {
         "args": (),
         "kwargs": {},
     },
+    "lightmem-health-monitor": {
+        "task": "health.monitor_lightmem",
+        "schedule": crontab(minute="*/10"),
+        "args": (),
+        "kwargs": {},
+    },
 }

@@ -6,6 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from services import plan_config_store
 from web.routers.plan import router as plan_router
 
 ADMIN_TOKEN = "test-admin-token"
@@ -21,7 +22,18 @@ def plan_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def plan_api_client(plan_env: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+def plan_config_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    config_path = tmp_path / "plan_config.json"
+    monkeypatch.setenv("PLAN_CONFIG_FILE", str(config_path))
+    plan_config_store.clear_plan_config_cache()
+    try:
+        yield config_path
+    finally:
+        plan_config_store.clear_plan_config_cache()
+
+
+@pytest.fixture()
+def plan_api_client(plan_env: Path, plan_config_file: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     """Create a FastAPI test client for the plan router with configurable env."""
     monkeypatch.setenv("DEFAULT_PLAN_TIER", "pro")
     monkeypatch.setenv("DEFAULT_PLAN_ENTITLEMENTS", "search.export")
@@ -48,7 +60,14 @@ def test_plan_context_uses_environment_defaults(plan_api_client: TestClient):
     payload = response.json()
     assert payload["planTier"] == "pro"
     # base entitlements for pro + env override should be present
-    assert set(payload["entitlements"]) >= {"search.compare", "search.alerts", "evidence.inline_pdf", "search.export"}
+    assert set(payload["entitlements"]) >= {
+        "search.compare",
+        "search.alerts",
+        "search.export",
+        "evidence.inline_pdf",
+        "rag.core",
+    }
+    assert payload["featureFlags"]["ragCore"] is True
     assert payload["expiresAt"] == "2025-12-31T00:00:00+00:00"
     assert payload["checkoutRequested"] is False
 
@@ -238,3 +257,50 @@ def test_plan_patch_preserves_trial_state(plan_api_client: TestClient, plan_env:
     assert saved["trial"]["used"] is True
     assert saved["trial"]["startedAt"] is not None
     assert saved["trial"]["endsAt"] is not None
+
+
+def test_plan_presets_update(plan_api_client: TestClient, plan_config_file: Path):
+    payload = {
+        "tiers": [
+            {
+                "tier": "free",
+                "entitlements": ["search.alerts"],
+                "quota": {
+                    "chatRequestsPerDay": 10,
+                    "ragTopK": 2,
+                    "selfCheckEnabled": False,
+                    "peerExportRowLimit": 0,
+                },
+            },
+            {
+                "tier": "pro",
+                "entitlements": ["search.compare", "search.alerts", "search.export"],
+                "quota": {
+                    "chatRequestsPerDay": 600,
+                    "ragTopK": 8,
+                    "selfCheckEnabled": True,
+                    "peerExportRowLimit": 200,
+                },
+            },
+        ],
+        "updatedBy": "ops@kfinance.ai",
+        "note": "alert builder free tier 허용",
+    }
+    response = plan_api_client.put("/api/v1/plan/presets", json=payload, headers=ADMIN_AUTH_HEADER)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    tiers = {entry["tier"]: entry for entry in body["presets"]}
+    assert tiers["free"]["entitlements"] == ["search.alerts"]
+    assert tiers["pro"]["quota"]["chatRequestsPerDay"] == 600
+    assert set(tiers["pro"]["entitlements"]) == {"search.compare", "search.alerts", "search.export"}
+
+    reread = plan_api_client.get("/api/v1/plan/presets")
+    assert reread.status_code == 200
+    reread_body = reread.json()
+    pro_entry = next(item for item in reread_body["presets"] if item["tier"] == "pro")
+    assert set(pro_entry["entitlements"]) == {"search.compare", "search.alerts", "search.export"}
+    assert pro_entry["quota"]["ragTopK"] == 8
+
+    saved = json.loads(plan_config_file.read_text(encoding="utf-8"))
+    assert saved["tiers"]["pro"]["quota"]["peerExportRowLimit"] == 200
+    assert saved["updated_by"] == "ops@kfinance.ai"

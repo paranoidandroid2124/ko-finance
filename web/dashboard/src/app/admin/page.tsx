@@ -282,7 +282,9 @@ export default function AdminPage() {
       title="운영 센터"
       description="친근한 사회적 기업 톤으로 플랜·RAG·결제 파이프라인을 살피고 조정할 수 있는 관리자 공간이에요."
     >
-      <AdminTokenLoginCard />
+      <div className="mb-6">
+        <AdminTokenLoginCard />
+      </div>
 
       <div className="grid gap-6 xl:grid-cols-[2fr,1fr]">
         <PlanQuickActionsPanel />

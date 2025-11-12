@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from functools import lru_cache
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Mapping, MutableMapping, Optional, Sequence
@@ -13,27 +14,13 @@ from fastapi import Request
 
 from core.env import env_str
 from services.admin_audit import append_audit_log
+from services import plan_config_store
 
 logger = logging.getLogger(__name__)
 
 PlanTier = Literal["free", "pro", "enterprise"]
 
 SUPPORTED_PLAN_TIERS: Sequence[str] = ("free", "pro", "enterprise")
-
-PLAN_BASE_ENTITLEMENTS: Mapping[str, frozenset[str]] = {
-    "free": frozenset(),
-    "pro": frozenset({"search.compare", "search.alerts", "evidence.inline_pdf"}),
-    "enterprise": frozenset(
-        {
-            "search.compare",
-            "search.alerts",
-            "search.export",
-            "evidence.inline_pdf",
-            "evidence.diff",
-            "timeline.full",
-        }
-    ),
-}
 
 
 @dataclass(slots=True)
@@ -96,18 +83,6 @@ class PlanTrialState:
         }
 
 
-PLAN_QUOTA_PRESETS: Mapping[str, PlanQuota] = {
-    "free": PlanQuota(chat_requests_per_day=20, rag_top_k=4, self_check_enabled=False, peer_export_row_limit=0),
-    "pro": PlanQuota(chat_requests_per_day=500, rag_top_k=6, self_check_enabled=True, peer_export_row_limit=100),
-    "enterprise": PlanQuota(
-        chat_requests_per_day=None,
-        rag_top_k=10,
-        self_check_enabled=True,
-        peer_export_row_limit=None,
-    ),
-}
-
-
 @dataclass(slots=True)
 class PersistedPlanSettings:
     """Disk-backed plan defaults maintained through the settings API."""
@@ -158,6 +133,7 @@ class PlanContext:
             "search.export": self.allows("search.export"),
             "evidence.inline_pdf": self.allows("evidence.inline_pdf"),
             "evidence.diff": self.allows("evidence.diff"),
+            "rag.core": self.allows("rag.core"),
             "timeline.full": self.allows("timeline.full"),
         }
 
@@ -184,6 +160,26 @@ class PlanContext:
 _DEFAULT_PLAN_SETTINGS_PATH = Path("uploads") / "admin" / "plan_settings.json"
 _PLAN_SETTINGS_CACHE: Optional[PersistedPlanSettings] = None
 _PLAN_SETTINGS_CACHE_PATH: Optional[Path] = None
+
+
+@lru_cache(maxsize=None)
+def _base_entitlements_for_tier(tier: PlanTier) -> frozenset[str]:
+    config = plan_config_store.get_tier_config(tier)
+    entries = config.get("entitlements") or []
+    cleaned = [str(entry).strip() for entry in entries if str(entry).strip()]
+    return frozenset(cleaned)
+
+
+@lru_cache(maxsize=None)
+def _base_quota_for_tier(tier: PlanTier) -> PlanQuota:
+    config = plan_config_store.get_tier_config(tier)
+    payload = config.get("quota") or {}
+    return PlanQuota(
+        chat_requests_per_day=payload.get("chatRequestsPerDay"),
+        rag_top_k=payload.get("ragTopK"),
+        self_check_enabled=bool(payload.get("selfCheckEnabled", False)),
+        peer_export_row_limit=payload.get("peerExportRowLimit"),
+    )
 
 
 def _normalize_plan_tier(value: Optional[str]) -> PlanTier:
@@ -253,6 +249,7 @@ def _feature_flags_from_entitlements(entitlements: Iterable[str]) -> Dict[str, b
         "search.export": "search.export" in ent_set,
         "evidence.inline_pdf": "evidence.inline_pdf" in ent_set,
         "evidence.diff": "evidence.diff" in ent_set,
+        "rag.core": "rag.core" in ent_set,
         "timeline.full": "timeline.full" in ent_set,
     }
 
@@ -411,11 +408,8 @@ def _load_plan_settings(*, reload: bool = False) -> Optional[PersistedPlanSettin
         seen.add(normalized)
 
     quota_payload = payload.get("quota") or {}
-    quota = _apply_quota_overrides(
-        PLAN_QUOTA_PRESETS.get(tier, PLAN_QUOTA_PRESETS["free"]),
-        quota_payload,
-        strict=False,
-    )
+    base_quota = _base_quota_for_tier(tier)
+    quota = _apply_quota_overrides(base_quota, quota_payload, strict=False)
 
     memory_flags = _parse_memory_flags(payload.get("memoryFlags"))
     trial_state = _parse_trial_state(payload.get("trial"))
@@ -495,7 +489,7 @@ def _build_plan_context(
     if settings and not has_header_override and settings.entitlements and not trial_active:
         entitlements = set(settings.entitlements)
     else:
-        entitlements = set(PLAN_BASE_ENTITLEMENTS.get(effective_tier, PLAN_BASE_ENTITLEMENTS["free"]))
+        entitlements = set(_base_entitlements_for_tier(effective_tier))
     entitlements.update(env_entitlements)
     entitlements.update(header_entitlement_set)
 
@@ -509,7 +503,7 @@ def _build_plan_context(
     else:
         expires_at = _parse_iso_datetime(env_str("DEFAULT_PLAN_EXPIRES_AT"))
 
-    quota = PLAN_QUOTA_PRESETS.get(effective_tier, PLAN_QUOTA_PRESETS["free"])
+    quota = _base_quota_for_tier(effective_tier)
     if settings and not has_header_override:
         quota = _apply_quota_overrides(quota, settings.quota.to_dict())
 
@@ -588,7 +582,7 @@ def update_plan_context(
         if expires_dt is None:
             raise ValueError("만료일 포맷이 올바르지 않습니다. ISO8601 형식으로 입력해주세요.")
 
-    base_quota = PLAN_QUOTA_PRESETS.get(tier, PLAN_QUOTA_PRESETS["free"])
+    base_quota = _base_quota_for_tier(tier)
     try:
         effective_quota = _apply_quota_overrides(base_quota, quota, strict=True)
     except ValueError as exc:
@@ -654,15 +648,22 @@ def list_plan_presets() -> Sequence[Mapping[str, Any]]:
     """Return canonical plan presets (entitlements, feature flags, quotas) for each tier."""
 
     presets: list[Mapping[str, Any]] = []
+    tier_configs = plan_config_store.list_tier_configs()
     for tier in SUPPORTED_PLAN_TIERS:
-        entitlements = sorted(PLAN_BASE_ENTITLEMENTS.get(tier, ()))
-        quota = PLAN_QUOTA_PRESETS.get(tier, PLAN_QUOTA_PRESETS["free"])
+        config = tier_configs.get(tier) or plan_config_store.get_tier_config(tier)
+        entitlements = sorted(config.get("entitlements") or [])
+        quota_payload = config.get("quota") or {}
         presets.append(
             {
                 "tier": tier,
                 "entitlements": entitlements,
                 "feature_flags": _feature_flags_from_entitlements(entitlements),
-                "quota": quota.to_dict(),
+                "quota": {
+                    "chatRequestsPerDay": quota_payload.get("chatRequestsPerDay"),
+                    "ragTopK": quota_payload.get("ragTopK"),
+                    "selfCheckEnabled": bool(quota_payload.get("selfCheckEnabled", False)),
+                    "peerExportRowLimit": quota_payload.get("peerExportRowLimit"),
+                },
             }
         )
     return presets
@@ -749,7 +750,7 @@ def apply_checkout_upgrade(
 ) -> PlanContext:
     """Upgrade the persisted plan defaults after a successful checkout."""
     existing = _load_plan_settings()
-    base_entitlements = set(PLAN_BASE_ENTITLEMENTS.get(target_tier, PLAN_BASE_ENTITLEMENTS["free"]))
+    base_entitlements = set(_base_entitlements_for_tier(target_tier))
     if existing and existing.entitlements:
         base_entitlements.update(existing.entitlements)
     entitlements = sorted(base_entitlements)
@@ -757,7 +758,7 @@ def apply_checkout_upgrade(
     if existing and existing.plan_tier == target_tier:
         quota_payload = existing.quota.to_dict()
     else:
-        quota_payload = PLAN_QUOTA_PRESETS.get(target_tier, PLAN_QUOTA_PRESETS["free"]).to_dict()
+        quota_payload = _base_quota_for_tier(target_tier).to_dict()
 
     expires_str = existing.expires_at.isoformat() if existing and existing.expires_at else None
 

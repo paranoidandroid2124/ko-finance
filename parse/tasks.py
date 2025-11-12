@@ -39,6 +39,7 @@ from models.filing import (
 from models.digest import DailyDigestLog
 from models.news import NewsObservation, NewsSignal, NewsWindowAggregate
 from services.memory.offline_pipeline import run_long_term_update
+from services.memory.health import lightmem_health_summary
 from models.evidence import EvidenceSnapshot
 from models.summary import Summary
 from parse.pdf_parser import extract_chunks
@@ -62,7 +63,7 @@ from services.lightmem_config import DIGEST_RATE_LIMIT_PER_MINUTE
 from services.aggregation.sector_classifier import assign_article_to_sector
 from services.aggregation.sector_metrics import compute_sector_daily_metrics, compute_sector_window_metrics
 from services.aggregation.news_metrics import compute_news_window_metrics
-from services.notification_service import send_telegram_alert
+from services.notification_service import dispatch_notification, send_telegram_alert
 from services.reliability.source_reliability import score_article as score_source_reliability
 from services.aggregation.news_statistics import summarize_news_signals, build_top_topics
 from services.daily_brief_service import (
@@ -76,6 +77,7 @@ from services.daily_brief_service import (
     render_daily_brief_document,
 )
 from services.news_text import sanitize_news_summary
+from services.news_ticker_resolver import resolve_news_ticker
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -92,6 +94,15 @@ class StageResult:
     critical: bool
     success: bool
     error: Optional[str] = None
+    skipped: bool = False
+
+
+class StageSkip(Exception):
+    """Signal that a stage should be skipped without failing the pipeline."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 def _snapshot_hash(payload: Dict[str, Any]) -> str:
@@ -190,6 +201,13 @@ SUMMARY_TRIGGER_MESSAGES = env_int("CHAT_SUMMARY_TRIGGER_MESSAGES", 20, minimum=
 NEWS_FETCH_LIMIT = env_int("NEWS_FETCH_LIMIT", 5, minimum=1)
 NEWS_SUMMARY_MAX_CHARS = env_int("NEWS_SUMMARY_MAX_CHARS", 480, minimum=120)
 NEWS_RETENTION_DAYS = env_int("NEWS_RETENTION_DAYS", 45, minimum=7)
+LIGHTMEM_HEALTH_ALERT_ENABLED = env_bool("LIGHTMEM_HEALTH_ALERT_ENABLED", True)
+LIGHTMEM_HEALTH_ALERT_CHANNEL = env_str("LIGHTMEM_HEALTH_ALERT_CHANNEL", "slack")
+_LIGHTMEM_HEALTH_ALERT_TARGETS = [
+    target.strip()
+    for target in (env_str("LIGHTMEM_HEALTH_ALERT_TARGETS", "") or "").split(",")
+    if target.strip()
+]
 
 CATEGORY_TRANSLATIONS: Dict[str, str] = {
     "capital_increase": "증자",
@@ -499,6 +517,55 @@ def health_check() -> str:
     return "ok"
 
 
+def _format_lightmem_health_markdown(summary: Dict[str, Any]) -> str:
+    lines = [f"*Status*: `{summary.get('status', 'unknown')}`"]
+    checks = summary.get("checks") or {}
+    for name, result in checks.items():
+        status = result.get("status", "unknown")
+        pieces: List[str] = []
+        latency = result.get("latencyMs")
+        if latency is not None:
+            pieces.append(f"{latency}ms")
+        detail = result.get("detail")
+        if detail:
+            pieces.append(str(detail))
+        collection = result.get("collection")
+        if collection:
+            pieces.append(str(collection))
+        info = f" ({', '.join(pieces)})" if pieces else ""
+        lines.append(f"- `{name}`: *{status}*{info}")
+    return "\n".join(lines)
+
+
+@shared_task(name="health.monitor_lightmem")
+def monitor_lightmem_health() -> Dict[str, Any]:
+    """Poll LightMem health endpoints and alert on failures."""
+
+    summary = lightmem_health_summary()
+    logger.info("LightMem health summary: %s", summary)
+    if not LIGHTMEM_HEALTH_ALERT_ENABLED:
+        return summary
+
+    status = summary.get("status")
+    if status == "ok":
+        return summary
+
+    message = ":rotating_light: *LightMem health alert*\n" + _format_lightmem_health_markdown(summary)
+    try:
+        dispatch_notification(
+            LIGHTMEM_HEALTH_ALERT_CHANNEL or "slack",
+            message,
+            targets=_LIGHTMEM_HEALTH_ALERT_TARGETS or None,
+            metadata={
+                "subject": f"LightMem health status: {status}",
+                "markdown": message,
+            },
+        )
+    except Exception as exc:  # pragma: no cover - alert best-effort
+        logger.warning("Failed to dispatch LightMem health alert: %s", exc, exc_info=True)
+    return summary
+
+
 @shared_task(name="m1.seed_recent_filings")
 def seed_recent_filings_task(days_back: int = 1) -> int:
     logger.info("Running DART seeding task for the last %d day(s).", days_back)
@@ -534,6 +601,18 @@ def process_filing(filing_id: str) -> str:
         def run_stage(name: str, func: Callable[[], None], *, critical: bool) -> bool:
             try:
                 func()
+            except StageSkip as exc:
+                db.rollback()
+                logger.info(
+                    "Filing %s stage '%s' skipped: %s",
+                    filing.id,
+                    name,
+                    exc,
+                )
+                stage_results.append(
+                    StageResult(name=name, critical=critical, success=False, error=str(exc), skipped=True)
+                )
+                return False
             except Exception as exc:
                 db.rollback()
                 level = logging.ERROR if critical else logging.WARNING
@@ -558,7 +637,8 @@ def process_filing(filing_id: str) -> str:
             pdf_path = _ensure_pdf_path(filing)
             xml_paths = _load_xml_paths(filing)
             if not pdf_path and not xml_paths:
-                raise RuntimeError("No PDF or XML sources found for ingestion.")
+                logger.warning("Filing %s skipped: no PDF or XML sources available.", filing.id)
+                raise StageSkip("No PDF or XML sources found for ingestion.")
 
             extracted: List[Dict[str, Any]] = []
             if pdf_path:
@@ -598,7 +678,8 @@ def process_filing(filing_id: str) -> str:
             if xml_paths:
                 extracted.extend(extract_chunks_from_xml(xml_paths))
             if not extracted:
-                raise RuntimeError("No chunks could be extracted from the available sources.")
+                logger.warning("Filing %s skipped: extraction yielded no chunks.", filing.id)
+                raise StageSkip("No chunks could be extracted from the available sources.")
 
             _save_chunks(filing, extracted, db, commit=False)
             vector_metadata = _build_vector_metadata(filing)
@@ -690,8 +771,15 @@ def process_filing(filing_id: str) -> str:
             run_stage("extract_facts", facts_stage, critical=False)
             run_stage("summarize_and_notify", summary_stage, critical=False)
 
+        def _result_label(result: StageResult) -> str:
+            if result.success:
+                return "ok"
+            if result.skipped:
+                return "skip"
+            return "fail"
+
         stage_summary = ", ".join(
-            f"{result.name}={'ok' if result.success else 'fail'}" for result in stage_results
+            f"{result.name}={_result_label(result)}" for result in stage_results
         ) or "no stages executed"
         logger.info(
             "Filing %s processing summary (chunks=%s): %s",
@@ -700,8 +788,17 @@ def process_filing(filing_id: str) -> str:
             stage_summary,
         )
 
-        critical_failures = [result for result in stage_results if result.critical and not result.success]
-        non_critical_failures = [result for result in stage_results if not result.success]
+        skipped_results = [result for result in stage_results if result.skipped]
+        critical_failures = [
+            result for result in stage_results if result.critical and not result.success and not result.skipped
+        ]
+        non_critical_failures = [result for result in stage_results if not result.success and not result.skipped]
+
+        if skipped_results:
+            filing.status = STATUS_PARTIAL
+            filing.analysis_status = ANALYSIS_PARTIAL
+            db.commit()
+            return "skipped"
 
         if critical_failures:
             filing.status = STATUS_FAILED
@@ -798,7 +895,22 @@ def process_news_article(article_payload: Any) -> str:
             return str(existing.id)
 
         analysis = llm_service.analyze_news_article(article.original_text)
-        validated = llm_service.validate_news_analysis_result(analysis)
+        if analysis.get("error"):
+            logger.warning(
+                "Skipping news article %s due to analysis error: %s",
+                article.url,
+                analysis.get("details") or analysis.get("error"),
+            )
+            return "analysis_error"
+
+        validated = analysis if analysis.get("validated") else llm_service.validate_news_analysis_result(analysis)
+        if validated.get("error"):
+            logger.warning(
+                "Skipping news article %s due to validation error: %s",
+                article.url,
+                validated.get("details") or validated.get("error"),
+            )
+            return "analysis_error"
 
         sentiment = validated.get("sentiment")
         topics = validated.get("topics") or []
@@ -811,8 +923,18 @@ def process_news_article(article_payload: Any) -> str:
             max_chars=max(120, NEWS_SUMMARY_MAX_CHARS),
         )
 
+        resolved_ticker = article.ticker
+        if not resolved_ticker:
+            resolved_ticker = resolve_news_ticker(
+                db,
+                headline=article.headline,
+                summary=sanitized_summary,
+                body=(article.original_text[:4000] if getattr(article, "original_text", None) else None),
+                topics=topics,
+            )
+
         news_signal = NewsSignal(
-            ticker=article.ticker,
+            ticker=resolved_ticker,
             source=article.source,
             url=article.url,
             headline=article.headline,

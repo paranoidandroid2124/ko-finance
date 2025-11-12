@@ -21,6 +21,8 @@ from schemas.api.event_study import (
     EventStudySummaryItem,
     EventStudySummaryResponse,
 )
+from services.plan_service import PlanContext
+from web.deps import require_plan_feature
 
 router = APIRouter(prefix="/event-study", tags=["Event Study"])
 
@@ -72,6 +74,7 @@ def get_event_study_summary(
     event_types: Optional[List[str]] = Query(default=None, alias="eventTypes"),
     cap_buckets: Optional[List[str]] = Query(default=None, alias="capBuckets"),
     db: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature("timeline.full")),
 ) -> EventStudySummaryResponse:
     if start >= end:
         raise HTTPException(status_code=400, detail="start must be less than end")
@@ -156,6 +159,7 @@ def list_event_study_events(
     cap_buckets: Optional[List[str]] = Query(default=None, alias="capBuckets"),
     search: Optional[str] = Query(default=None, description="Keyword applied to corp name/ticker."),
     db: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature("timeline.full")),
 ) -> EventStudyEventsResponse:
     normalized_types = _normalize_str_list(event_types)
     normalized_markets = _normalize_str_list(markets)
@@ -252,6 +256,7 @@ def get_event_detail(
     start: int = Query(-5),
     end: int = Query(20),
     db: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature("timeline.full")),
 ) -> EventStudyEventDetail:
     if start >= end:
         raise HTTPException(status_code=400, detail="start must be less than end")

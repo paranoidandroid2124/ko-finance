@@ -5,11 +5,12 @@ const BASE_URL = process.env.PLAYWRIGHT_TEST_BASE_URL ?? "http://localhost:3000"
 const PLAN_CONTEXT_RESPONSE = {
   planTier: "pro",
   expiresAt: "2026-12-31T00:00:00+00:00",
-  entitlements: ["search.compare", "search.alerts", "evidence.inline_pdf"],
+  entitlements: ["search.compare", "search.alerts", "search.export", "evidence.inline_pdf", "rag.core"],
   featureFlags: {
     searchCompare: true,
     searchAlerts: true,
     searchExport: false,
+    ragCore: true,
     evidenceInlinePdf: true,
     evidenceDiff: false,
     timelineFull: false,

@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import type { ReactNode } from "react";
 
 type Props = {
   title: string;
   subtitle?: string;
   children: ReactNode;
-  backLink?: { href: string; label: string };
+  backLink?: { href: Route; label: string };
 };
 
 export function AuthPageShell({ title, subtitle, children, backLink }: Props) {

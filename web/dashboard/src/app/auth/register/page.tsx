@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import { FormEvent, useState } from "react";
 
 import AuthPageShell from "@/components/auth/AuthPageShell";
 import OAuthButtonGroup from "@/components/auth/OAuthButtonGroup";
 import { formatAuthError } from "@/lib/authError";
 import { AuthApiError, postAuth } from "@/lib/authClient";
+
+const TERMS_ROUTE = "/docs/policy" as Route;
 
 export default function RegisterPage() {
   const [submitting, setSubmitting] = useState(false);
@@ -97,7 +100,7 @@ export default function RegisterPage() {
             disabled={submitting}
           />
           <span>
-            <Link href="/docs/policy" className="text-blue-300 hover:text-blue-200">
+            <Link href={TERMS_ROUTE} className="text-blue-300 hover:text-blue-200">
               이용약관
             </Link>
             과 개인정보 처리방침에 동의합니다.

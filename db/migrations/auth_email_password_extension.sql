@@ -13,9 +13,19 @@ ALTER TABLE "users"
     ADD COLUMN IF NOT EXISTS mfa_enrolled BOOLEAN NOT NULL DEFAULT FALSE,
     ADD COLUMN IF NOT EXISTS mfa_secret BYTEA;
 
-ALTER TABLE "users"
-    ADD CONSTRAINT IF NOT EXISTS chk_mfa_consistency
-    CHECK (mfa_secret IS NULL OR mfa_enrolled IS TRUE);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'chk_mfa_consistency'
+          AND conrelid = 'users'::regclass
+    ) THEN
+        ALTER TABLE "users"
+            ADD CONSTRAINT chk_mfa_consistency
+            CHECK (mfa_secret IS NULL OR mfa_enrolled IS TRUE);
+    END IF;
+END $$;
 
 -- backfill email verification timestamp from legacy column if it exists
 DO $$
@@ -77,7 +87,7 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
 
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_lookup
     ON auth_tokens (token_type, COALESCE(token, token_hash))
-    WHERE used_at IS NULL AND expires_at > NOW();
+    WHERE used_at IS NULL;
 
 -- 3. session_tokens table for refresh-token tracking
 CREATE TABLE IF NOT EXISTS session_tokens (
@@ -97,7 +107,7 @@ CREATE TABLE IF NOT EXISTS session_tokens (
 
 CREATE INDEX IF NOT EXISTS idx_session_tokens_user_active
     ON session_tokens (user_id)
-    WHERE revoked_at IS NULL AND expires_at > NOW();
+    WHERE revoked_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_session_tokens_refresh_jti
     ON session_tokens (refresh_jti);

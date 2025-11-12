@@ -15,7 +15,7 @@ from core.env import env_str
 from models.event_study import EventRecord, EventStudyResult, EventSummary, Price
 from models.security_metadata import SecurityMetadata
 from models.filing import Filing
-from services.event_extractor import EventAttributes, extract_event_attributes
+from services.event_extractor import EventAttributes, extract_event_attributes, get_event_rule_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,21 @@ _EVENT_TYPES: Tuple[str, ...] = (
     "CONTRACT",
 )
 _CAP_BUCKETS: Tuple[str, ...] = ("ALL", "LARGE", "MID", "SMALL")
+
+
+_DOMAIN_EVENT_WINDOWS: Dict[str, Tuple[int, int]] = {
+    "REGULATORY": (-1, 3),
+    "LEGAL": (-1, 5),
+    "ESG": (0, 3),
+    "CYBER": (0, 3),
+    "GUIDANCE": (-1, 1),
+    "FIN": (0, 3),
+    "PRODUCT": (0, 3),
+    "SUPPLY": (0, 5),
+    "CREDIT": (0, 3),
+    "MARKET": (0, 1),
+}
+_MARKET_CLOSE_HOUR = 16
 
 
 def ingest_events_from_filings(
@@ -64,13 +79,22 @@ def ingest_events_from_filings(
         if existing:
             continue
 
+        event_day = filing.filed_at.date() if filing.filed_at else None
+        if (
+            event_day
+            and filing.filed_at
+            and attributes.timing_rule == "AFTER_CLOSE_DPLUS1"
+            and filing.filed_at.hour >= _MARKET_CLOSE_HOUR
+        ):
+            event_day = event_day + timedelta(days=1)
+
         event = EventRecord(
             rcept_no=filing.receipt_no,
             corp_code=filing.corp_code or "",
             ticker=(filing.ticker or "").upper() or None,
             corp_name=filing.corp_name,
             event_type=attributes.event_type,
-            event_date=filing.filed_at.date() if filing.filed_at else None,
+            event_date=event_day,
             amount=attributes.amount,
             ratio=attributes.ratio,
             shares=None,
@@ -104,16 +128,17 @@ def update_event_study_series(
         if not event.ticker or not event.event_date:
             continue
 
+        window = _resolve_event_window(event_window, event.event_type)
         existing = (
             db.query(EventStudyResult)
             .filter(
                 EventStudyResult.rcept_no == event.rcept_no,
-                EventStudyResult.t >= event_window[0],
-                EventStudyResult.t <= event_window[1],
+                EventStudyResult.t >= window[0],
+                EventStudyResult.t <= window[1],
             )
             .count()
         )
-        if existing >= (event_window[1] - event_window[0] + 1):
+        if existing >= (window[1] - window[0] + 1):
             continue
 
         try:
@@ -122,7 +147,7 @@ def update_event_study_series(
                 event=event,
                 benchmark_symbol=benchmark_symbol,
                 estimation_window=estimation_window,
-                event_window=event_window,
+                event_window=window,
             )
         except ValueError as exc:
             logger.debug("Skipping %s: %s", event.rcept_no, exc)
@@ -287,6 +312,14 @@ def _compute_event_returns(
         current_date += timedelta(days=1)
 
     return ar_car_series
+
+
+def _resolve_event_window(default_window: Tuple[int, int], event_type: Optional[str]) -> Tuple[int, int]:
+    if not event_type:
+        return default_window
+    metadata = get_event_rule_metadata(event_type)
+    domain = metadata["domain"] if metadata and "domain" in metadata else "FIN"
+    return _DOMAIN_EVENT_WINDOWS.get(domain, default_window)
 
 
 def _load_returns(

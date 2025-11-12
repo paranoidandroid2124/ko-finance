@@ -7,6 +7,8 @@ import pytest
 from database import get_db
 from services import watchlist_service
 from web.routers import alerts as alerts_router
+from services.plan_service import PlanContext, PlanQuota
+from web.deps import get_plan_context
 
 
 @pytest.fixture()
@@ -18,6 +20,22 @@ def watchlist_api_client(monkeypatch: pytest.MonkeyPatch):
         yield None
 
     app.dependency_overrides[get_db] = override_db
+
+    plan_context = PlanContext(
+        tier="pro",
+        base_tier="pro",
+        expires_at=None,
+        entitlements=frozenset({"search.alerts"}),
+        quota=PlanQuota(
+            chat_requests_per_day=None,
+            rag_top_k=None,
+            self_check_enabled=True,
+            peer_export_row_limit=None,
+        ),
+        memory_watchlist_enabled=True,
+    )
+
+    app.dependency_overrides[get_plan_context] = lambda: plan_context
 
     sample_payload = {
         "generatedAt": "2025-01-01T12:00:00+00:00",
@@ -89,7 +107,7 @@ def test_watchlist_radar_endpoint(watchlist_api_client):
 def test_watchlist_dispatch_endpoint(watchlist_api_client, monkeypatch: pytest.MonkeyPatch):
     client, sample = watchlist_api_client
 
-    def fake_dispatch(db, window_minutes, limit, slack_targets, email_targets, owner_filters=None):
+    def fake_dispatch(db, window_minutes, limit, slack_targets, email_targets, owner_filters=None, **kwargs):
         return {
             "payload": sample,
             "results": [

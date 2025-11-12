@@ -10,6 +10,7 @@ export type PlanFeatureFlags = {
   searchCompare: boolean;
   searchAlerts: boolean;
   searchExport: boolean;
+  ragCore: boolean;
   evidenceInlinePdf: boolean;
   evidenceDiff: boolean;
   timelineFull: boolean;
@@ -114,6 +115,7 @@ const DEFAULT_FEATURE_FLAGS: PlanFeatureFlags = {
   searchCompare: false,
   searchAlerts: false,
   searchExport: false,
+  ragCore: false,
   evidenceInlinePdf: false,
   evidenceDiff: false,
   timelineFull: false,
@@ -188,7 +190,7 @@ function mergeTrial(trial?: PlanTrialState | null): PlanTrialState {
   };
 }
 
-type PlanPresetResponsePayload = {
+export type PlanPresetResponsePayload = {
   presets: Array<{
     tier: PlanTier;
     entitlements?: string[];

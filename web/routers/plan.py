@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, Mapping, Optional, Sequence, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -16,11 +16,13 @@ from schemas.api.plan import (
     PlanMemoryFlagsSchema,
     PlanPresetResponse,
     PlanPresetSchema,
+    PlanPresetUpdateRequest,
     PlanQuotaSchema,
     PlanTier,
     PlanTrialStartRequest,
     PlanTrialStateSchema,
 )
+from services import plan_config_store
 from services.plan_service import (
     PlanContext,
     list_plan_presets,
@@ -49,6 +51,7 @@ def _serialize_plan_context(plan: PlanContext, *, checkout_requested: Optional[b
             searchCompare=feature_flags.get("search.compare", False),
             searchAlerts=feature_flags.get("search.alerts", False),
             searchExport=feature_flags.get("search.export", False),
+            ragCore=feature_flags.get("rag.core", False),
             evidenceInlinePdf=feature_flags.get("evidence.inline_pdf", False),
             evidenceDiff=feature_flags.get("evidence.diff", False),
             timelineFull=feature_flags.get("timeline.full", False),
@@ -72,13 +75,7 @@ def read_plan_context(plan: PlanContext = Depends(get_plan_context)) -> PlanCont
     return _serialize_plan_context(plan)
 
 
-@router.get(
-    "/presets",
-    response_model=PlanPresetResponse,
-    summary="지원되는 플랜 티어의 기본 제공 항목과 쿼터를 반환합니다.",
-)
-def read_plan_presets() -> PlanPresetResponse:
-    payload = list_plan_presets()
+def _serialize_plan_presets_payload(payload: Sequence[Mapping[str, Any]]) -> PlanPresetResponse:
     presets: list[PlanPresetSchema] = []
     for preset in payload:
         feature_flags = preset.get("feature_flags", {})
@@ -90,6 +87,7 @@ def read_plan_presets() -> PlanPresetResponse:
                     searchCompare=bool(feature_flags.get("search.compare")),
                     searchAlerts=bool(feature_flags.get("search.alerts")),
                     searchExport=bool(feature_flags.get("search.export")),
+                    ragCore=bool(feature_flags.get("rag.core")),
                     evidenceInlinePdf=bool(feature_flags.get("evidence.inline_pdf")),
                     evidenceDiff=bool(feature_flags.get("evidence.diff")),
                     timelineFull=bool(feature_flags.get("timeline.full")),
@@ -98,6 +96,34 @@ def read_plan_presets() -> PlanPresetResponse:
             )
         )
     return PlanPresetResponse(presets=presets)
+
+
+@router.get(
+    "/presets",
+    response_model=PlanPresetResponse,
+    summary="지원되는 플랜 티어의 기본 제공 항목과 쿼터를 반환합니다.",
+)
+def read_plan_presets() -> PlanPresetResponse:
+    payload = list_plan_presets()
+    return _serialize_plan_presets_payload(payload)
+
+
+@router.put(
+    "/presets",
+    response_model=PlanPresetResponse,
+    summary="플랜 기본 프리셋(권한/쿼터)을 업데이트합니다.",
+)
+def update_plan_presets_route(
+    payload: PlanPresetUpdateRequest,
+    _admin_session: AdminSession = Depends(require_admin_session_for_plan),
+) -> PlanPresetResponse:
+    plan_config_store.update_plan_config(
+        [tier.model_dump() for tier in payload.tiers],
+        updated_by=payload.updatedBy,
+        note=payload.note,
+    )
+    plan_config_store.reload_plan_config()
+    return _serialize_plan_presets_payload(list_plan_presets())
 
 
 @router.patch("/context", response_model=PlanContextResponse, summary="플랜 기본값을 저장합니다.")
@@ -132,7 +158,7 @@ def patch_plan_context(
 @router.post(
     "/trial",
     response_model=PlanContextResponse,
-    summary="7ì¼ íŒ€ íŒŒì› ì²´í—˜ì„ ì‹œìž‘í•©ë‹ˆë‹¤.",
+    summary="7일 플랜 체험을 시작합니다.",
 )
 def start_plan_trial(
     payload: PlanTrialStartRequest,

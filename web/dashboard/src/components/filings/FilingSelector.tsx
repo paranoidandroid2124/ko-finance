@@ -67,10 +67,7 @@ export function FilingSelector({
     <aside className="flex h-full max-h-[calc(100vh-160px)] min-h-0 flex-col overflow-hidden rounded-xl border border-border-light bg-background-cardLight shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
       <header className="border-b border-border-light px-4 py-3 dark:border-border-dark">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase text-text-secondaryLight dark:text-text-secondaryDark">최근 공시</p>
-            <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">최근 {days}일 이내</p>
-          </div>
+          <p className="text-xs font-semibold uppercase text-text-secondaryLight dark:text-text-secondaryDark">최근 공시</p>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex gap-1">
               {DAY_OPTIONS.map((option) => (

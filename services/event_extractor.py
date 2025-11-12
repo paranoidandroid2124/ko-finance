@@ -1,15 +1,23 @@
-"\"\"\"Rule-based extractor for DART event metadata.\"\"\""
+"""Rule-based extractor for DART event metadata with YAML-configurable domains."""
 
 from __future__ import annotations
 
 import logging
 import math
 import re
-from dataclasses import dataclass
-from typing import Dict, Optional, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Dict, List, Optional, Pattern, Sequence
+
+import yaml
 
 from core.env import env_bool
 from models.filing import Filing
+
+logger = logging.getLogger(__name__)
+_STRICT_ANY_MATCH = env_bool("EVENT_EXTRACTOR_REQUIRE_ANY_MATCH", False)
+_DEFAULT_RULE_PATH = Path("configs") / "event_rules.yaml"
+_DEFAULT_DOMAIN = "FIN"
 
 
 @dataclass
@@ -20,7 +28,83 @@ class EventAttributes:
     method: Optional[str]
     score: float
     is_negative: bool = False
+    domain: Optional[str] = None
+    subtype: Optional[str] = None
+    timing_rule: str = "AUTO"
+    confidence: float = 0.0
+    is_restatement: bool = False
+    matches: Dict[str, Sequence[str]] = field(default_factory=dict)
 
+
+@dataclass
+class Rule:
+    name: str
+    domain: str = _DEFAULT_DOMAIN
+    require_all: Sequence[str] = field(default_factory=list)
+    any_of: Sequence[str] = field(default_factory=list)
+    exclude: Sequence[str] = field(default_factory=list)
+    subtype_map: Dict[str, str] = field(default_factory=dict)
+    method_map: Dict[str, str] = field(default_factory=dict)
+    timing_rule: str = "AUTO"
+    acts_as_modifier: bool = False
+
+    require_all_compiled: Sequence[Pattern[str]] = field(default_factory=list, init=False)
+    any_of_compiled: Sequence[Pattern[str]] = field(default_factory=list, init=False)
+    exclude_compiled: Sequence[Pattern[str]] = field(default_factory=list, init=False)
+    subtype_map_compiled: Dict[str, Pattern[str]] = field(default_factory=dict, init=False)
+    method_map_compiled: Dict[str, Pattern[str]] = field(default_factory=dict, init=False)
+
+    def compile(self, prefix: str = "") -> Rule:
+        def _compile(pattern: str) -> Pattern[str]:
+            candidate = pattern
+            if prefix and not candidate.startswith(prefix):
+                candidate = f"{prefix}(?:{candidate})"
+            return re.compile(candidate)
+
+        self.require_all_compiled = [_compile(pattern) for pattern in self.require_all]
+        self.any_of_compiled = [_compile(pattern) for pattern in self.any_of]
+        self.exclude_compiled = [_compile(pattern) for pattern in self.exclude]
+        self.subtype_map_compiled = {key: _compile(expr) for key, expr in self.subtype_map.items()}
+        self.method_map_compiled = {key: _compile(expr) for key, expr in self.method_map.items()}
+        return self
+
+
+def _load_event_rules(path: Path = _DEFAULT_RULE_PATH) -> Optional[List[Rule]]:
+    if not path.exists():
+        logger.info("event rule config not found at %s; falling back to legacy rules", path)
+        return None
+
+    with path.open("r", encoding="utf-8") as handle:
+        config = yaml.safe_load(handle) or {}
+
+    defaults = config.get("defaults") or {}
+    pattern_prefix = defaults.get("flags", "")
+    raw_rules = config.get("rules") or {}
+
+    rules: List[Rule] = []
+    for name, spec in raw_rules.items():
+        merged = {
+            "name": name,
+            "domain": spec.get("domain", _DEFAULT_DOMAIN),
+            "require_all": spec.get("require_all", []),
+            "any_of": spec.get("any_of", []),
+            "exclude": spec.get("exclude", []),
+            "subtype_map": spec.get("subtype_map", {}),
+            "method_map": spec.get("method_map", {}),
+            "timing_rule": spec.get("timing_rule", "AUTO"),
+            "acts_as_modifier": spec.get("acts_as_modifier", False),
+        }
+        rules.append(Rule(**merged).compile(pattern_prefix))
+
+    priority = config.get("priority") or []
+    priority_index = {domain: idx for idx, domain in enumerate(priority)}
+    rules.sort(key=lambda rule: priority_index.get(rule.domain, len(priority_index)))
+    logger.info("loaded %d event extraction rules from %s", len(rules), path)
+    return rules
+
+
+_EVENT_RULES = _load_event_rules()
+_RULE_INDEX: Dict[str, Rule] = {rule.name: rule for rule in _EVENT_RULES or []}
 
 _TYPE_RULES = [
     {
@@ -52,7 +136,7 @@ _TYPE_RULES = [
     {
         "type": "CONVERTIBLE",
         "require": [("전환사채", "교환사채", "신주인수권부사채", "CB", "BW", "EB")],
-        "any": ("발행", "리픽싱", "전환가액", "청구", "콜옵션"),
+        "any": ("발행", "리픽싱", "전환가격", "청구"),
     },
     {
         "type": "MNA",
@@ -66,9 +150,6 @@ _TYPE_RULES = [
     },
 ]
 
-logger = logging.getLogger(__name__)
-_STRICT_ANY_MATCH = env_bool("EVENT_EXTRACTOR_REQUIRE_ANY_MATCH", False)
-
 _METHOD_KEYWORDS = {
     "주주배정": "rights",
     "제3자배정": "private",
@@ -76,8 +157,8 @@ _METHOD_KEYWORDS = {
     "공모": "public",
     "사모": "private",
     "시장매수": "open_market",
-    "시간외매수": "off_market",
-    "시간외대량매매": "off_market",
+    "시장외매수": "off_market",
+    "시장외대량매매": "off_market",
     "맞교환": "swap",
     "장내매수": "open_market",
     "장외매수": "off_market",
@@ -103,17 +184,73 @@ _UNIT_MULTIPLIERS = {
     "원": 1.0,
 }
 
+_NEGATIVE_KEYWORDS = ("해지", "취소", "철회", "무산", "중단", "연장", "종료")
+
 
 def extract_event_attributes(filing: Filing) -> EventAttributes:
     """Return structured attributes for downstream event study ingestion."""
 
     haystack = _build_haystack(filing)
-    text_lower = haystack.lower()
-    event_type = _classify_event_type(text_lower)
-    amount = _extract_amount(haystack)
-    ratio = _extract_ratio(haystack)
-    method = _extract_method(haystack)
+    if _EVENT_RULES:
+        return _extract_with_config(haystack)
+    return _extract_with_legacy(haystack)
+
+
+def get_event_rule_metadata(event_type: str) -> Optional[Dict[str, str]]:
+    rule = _RULE_INDEX.get(event_type)
+    if not rule:
+        return None
+    return {"domain": rule.domain, "timing_rule": rule.timing_rule}
+
+
+def _extract_with_config(text: str) -> EventAttributes:
+    text_lower = text.lower()
+    amount = _extract_amount(text)
+    ratio = _extract_ratio(text)
+    method = _extract_method(text)  # fallback if rule has no method_map hit
     is_negative = any(keyword in text_lower for keyword in _NEGATIVE_KEYWORDS)
+
+    event_type: Optional[str] = None
+    domain: Optional[str] = None
+    subtype: Optional[str] = None
+    timing_rule = "AUTO"
+    confidence = 0.0
+    is_restatement = False
+    matches: Dict[str, Sequence[str]] = {}
+
+    for rule in _EVENT_RULES or []:
+        req_ok, req_hits = _match_all(text, rule.require_all_compiled)
+        any_ok, any_hits = _match_any(text, rule.any_of_compiled)
+        exc_ok = _match_none(text, rule.exclude_compiled)
+        if not req_ok or not any_ok or not exc_ok:
+            continue
+
+        if rule.acts_as_modifier:
+            is_restatement = True
+            continue
+
+        event_type = rule.name
+        domain = rule.domain
+        timing_rule = rule.timing_rule
+        matches = {"require": req_hits, "any": any_hits}
+
+        for key, pattern in rule.subtype_map_compiled.items():
+            if pattern.search(text):
+                subtype = key
+                break
+
+        method_override = None
+        for key, pattern in rule.method_map_compiled.items():
+            if pattern.search(text):
+                method_override = key
+                break
+        if method_override:
+            method = method_override.lower()
+
+        confidence = _compute_confidence(text, subtype, method)
+        break
+
+    domain = domain or _DEFAULT_DOMAIN
     score = _compute_salience(event_type, amount, ratio, is_negative=is_negative)
     return EventAttributes(
         event_type=event_type,
@@ -122,7 +259,56 @@ def extract_event_attributes(filing: Filing) -> EventAttributes:
         method=method,
         score=score,
         is_negative=is_negative,
+        domain=domain,
+        subtype=subtype,
+        timing_rule=timing_rule,
+        confidence=confidence,
+        is_restatement=is_restatement,
+        matches=matches,
     )
+
+
+def _extract_with_legacy(text: str) -> EventAttributes:
+    text_lower = text.lower()
+    event_type = _classify_event_type(text_lower)
+    amount = _extract_amount(text)
+    ratio = _extract_ratio(text)
+    method = _extract_method(text)
+    is_negative = any(keyword in text_lower for keyword in _NEGATIVE_KEYWORDS)
+    score = _compute_salience(event_type, amount, ratio, is_negative=is_negative)
+    confidence = _compute_confidence(text, None, method)
+
+    return EventAttributes(
+        event_type=event_type,
+        amount=amount,
+        ratio=ratio,
+        method=method,
+        score=score,
+        is_negative=is_negative,
+        domain=_DEFAULT_DOMAIN,
+        confidence=confidence,
+    )
+
+
+def _match_all(text: str, patterns: Sequence[Pattern[str]]) -> tuple[bool, List[str]]:
+    hits: List[str] = []
+    for pattern in patterns:
+        match = pattern.search(text)
+        if not match:
+            return False, []
+        hits.append(match.group(0))
+    return True, hits
+
+
+def _match_any(text: str, patterns: Sequence[Pattern[str]]) -> tuple[bool, List[str]]:
+    if not patterns:
+        return True, []
+    hits = [match.group(0) for pattern in patterns if (match := pattern.search(text))]
+    return (True, hits) if hits else (False, [])
+
+
+def _match_none(text: str, patterns: Sequence[Pattern[str]]) -> bool:
+    return all(pattern.search(text) is None for pattern in patterns)
 
 
 def _build_haystack(filing: Filing) -> str:
@@ -133,9 +319,7 @@ def _build_haystack(filing: Filing) -> str:
         getattr(filing, "notes", None),
     ]
     filtered = [part.strip() for part in sources if part and isinstance(part, str)]
-    if not filtered:
-        return ""
-    return " ".join(filtered)
+    return " ".join(filtered) if filtered else ""
 
 
 def _classify_event_type(text: str) -> Optional[str]:
@@ -157,10 +341,7 @@ def _match_rule(text: str, rule: Dict[str, Sequence[str]]) -> bool:
         if not any_matched and _STRICT_ANY_MATCH:
             return False
         if not any_matched and not _STRICT_ANY_MATCH:
-            logger.debug(
-                "Relaxed event match for %s (missing optional keywords).",
-                rule.get("type", "UNKNOWN"),
-            )
+            logger.debug("Relaxed event match for %s", rule.get("type", "UNKNOWN"))
     exclude = rule.get("exclude") or []
     if any(keyword.lower() in text for keyword in exclude):
         return False
@@ -186,7 +367,6 @@ def _extract_amount(text: str) -> Optional[float]:
 
     if not values:
         return None
-    # outline: pick the max magnitude as representative scale
     return max(values, key=abs)
 
 
@@ -208,6 +388,17 @@ def _extract_method(text: str) -> Optional[str]:
     return None
 
 
+def _compute_confidence(text: str, subtype: Optional[str], method: Optional[str]) -> float:
+    has_amount = bool(_AMOUNT_PATTERN.search(text))
+    has_term = bool(re.search(r"(기간|기일|만기|~|\d+\s*(일|개월|년))", text))
+    points = 0.4 * has_amount + 0.2 * has_term
+    if subtype:
+        points += 0.2
+    if method:
+        points += 0.2
+    return round(min(1.0, 0.2 + points), 2)
+
+
 def _compute_salience(
     event_type: Optional[str],
     amount: Optional[float],
@@ -215,7 +406,7 @@ def _compute_salience(
     *,
     is_negative: bool,
 ) -> float:
-    """Heuristic score ∈ [0,1] prioritising large/rare events."""
+    """Heuristic score in [0, 1] prioritising large or rare events."""
 
     base = {
         "BUYBACK": 0.6,
@@ -224,6 +415,7 @@ def _compute_salience(
         "DIVIDEND": 0.55,
         "RESTATEMENT": 0.5,
         "CONTRACT": 0.5,
+        "CONTRACT_TERMINATION": 0.5,
         "CONVERTIBLE": 0.45,
         "MNA": 0.65,
     }.get(event_type or "", 0.4)
@@ -240,5 +432,4 @@ def _compute_salience(
     return max(0.05, min(0.99, score))
 
 
-__all__ = ["EventAttributes", "extract_event_attributes"]
-_NEGATIVE_KEYWORDS = ("해지", "취소", "철회", "무산", "중단", "연장", "종료")
+__all__ = ["EventAttributes", "extract_event_attributes", "get_event_rule_metadata"]

@@ -1,0 +1,241 @@
+version: 1
+
+defaults:
+  flags: "(?i)"
+  timeout_ms: 5
+
+priority:
+  - RESTATEMENT_MOD
+  - LEGAL
+  - REGULATORY
+  - ESG
+  - CYBER
+  - GUIDANCE
+  - CONTRACT_TERMINATION
+  - CONTRACT
+  - MNA
+  - CONVERTIBLE
+  - BUYBACK
+  - BUYBACK_DISPOSAL
+  - SEO
+  - DIVIDEND
+  - CREDIT
+  - GOV
+  - SUPPLY
+  - PRODUCT
+  - RELATED
+  - MARKET
+  - ORGINFO
+  - IR
+  - STRUCTURE
+
+rules:
+  RESTATEMENT_MOD:
+    domain: FIN
+    require_all:
+      - "정정|재작성|착오"
+    any_of: []
+    acts_as_modifier: true
+
+  BUYBACK:
+    domain: FIN
+    require_all:
+      - "자사주|자기주식"
+    any_of:
+      - "취득|매입|소각|결정"
+    exclude:
+      - "처분|양도|매각"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  BUYBACK_DISPOSAL:
+    domain: FIN
+    require_all:
+      - "자사주|자기주식"
+    any_of:
+      - "처분|양도|매각"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  SEO:
+    domain: FIN
+    require_all:
+      - "유상증자|증자|신주발행|신주모집"
+    any_of:
+      - "제3자배정|사모"
+      - "주주배정"
+      - "일반공모|공모"
+      - "청약|납입|발행가|확정"
+    method_map:
+      PRIVATE: "제3자배정|사모"
+      RIGHTS: "주주배정"
+      PUBLIC: "일반공모|공모"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  DIVIDEND:
+    domain: FIN
+    require_all:
+      - "배당|현금배당|주식배당"
+    any_of:
+      - "배당금|1주당|DPS|배당기준일|중간배당|결산배당"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  CONVERTIBLE:
+    domain: FIN
+    require_all:
+      - "전환사채|교환사채|신주인수권부사채|CB|BW|EB"
+    any_of:
+      - "발행|리픽싱|전환가격|청구|콜옵션|사채취득|조기상환"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  MNA:
+    domain: FIN
+    require_all:
+      - "합병|분할|영업양수양도|주식양수양도"
+    any_of:
+      - "합병비율|존속|소멸|분할기일|거래종결|종료보고서"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  CONTRACT_TERMINATION:
+    domain: FIN
+    require_all:
+      - "(계약\\s*해지)|해제|무효|취소|종료"
+    any_of:
+      - "공급계약|판권|라이선스|장기공급|수주"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  CONTRACT:
+    domain: FIN
+    require_all:
+      - "공급계약|단일판매|수주|계약체결|투자판단관련주요경영사항"
+    any_of:
+      - "계약금액|규모|기간|상대방|장기공급|판권|라이선스"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  REGULATORY:
+    domain: REGULATORY
+    require_all:
+      - "허가|승인|인가|취소|보류|인가취소"
+    any_of:
+      - "인허가|식약처|금감원|산업부|환경부|공정위|국토부|과징금|명령|행정처분"
+    subtype_map:
+      approval: "허가|승인|인가"
+      denial_or_hold: "취소|보류|인가취소"
+      sanction: "과징금|행정처분|명령"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  LEGAL:
+    domain: LEGAL
+    require_all:
+      - "소송|가처분|행정소송|민사|형사|패소|승소|항소|합의|벌금|제재|과태료|리콜"
+    any_of:
+      - "제기|판결|확정|조정|합의|제재|징계|영업정지|리콜명령"
+    exclude:
+      - "모의|훈련"
+    subtype_map:
+      lawsuit_filed: "제기"
+      lawsuit_lost: "패소|패배"
+      lawsuit_won: "승소|승리"
+      settlement: "합의|조정"
+      enforcement: "제재|징계|영업정지|리콜명령"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  ESG:
+    domain: ESG
+    require_all:
+      - "사고|화재|누출|유출|산업재해|환경|안전|탄소|온실가스"
+    any_of:
+      - "중대|사망|부상|배출|벌금|조사|개선명령|공시"
+    exclude:
+      - "훈련|모의훈련"
+    subtype_map:
+      incident: "사고|화재|누출|유출|산업재해"
+      disclosure: "환경|탄소|온실가스|공시"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  GOV:
+    domain: GOV
+    require_all:
+      - "대표이사|CEO|사임|해임|선임|이사회|사내이사|사외이사|최대주주변경|경영권"
+    any_of:
+      - "변경|개편|해임|선임|사임|경영권분쟁|행동주의"
+    subtype_map:
+      ceo_change: "대표이사|CEO"
+      board_change: "이사회|이사"
+      control_change: "최대주주변경|경영권"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  PRODUCT:
+    domain: PRODUCT
+    require_all:
+      - "신제품|출시|인증|특허|CE|FDA|UL|KC|상용화|임상|1상|2상|3상|IND|NDA"
+    any_of:
+      - "성공|승인|불승인|중단|보류|취득"
+    subtype_map:
+      certification: "CE|FDA|UL|KC|인증"
+      clinical: "임상|1상|2상|3상|IND|NDA"
+      launch: "신제품|출시|상용화"
+    timing_rule: AUTO
+
+  SUPPLY:
+    domain: SUPPLY
+    require_all:
+      - "생산중단|재개|증설|가동|라인|공장|증축|폐쇄|가동중단|감산|풀가동"
+    any_of:
+      - "일시|정상화|증설|완료|계획"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  CYBER:
+    domain: CYBER
+    require_all:
+      - "랜섬웨어|침해|해킹|개인정보|유출|보안사고|사이버"
+    any_of:
+      - "사고|조사|신고|통지|재발방지"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  GUIDANCE:
+    domain: GUIDANCE
+    require_all:
+      - "영업\\(잠정\\)실적|연결재무제표기준영업\\(잠정\\)실적|전망\\(공정공시\\)"
+    timing_rule: AUTO
+
+  CREDIT:
+    domain: CREDIT
+    require_all:
+      - "신용등급|등급전망|부여|변경|하향|상향"
+    any_of:
+      - "한국신용평가|나이스신용평가|한신평|NICE|한기평|무디스|S&P|피치"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  IR:
+    domain: IR
+    require_all:
+      - "기업설명회\\(IR\\)개최|IR 안내"
+    timing_rule: AUTO
+
+  RELATED:
+    domain: RELATED
+    require_all:
+      - "특수관계인|동일인등|계열"
+    any_of:
+      - "자금대여|내부거래|담보|채무보증|상품|용역|거래변경"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  MARKET:
+    domain: MARKET
+    require_all:
+      - "풍문|보도.*해명|시장안내|주권매매거래(정지|해제)|실질심사"
+    subtype_map:
+      rumor: "풍문|보도.*해명"
+      trading_halt: "주권매매거래(정지|해제)|실질심사"
+    timing_rule: AUTO
+
+  ORGINFO:
+    domain: ORGINFO
+    require_all:
+      - "본점소재지변경|사업장 변경|상호변경|법인명 변경"
+    timing_rule: AFTER_CLOSE_DPLUS1
+
+  STRUCTURE:
+    domain: STRUCTURE
+    require_all:
+      - "해산사유발생|자산유동화관련.*중요사항|합병등종료보고서|유동화전문회사|SPV"
+    timing_rule: AFTER_CLOSE_DPLUS1

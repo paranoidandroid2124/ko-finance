@@ -45,6 +45,19 @@ export type SummaryBlock = {
   how?: string | null;
 };
 
+export type CompanyFilingSummary = {
+  id: string;
+  receiptNo?: string | null;
+  reportName?: string | null;
+  title?: string | null;
+  category?: string | null;
+  filedAt?: string | null;
+  viewerUrl?: string | null;
+  summary?: SummaryBlock | null;
+  sentiment?: string | null;
+  sentimentReason?: string | null;
+};
+
 export type KeyMetric = {
   metricCode: string;
   label: string;
@@ -155,6 +168,7 @@ export type CompanySnapshot = {
   keyMetrics: KeyMetric[];
   majorEvents: EventItem[];
   newsSignals: NewsWindowInsight[];
+  recentFilings: CompanyFilingSummary[];
   restatementHighlights: RestatementHighlight[];
   evidenceLinks: EvidenceLink[];
   fiscalAlignment?: FiscalAlignmentInsight | null;
@@ -247,6 +261,34 @@ const mapSummaryBlock = (value: unknown): SummaryBlock | null => {
     why: toStringOrNull(value.why),
     how: toStringOrNull(value.how),
   };
+};
+
+const mapCompanyFilings = (entries: unknown): CompanyFilingSummary[] => {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  return entries.reduce<CompanyFilingSummary[]>((acc, entry) => {
+    if (!isRecord(entry)) {
+      return acc;
+    }
+    const id = toStringOrNull(entry.id);
+    if (!id) {
+      return acc;
+    }
+    acc.push({
+      id,
+      receiptNo: toStringOrNull(entry.receipt_no ?? entry.receiptNo),
+      reportName: toStringOrNull(entry.report_name ?? entry.reportName),
+      title: toStringOrNull(entry.title),
+      category: toStringOrNull(entry.category),
+      filedAt: toStringOrNull(entry.filed_at ?? entry.filedAt),
+      viewerUrl: toStringOrNull(entry.viewer_url ?? entry.viewerUrl),
+      summary: mapSummaryBlock(entry.summary),
+      sentiment: toStringOrNull(entry.sentiment),
+      sentimentReason: toStringOrNull(entry.sentiment_reason ?? entry.sentimentReason),
+    });
+    return acc;
+  }, []);
 };
 
 const mapKeyMetrics = (entries: unknown): KeyMetric[] => {
@@ -456,6 +498,7 @@ const mapSnapshotPayload = (payload: unknown): CompanySnapshot => {
     keyMetrics: mapKeyMetrics(record.key_metrics ?? record.keyMetrics),
     majorEvents: mapEvents(record.major_events ?? record.majorEvents),
     newsSignals: mapNewsInsights(record.news_signals ?? record.newsSignals),
+    recentFilings: mapCompanyFilings(record.recent_filings ?? record.recentFilings),
     restatementHighlights: mapRestatementHighlights(record.restatement_highlights ?? record.restatementHighlights),
     evidenceLinks: mapEvidenceLinks(record.evidence_links ?? record.evidenceLinks),
     fiscalAlignment: mapFiscalAlignment(record.fiscal_alignment ?? record.fiscalAlignment),

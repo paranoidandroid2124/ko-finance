@@ -12,6 +12,8 @@ from database import get_db
 from models.event_study import EventRecord, EventStudyResult, EventSummary
 from models.filing import Filing
 from web.routers.event_study import router as event_study_router
+from services.plan_service import PlanContext, PlanQuota
+from web.deps import get_plan_context
 
 
 @pytest.fixture()
@@ -23,12 +25,28 @@ def event_study_client(db_session: Session) -> Iterator[Tuple[TestClient, Sessio
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
+
+    plan_context = PlanContext(
+        tier="enterprise",
+        base_tier="enterprise",
+        expires_at=None,
+        entitlements=frozenset({"timeline.full"}),
+        quota=PlanQuota(
+            chat_requests_per_day=None,
+            rag_top_k=None,
+            self_check_enabled=True,
+            peer_export_row_limit=None,
+        ),
+    )
+
+    app.dependency_overrides[get_plan_context] = lambda: plan_context
     client = TestClient(app)
     try:
         yield client, db_session
     finally:
         client.close()
         app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(get_plan_context, None)
 
 
 def seed_event_data(session: Session) -> None:

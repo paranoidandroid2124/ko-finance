@@ -27,14 +27,20 @@ describe("PlanSettingsForm", () => {
   const defaultPayload: PlanContextPayload = {
     planTier: "pro",
     expiresAt: "2026-01-01T00:00:00+00:00",
-    entitlements: ["search.compare", "search.alerts"],
+    entitlements: ["search.compare", "search.alerts", "search.export", "rag.core"],
     featureFlags: {
       searchCompare: true,
       searchAlerts: true,
       searchExport: false,
+      ragCore: true,
       evidenceInlinePdf: false,
       evidenceDiff: false,
       timelineFull: false,
+    },
+    memoryFlags: {
+      watchlist: true,
+      digest: true,
+      chat: true,
     },
     quota: {
       chatRequestsPerDay: 500,
@@ -58,9 +64,15 @@ describe("PlanSettingsForm", () => {
           searchCompare: false,
           searchAlerts: false,
           searchExport: false,
+          ragCore: false,
           evidenceInlinePdf: false,
           evidenceDiff: false,
           timelineFull: false,
+        },
+        memoryFlags: {
+          watchlist: false,
+          digest: false,
+          chat: false,
         },
         quota: {
           chatRequestsPerDay: 20,

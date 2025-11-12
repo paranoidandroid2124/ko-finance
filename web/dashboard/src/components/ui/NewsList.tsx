@@ -52,7 +52,9 @@ export function NewsList({ items }: { items: NewsItem[] }) {
                 {item.publishedAt ?? fallbackTimestamp}
               </p>
               {item.summary ? (
-                <p className="text-xs leading-relaxed text-text-secondaryLight dark:text-text-secondaryDark">{item.summary}</p>
+                <p className="whitespace-pre-line text-xs leading-relaxed text-text-secondaryLight dark:text-text-secondaryDark">
+                  {item.summary}
+                </p>
               ) : null}
             </li>
           ))}

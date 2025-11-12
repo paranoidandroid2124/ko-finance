@@ -25,8 +25,11 @@ export const useAdminSession = (): UseAdminSessionResult & { isUnauthorized: boo
     },
   });
 
+  const isUnauthorized =
+    query.error instanceof AdminUnauthorizedError || (!query.isLoading && !query.data);
+
   return {
     ...query,
-    isUnauthorized: query.error instanceof AdminUnauthorizedError,
+    isUnauthorized,
   };
 };

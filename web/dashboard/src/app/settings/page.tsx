@@ -1,30 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
-import { useSearchParams } from "next/navigation";
-import clsx from "classnames";
 
 import { PlanSummaryCard } from "@/components/plan/PlanSummaryCard";
 import { PlanAlertOverview } from "@/components/plan/PlanAlertOverview";
-import { PlanTierPreview } from "@/components/plan/PlanTierPreview";
-import { PlanSettingsForm } from "@/components/plan/PlanSettingsForm";
 import { AppShell } from "@/components/layout/AppShell";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAlertRules } from "@/hooks/useAlerts";
-import { usePlanStore, type PlanTier } from "@/store/planStore";
 import { UserLightMemSettingsCard } from "@/components/settings/UserLightMemSettingsCard";
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
-  const searchParams = useSearchParams();
-  const planPanelRef = useRef<HTMLDivElement>(null);
-  const [planHighlighted, setPlanHighlighted] = useState(false);
-
-  const { error: planError } = usePlanStore((state) => ({
-    error: state.error,
-  }));
 
   const {
     data: alertRulesData,
@@ -34,33 +22,9 @@ export default function SettingsPage() {
 
   useEffect(() => setMounted(true), []);
 
-  const focusTier = useMemo<PlanTier | null>(() => {
-    const value = searchParams.get("tier");
-    if (value === "free" || value === "pro" || value === "enterprise") {
-      return value;
-    }
-    return null;
-  }, [searchParams]);
-
-  useEffect(() => {
-    const panel = searchParams.get("panel");
-    if (panel !== "plan" && !focusTier) {
-      return;
-    }
-    const target = planPanelRef.current;
-    if (!target) {
-      return;
-    }
-    target.scrollIntoView({ behavior: "smooth", block: "center" });
-    setPlanHighlighted(true);
-    const timer = setTimeout(() => setPlanHighlighted(false), 2200);
-    return () => clearTimeout(timer);
-  }, [focusTier, searchParams]);
-
   const isDark = mounted ? theme === "dark" : false;
   const alertPlan = alertRulesData?.plan ?? null;
   const alertPlanErrorMessage = isAlertPlanError ? "알림 플랜 정보를 불러오는 중 작은 hiccup이 있었어요." : undefined;
-  const planStoreErrorMessage = planError ? `플랜 컨텍스트 로딩이 살짝 미끄러졌어요. (${planError})` : undefined;
 
   const handleThemeToggle = () => {
     setTheme(isDark ? "light" : "dark");
@@ -71,22 +35,8 @@ export default function SettingsPage() {
       <div className="space-y-6">
         <PlanSummaryCard />
 
-        <PlanAlertOverview
-          plan={alertPlan}
-          loading={isAlertPlanLoading}
-          error={alertPlanErrorMessage ?? planStoreErrorMessage}
-        />
+        <PlanAlertOverview plan={alertPlan} loading={isAlertPlanLoading} error={alertPlanErrorMessage} />
 
-        <div
-          ref={planPanelRef}
-          className={clsx(
-            "space-y-4 rounded-xl border border-transparent p-1 transition-all duration-500",
-            planHighlighted && "border-primary/60 bg-primary/5 shadow-lg dark:bg-primary.dark/10",
-          )}
-        >
-          <PlanTierPreview focusTier={focusTier} />
-          <PlanSettingsForm />
-        </div>
         <UserLightMemSettingsCard />
 
         <section className="rounded-xl border border-border-light bg-background-cardLight p-6 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">

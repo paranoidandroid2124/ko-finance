@@ -30,6 +30,7 @@ from schemas.api.admin import (
     AdminSystemPromptUpdateRequest,
     PromptChannel,
 )
+from services import admin_llm_store
 from services.admin_audit import append_audit_log
 from web.deps_admin import require_admin_session, AdminSession
 
@@ -308,7 +309,7 @@ def evaluate_guardrail_sample(
     except Exception:  # pragma: no cover - audit logging best-effort
         logger.debug("Failed to append guardrail evaluation audit entry.", exc_info=True)
 
-    sample_record = admin_guardrail_service.record_guardrail_sample(
+    sample_record = admin_llm_store.record_guardrail_sample(
         actor=session.actor,
         sample=sample,
         sanitized_sample=sanitized_output,
@@ -341,7 +342,7 @@ def list_guardrail_samples(
     search: Optional[str] = Query(default=None, alias="q"),
     bookmarked: Optional[bool] = Query(default=None),
 ) -> AdminGuardrailSampleListResponse:
-    raw_samples = admin_guardrail_service.list_guardrail_samples(
+    raw_samples = admin_llm_store.list_guardrail_samples(
         limit=limit + 1, search=search, bookmarked=bookmarked
     )
     has_more = len(raw_samples) > limit
@@ -365,7 +366,7 @@ def list_guardrail_samples(
 def update_guardrail_sample_bookmark(
     sample_id: str, payload: AdminGuardrailBookmarkRequest
 ) -> AdminGuardrailSampleSchema:
-    updated = admin_guardrail_service.update_guardrail_bookmark(sample_id, bookmarked=payload.bookmarked)
+    updated = admin_llm_store.update_guardrail_bookmark(sample_id, bookmarked=payload.bookmarked)
     if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="sample_not_found")
     return AdminGuardrailSampleSchema(**updated)

@@ -159,9 +159,14 @@ export default function PublicPreviewPage() {
                       {filing.category ? <span className="rounded-full bg-slate-800 px-2 py-0.5">{filing.category}</span> : null}
                       {filing.market ? <span className="rounded-full bg-slate-800 px-2 py-0.5">{filing.market}</span> : null}
                       {filing.targetUrl ? (
-                        <Link href={filing.targetUrl} className="text-blue-300 hover:text-blue-200">
+                        <a
+                          href={filing.targetUrl}
+                          className="text-blue-300 hover:text-blue-200"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
                           대시보드에서 보기 →
-                        </Link>
+                        </a>
                       ) : null}
                     </div>
                   </li>
@@ -224,9 +229,14 @@ export default function PublicPreviewPage() {
                           <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
                             <span>{source.filedAt ? new Date(source.filedAt).toLocaleString("ko-KR") : "날짜 정보 없음"}</span>
                             {source.targetUrl ? (
-                              <Link href={source.targetUrl} className="text-blue-300 hover:text-blue-200">
+                              <a
+                                href={source.targetUrl}
+                                className="text-blue-300 hover:text-blue-200"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
                                 이동 →
-                              </Link>
+                              </a>
                             ) : null}
                           </div>
                         </li>
@@ -244,9 +254,6 @@ export default function PublicPreviewPage() {
               로그인하면 RAG 기반 대화형 분석, 뉴스/워치리스트, 맞춤형 다이제스트까지 모두 이용할 수 있습니다.
             </p>
             <div className="mt-4 flex flex-wrap gap-3">
-              <Link href="/auth/login" className="rounded-lg border border-slate-100/40 px-4 py-2 text-sm font-semibold text-white hover:border-white">
-                로그인
-              </Link>
               <Link href="/auth/register" className="rounded-lg bg-white/90 px-4 py-2 text-sm font-semibold text-blue-900 hover:bg-white">
                 무료로 시작하기
               </Link>

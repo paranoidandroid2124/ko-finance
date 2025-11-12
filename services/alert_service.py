@@ -22,14 +22,14 @@ logger = logging.getLogger(__name__)
 ERROR_BACKOFF_SEQUENCE = (5, 15, 60)
 PLAN_CONSTRAINTS: Dict[str, Dict[str, Any]] = {
     "free": {
-        "max_alerts": 0,
-        "channels": (),
-        "default_evaluation_interval_minutes": 60,
-        "default_window_minutes": 1440,
-        "default_cooldown_minutes": 1440,
-        "min_cooldown_minutes": 0,
-        "min_evaluation_interval_minutes": 1,
-        "max_daily_triggers": 0,
+        "max_alerts": 3,
+        "channels": ("email",),
+        "default_evaluation_interval_minutes": 30,
+        "default_window_minutes": 720,
+        "default_cooldown_minutes": 180,
+        "min_cooldown_minutes": 30,
+        "min_evaluation_interval_minutes": 15,
+        "max_daily_triggers": 10,
     },
     "pro": {
         "max_alerts": 10,

@@ -29,6 +29,7 @@ class PlanFeatureFlagsSchema(BaseModel):
     searchCompare: bool = False
     searchAlerts: bool = False
     searchExport: bool = False
+    ragCore: bool = False
     evidenceInlinePdf: bool = False
     evidenceDiff: bool = False
     timelineFull: bool = False
@@ -134,6 +135,21 @@ class PlanPresetResponse(BaseModel):
     presets: list[PlanPresetSchema] = Field(
         default_factory=list,
         description="Collection of plan presets available to the client.",
+    )
+
+
+class PlanPresetUpdateRequest(BaseModel):
+    tiers: list[PlanPresetSchema] = Field(
+        default_factory=list,
+        description="Plan tier presets to persist. Missing tiers fall back to defaults.",
+    )
+    updatedBy: Optional[str] = Field(
+        default=None,
+        description="Operator identifier stored with the update.",
+    )
+    note: Optional[str] = Field(
+        default=None,
+        description="Optional note describing the preset change.",
     )
 
 

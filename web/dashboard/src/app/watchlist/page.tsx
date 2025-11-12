@@ -37,6 +37,7 @@ import {
 import { resolveCompanyIdentifier } from "@/hooks/useCompanySearch";
 import {
   ApiError,
+  type AlertChannelType,
   type AlertRule,
   type WatchlistRadarItem,
   type WatchlistDispatchResult,
@@ -77,6 +78,9 @@ const GROUP_OPTIONS: Array<{ value: GroupOption; label: string }> = [
   { value: "ticker", label: "티커별" },
   { value: "rule", label: "룰별" },
 ];
+
+const isAlertChannelType = (value: unknown): value is AlertChannelType =>
+  value === "email" || value === "telegram" || value === "slack" || value === "webhook" || value === "pagerduty";
 
 type DigestTargetType = "slack" | "email";
 
@@ -1067,7 +1071,11 @@ export default function WatchlistRadarPage() {
       setSelectedEventTypes(conditionType ? [conditionType] : []);
 
       const channelTypes = Array.from(
-        new Set((rule.channels ?? []).map((channel) => channel.type).filter((value): value is string => Boolean(value))),
+        new Set(
+          (rule.channels ?? [])
+            .map((channel) => channel.type)
+            .filter((value): value is AlertChannelType => isAlertChannelType(value)),
+        ),
       );
       setSelectedChannels(channelTypes);
 

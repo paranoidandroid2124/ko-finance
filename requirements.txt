@@ -29,3 +29,5 @@ lxml
 feedparser
 lxml
 PyYAML
+google-auth==2.33.0
+pyotp==2.9.0

@@ -18,7 +18,7 @@ import type { Route } from "next";
 
 type NavItem = { href: Route; label: string; icon: typeof LayoutDashboard };
 
-const NAV_ITEMS: NavItem[] = [
+const BASE_NAV_ITEMS: NavItem[] = [
   { href: "/", label: "한눈에 보기", icon: LayoutDashboard },
   { href: "/watchlist", label: "워치리스트", icon: Radar },
   { href: "/news", label: "뉴스", icon: Newspaper },
@@ -27,12 +27,14 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/labs/event-study", label: "Labs · 이벤트 스터디", icon: FlaskConical },
   { href: "/chat", label: "대화", icon: MessageSquare },
   { href: "/pricing", label: "플랜 & 가격", icon: CreditCard },
-  { href: "/admin", label: "운영 콘솔", icon: Shield },
-  { href: "/settings", label: "설정", icon: Settings }
 ];
 
+const ADMIN_NAV_ITEM: NavItem = { href: "/admin", label: "운영 콘솔", icon: Shield };
+const SHOW_ADMIN_NAV = process.env.NEXT_PUBLIC_ENABLE_ADMIN_NAV === "true";
+
 export function SideNav() {
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
+  const navItems = SHOW_ADMIN_NAV ? [...BASE_NAV_ITEMS, ADMIN_NAV_ITEM] : BASE_NAV_ITEMS;
 
   return (
     <aside className="hidden min-h-screen w-64 flex-col border-r border-border-light bg-background-cardLight px-4 py-6 dark:border-border-dark dark:bg-background-cardDark lg:flex">
@@ -43,7 +45,7 @@ export function SideNav() {
         </p>
       </div>
       <nav className="mt-6 flex flex-1 flex-col gap-1">
-        {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+        {navItems.map(({ href, label, icon: Icon }) => {
           const isActive = href === "/" ? pathname === href : pathname.startsWith(href);
           const baseClasses =
             "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-primary/10 hover:text-primary dark:hover:bg-primary.dark/15";

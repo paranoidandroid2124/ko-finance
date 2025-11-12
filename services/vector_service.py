@@ -76,6 +76,14 @@ def _normalize_chunk_payload(raw_payload: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
+def _prepare_chunk_text(raw_value: Any) -> str:
+    if isinstance(raw_value, str):
+        return raw_value.strip()
+    if raw_value is None:
+        return ""
+    return str(raw_value).strip()
+
+
 def _create_client() -> QdrantClient:
     last_error: Optional[Exception] = None
     for attempt in range(1, QDRANT_CONNECT_RETRIES + 1):
@@ -124,10 +132,11 @@ def store_chunk_vectors(
     client = _client()
     init_collection()
 
-    contents: List[str] = []
-    for chunk in chunks:
-        raw_content = chunk.get("content", "")
-        text = raw_content if isinstance(raw_content, str) else str(raw_content)
+    jobs: List[Dict[str, Any]] = []
+    for idx, chunk in enumerate(chunks):
+        text = _prepare_chunk_text(chunk.get("content", ""))
+        if not text:
+            continue
         if len(text) > EMBEDDING_MAX_CONTENT_CHARS:
             logger.debug(
                 "Truncating chunk content for filing %s (chars=%d -> %d).",
@@ -136,24 +145,26 @@ def store_chunk_vectors(
                 EMBEDDING_MAX_CONTENT_CHARS,
             )
             text = text[:EMBEDDING_MAX_CONTENT_CHARS]
-        contents.append(text)
+        jobs.append({"index": idx, "text": text})
 
-    if not any(contents):
-        logger.warning("All chunk contents are empty for filing %s.", filing_id)
+    if not jobs:
+        logger.warning("All chunk contents are empty or invalid for filing %s.", filing_id)
         return
 
-    vectors: List[List[float]] = []
-    index = 0
+    vectors: Dict[int, List[float]] = {}
+    cursor = 0
     batch_size = EMBEDDING_BATCH_SIZE
-    total = len(contents)
-    while index < total:
-        end = min(total, index + batch_size)
-        batch = contents[index:end]
+    total = len(jobs)
+    while cursor < total:
+        end = min(total, cursor + batch_size)
+        batch_jobs = jobs[cursor:end]
+        batch_texts = [job["text"] for job in batch_jobs]
         try:
-            embedding_response = litellm.embedding(model=EMBEDDING_MODEL, input=batch)
+            embedding_response = litellm.embedding(model=EMBEDDING_MODEL, input=batch_texts)
         except ContextWindowExceededError as exc:
-            if len(batch) == 1:
-                original_text = contents[index]
+            if len(batch_jobs) == 1:
+                job = jobs[cursor]
+                original_text = job["text"]
                 if len(original_text) > 1024:
                     new_length = max(1024, len(original_text) // 2)
                     clipped = original_text[:new_length]
@@ -164,7 +175,7 @@ def store_chunk_vectors(
                         len(original_text),
                         len(clipped),
                     )
-                    contents[index] = clipped
+                    job["text"] = clipped
                     continue
                 logger.error(
                     "Embedding chunk still exceeds context limit for filing %s after truncation.",
@@ -185,11 +196,18 @@ def store_chunk_vectors(
             logger.error("Embedding generation failed for filing %s: %s", filing_id, exc, exc_info=True)
             raise
 
-        vectors.extend(item["embedding"] for item in embedding_response.data)
-        index = end
+        for offset, item in enumerate(embedding_response.data):
+            job = batch_jobs[offset]
+            vectors[job["index"]] = item["embedding"]
+
+        cursor = end
         batch_size = EMBEDDING_BATCH_SIZE
     points: List[models.PointStruct] = []
-    for idx, chunk in enumerate(chunks):
+    for job in jobs:
+        vector = vectors.get(job["index"])
+        if vector is None:
+            continue
+        chunk = chunks[job["index"]]
         payload = {
             "filing_id": filing_id,
             "id": chunk.get("id"),
@@ -198,7 +216,7 @@ def store_chunk_vectors(
             "type": chunk.get("type"),
             "section": chunk.get("section"),
             "source": chunk.get("source"),
-            "content": contents[idx],
+            "content": job["text"],
             "metadata": chunk.get("metadata"),
         }
         if metadata:
@@ -206,8 +224,11 @@ def store_chunk_vectors(
                 if value is None:
                     continue
                 payload[key] = value
-        points.append(models.PointStruct(id=str(uuid.uuid4()), vector=vectors[idx], payload=payload))
+        points.append(models.PointStruct(id=str(uuid.uuid4()), vector=vector, payload=payload))
 
+    if not points:
+        logger.warning("No vectors generated for filing %s after filtering invalid chunks.", filing_id)
+        return
     client.upsert(collection_name=COLLECTION_NAME, points=points, wait=True)
     logger.info("Stored %d vectors for filing %s.", len(points), filing_id)
 
@@ -257,6 +278,9 @@ def query_vector_store(
     max_filings: int = 1,
     filters: Optional[Dict[str, Any]] = None,
 ) -> VectorSearchResult:
+    normalized_query = query_text.strip() if isinstance(query_text, str) else str(query_text or "").strip()
+    if not normalized_query:
+        raise ValueError("query_text must be a non-empty string.")
     if top_k <= 0:
         raise ValueError("top_k must be greater than zero.")
     if max_filings <= 0:
@@ -270,7 +294,7 @@ def query_vector_store(
         raise RuntimeError("Vector collection unavailable.") from exc
 
     try:
-        embedding_response = litellm.embedding(model=EMBEDDING_MODEL, input=[query_text])
+        embedding_response = litellm.embedding(model=EMBEDDING_MODEL, input=[normalized_query])
     except Exception as exc:
         logger.error("Embedding generation for query failed: %s", exc, exc_info=True)
         raise RuntimeError("Embedding generation failed.") from exc

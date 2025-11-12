@@ -15,8 +15,6 @@ from schemas.api.news import (
     NewsInsightsResponse,
     NewsListItem,
     NewsObservationResponse,
-    NewsSentimentHeatmapPoint,
-    NewsSentimentHeatmapResponse,
     NewsSignalResponse,
     NewsTopicInsight,
 )
@@ -39,140 +37,6 @@ def _normalize_topic(value: str) -> str:
     return value.strip().lower()
 
 
-def _resolve_bucket_minutes(window_minutes: int, requested_bucket: int | None) -> int:
-    if requested_bucket and requested_bucket > 0:
-        return max(5, requested_bucket)
-
-    if window_minutes <= 180:  # up to 3 hours
-        return 15
-    if window_minutes <= 12 * 60:  # up to half a day
-        return 30
-    if window_minutes <= 24 * 60:
-        return 60
-    if window_minutes <= 3 * 24 * 60:
-        return 180
-    return 360
-
-
-def _format_bucket_label(offset_minutes: int) -> str:
-    if offset_minutes <= 0:
-        return "현재"
-    if offset_minutes >= 1440:
-        days = offset_minutes // 1440
-        remaining_minutes = offset_minutes % 1440
-        hours = remaining_minutes // 60
-        if hours:
-            return f"-{days}일 {hours}시간"
-        return f"-{days}일"
-    if offset_minutes % 60 == 0:
-        hours = offset_minutes // 60
-        return f"-{hours}시간"
-    return f"-{offset_minutes}분"
-
-
-def _build_heatmap(
-    db: Session,
-    *,
-    window_minutes: int = 60,
-    bucket_minutes: int | None = None,
-    max_sectors: int = 6,
-) -> NewsSentimentHeatmapResponse:
-    if window_minutes <= 0:
-        window_minutes = 60
-
-    bucket_minutes = _resolve_bucket_minutes(window_minutes, bucket_minutes)
-    bucket_count = max(1, window_minutes // bucket_minutes + 1)
-
-    now = datetime.now(timezone.utc)
-    window_start = now - timedelta(minutes=window_minutes + bucket_minutes)
-
-    signals = (
-        db.query(NewsSignal)
-        .filter(NewsSignal.published_at >= window_start)
-        .filter(NewsSignal.published_at <= now)
-        .order_by(NewsSignal.published_at.desc())
-        .all()
-    )
-
-    bucket_ranges: List[tuple[int, str, datetime, datetime]] = []
-    for index in range(bucket_count):
-        offset = (bucket_count - 1 - index) * bucket_minutes
-        bucket_end = now - timedelta(minutes=offset)
-        bucket_start = bucket_end - timedelta(minutes=bucket_minutes)
-        label = _format_bucket_label(offset)
-        bucket_ranges.append((index, label, bucket_start, bucket_end))
-
-    sector_counts: Counter[str] = Counter()
-    bucket_values: dict[tuple[str, int], dict[str, object]] = defaultdict(lambda: {"sentiments": [], "count": 0})
-
-    default_sector_name = _sector_name_from_slug(DEFAULT_SECTOR_SLUG)
-
-    for signal in signals:
-        slug = resolve_sector_slug(signal.topics, signal.ticker)
-        sector = _sector_name_from_slug(slug)
-        sector_counts[sector] += 1
-
-        published_at = signal.published_at
-        if published_at is None:
-            continue
-        if published_at.tzinfo is None:
-            published_at = published_at.replace(tzinfo=timezone.utc)
-
-        for bucket_index, _, bucket_start, bucket_end in bucket_ranges:
-            if bucket_start <= published_at <= bucket_end:
-                key = (sector, bucket_index)
-                bucket_values[key]["count"] = int(bucket_values[key]["count"]) + 1
-                if signal.sentiment is not None:
-                    sentiments = bucket_values[key]["sentiments"]
-                    if isinstance(sentiments, list):
-                        sentiments.append(float(signal.sentiment))
-                    else:
-                        bucket_values[key]["sentiments"] = [float(signal.sentiment)]
-                break
-
-    top_sectors = [sector for sector, _ in sector_counts.most_common(max_sectors)]
-    if not top_sectors:
-        top_sectors = [default_sector_name]
-
-    # Ensure default sector present if data exists but filtered out
-    if default_sector_name in sector_counts and default_sector_name not in top_sectors:
-        if len(top_sectors) >= max_sectors:
-            top_sectors[-1] = default_sector_name
-        else:
-            top_sectors.append(default_sector_name)
-
-    points: List[NewsSentimentHeatmapPoint] = []
-    sector_index_map = {sector: idx for idx, sector in enumerate(top_sectors)}
-
-    for sector, idx in sector_index_map.items():
-        for bucket_index, _, _, _ in bucket_ranges:
-            key = (sector, bucket_index)
-            data = bucket_values.get(key)
-            if not data:
-                points.append(
-                    NewsSentimentHeatmapPoint(
-                        sector_index=idx,
-                        bucket_index=bucket_index,
-                        sentiment=None,
-                        article_count=0,
-                    )
-                )
-                continue
-            sentiments = data.get("sentiments")
-            sentiment_value = None
-            if isinstance(sentiments, list) and len(sentiments) > 0:
-                sentiment_value = sum(sentiments) / len(sentiments)
-            points.append(
-                NewsSentimentHeatmapPoint(
-                    sector_index=idx,
-                    bucket_index=bucket_index,
-                    sentiment=round(sentiment_value, 3) if sentiment_value is not None else None,
-                    article_count=int(data.get("count", 0)),
-                )
-            )
-
-    ordered_buckets = [{"label": label, "start": start.isoformat(), "end": end.isoformat()} for (_, label, start, end) in bucket_ranges]
-    return NewsSentimentHeatmapResponse(sectors=top_sectors, buckets=ordered_buckets, points=points)
 
 
 def _build_news_insights(
@@ -203,7 +67,11 @@ def _build_news_insights(
     filtered_signals: List[tuple[NewsSignal, str, str]] = []
 
     for entry in candidate_news:
-        slug = resolve_sector_slug(entry.topics, entry.ticker)
+        body_text = entry.summary
+        evidence = getattr(entry, "evidence", None)
+        if not body_text and isinstance(evidence, dict):
+            body_text = evidence.get("rationale")
+        slug = resolve_sector_slug(entry.topics, entry.ticker, title=entry.headline, body=body_text)
         sector = _sector_name_from_slug(slug)
         sentiment_label = map_sentiment(entry.sentiment)
 
@@ -306,15 +174,6 @@ def list_news_observations(skip: int = 0, limit: int = 20, db: Session = Depends
         .all()
     )
     return observations
-
-
-@router.get("/sentiment/heatmap", response_model=NewsSentimentHeatmapResponse)
-def read_news_sentiment_heatmap(
-    window_minutes: int = 60,
-    bucket_minutes: int | None = Query(default=None, ge=5),
-    db: Session = Depends(get_db),
-) -> NewsSentimentHeatmapResponse:
-    return _build_heatmap(db, window_minutes=window_minutes, bucket_minutes=bucket_minutes)
 
 
 @router.get("/insights", response_model=NewsInsightsResponse)
