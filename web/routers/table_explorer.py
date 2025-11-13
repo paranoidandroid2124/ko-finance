@@ -4,6 +4,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -19,6 +20,7 @@ from services.plan_service import PlanContext
 from web.deps import require_plan_feature
 
 router = APIRouter(prefix="/table-explorer", tags=["Table Explorer"])
+_FULL_ACCESS_TIERS = {"pro", "enterprise"}
 
 
 def _quality(payload: Optional[dict]) -> Optional[TableQuality]:
@@ -76,6 +78,17 @@ def _load_cells(db: Session, table_id: UUID) -> List[TableCellResponse]:
     ]
 
 
+def _require_full_access(plan: PlanContext) -> None:
+    if plan.tier not in _FULL_ACCESS_TIERS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "table.explorer.restricted",
+                "message": "정규화된 표 내용은 Pro 이상 요금제에서만 확인할 수 있습니다.",
+            },
+        )
+
+
 @router.get("/tables", response_model=TableListResponse)
 def list_tables(
     table_type: Optional[str] = Query(default=None, description="Filter by table type."),
@@ -112,8 +125,9 @@ def list_tables(
 def get_table_detail(
     table_id: UUID,
     db: Session = Depends(get_db),
-    _: PlanContext = Depends(require_plan_feature("table.explorer")),
+    plan: PlanContext = Depends(require_plan_feature("table.explorer")),
 ) -> TableDetailResponse:
+    _require_full_access(plan)
     table = db.get(TableMeta, table_id)
     if not table:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table metadata not found.")
@@ -125,3 +139,29 @@ def get_table_detail(
         tableJson=table.table_json,
         cells=cells,
     )
+
+
+@router.get("/export")
+def export_table(
+    table_id: UUID = Query(..., alias="id"),
+    fmt: str = Query("csv", pattern="^(csv|json)$"),
+    db: Session = Depends(get_db),
+    plan: PlanContext = Depends(require_plan_feature("table.explorer")),
+):
+    _require_full_access(plan)
+    table = db.get(TableMeta, table_id)
+    if not table:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table metadata not found.")
+
+    if fmt == "json":
+        if not table.table_json:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="JSON payload not available.")
+        payload = table.table_json
+        return JSONResponse(payload)
+
+    csv_payload = table.csv
+    if not csv_payload:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CSV payload not available.")
+    filename = f"{table.receipt_no or table.id}.csv"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return PlainTextResponse(csv_payload, media_type="text/csv; charset=utf-8", headers=headers)

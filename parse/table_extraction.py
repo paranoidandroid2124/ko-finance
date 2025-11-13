@@ -7,6 +7,7 @@ import hashlib
 import html
 import io
 import math
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,44 @@ logger = get_logger(__name__)
 
 NUMERIC_PUNCTUATION = {",", " ", "\u00a0"}
 DATE_SEPARATORS = {".", "-", "/"}
+
+_FULLWIDTH_DIGITS = {
+    ord("０"): "0",
+    ord("１"): "1",
+    ord("２"): "2",
+    ord("３"): "3",
+    ord("４"): "4",
+    ord("５"): "5",
+    ord("６"): "6",
+    ord("７"): "7",
+    ord("８"): "8",
+    ord("９"): "9",
+}
+_SPECIAL_DASHES = {
+    ord("–"): "-",
+    ord("—"): "-",
+    ord("−"): "-",
+    ord("﹣"): "-",
+    ord("－"): "-",
+}
+_NUMERIC_TRANSLATION = {**_FULLWIDTH_DIGITS, **_SPECIAL_DASHES}
+
+UNIT_KEYWORDS = {
+    "억원": 1e8,
+    "억 원": 1e8,
+    "백만원": 1e6,
+    "백만 원": 1e6,
+    "천만원": 1e7,
+    "천만 원": 1e7,
+    "천원": 1e3,
+    "천 원": 1e3,
+    "원": 1.0,
+}
+DATE_REGEXPS = [
+    re.compile(r"\d{4}[-./]?\d{1,2}[-./]?\d{1,2}"),
+    re.compile(r"\d{2}[-./]\d{1,2}[-./]\d{1,2}"),
+    re.compile(r"\d{4}\.?\s?Q[1-4]"),
+]
 
 TABLE_TYPE_KEYWORDS: Dict[str, Sequence[str]] = {
     "dividend": ("배당", "주당", "현금배당", "배당금", "cash dividend", "dividend"),
@@ -88,6 +127,14 @@ def _clean_value(value: Any) -> str:
     return text.strip()
 
 
+def _translate_numeric(text: str) -> str:
+    if not text:
+        return ""
+    normalized = text.translate(_NUMERIC_TRANSLATION)
+    normalized = normalized.replace("\u00a0", " ")
+    return normalized
+
+
 def _normalize_matrix(rows: Sequence[Sequence[Any]]) -> List[List[str]]:
     width = max((len(row) for row in rows if row), default=0)
     normalized: List[List[str]] = []
@@ -100,10 +147,10 @@ def _normalize_matrix(rows: Sequence[Sequence[Any]]) -> List[List[str]]:
 def _looks_numeric(value: str) -> bool:
     if not value:
         return False
-    candidate = value.strip().lower().replace("−", "-")
+    candidate = _translate_numeric(value).strip().lower()
     if candidate.endswith("%"):
         candidate = candidate[:-1]
-    candidate = "".join(ch for ch in candidate if ch not in NUMERIC_PUNCTUATION)
+    candidate = ''.join(ch for ch in candidate if ch not in NUMERIC_PUNCTUATION)
     if not candidate:
         return False
     if candidate.startswith("(") and candidate.endswith(")"):
@@ -114,11 +161,10 @@ def _looks_numeric(value: str) -> bool:
     except ValueError:
         return False
 
-
 def _parse_numeric(value: str) -> Optional[float]:
     if not _looks_numeric(value):
         return None
-    candidate = value.strip().lower().replace("−", "-")
+    candidate = _translate_numeric(value).strip().lower()
     sign = 1.0
     if candidate.startswith("(") and candidate.endswith(")"):
         sign = -1.0
@@ -127,24 +173,32 @@ def _parse_numeric(value: str) -> Optional[float]:
     if candidate.endswith("%"):
         suffix = 0.01
         candidate = candidate[:-1]
-    cleaned = "".join(ch for ch in candidate if ch not in NUMERIC_PUNCTUATION | {"%"}).replace("--", "-")
+    unit_scale = 1.0
+    for keyword, scale in UNIT_KEYWORDS.items():
+        if keyword in candidate:
+            unit_scale = scale
+            candidate = candidate.replace(keyword, '')
+            break
+    cleaned = ''.join(ch for ch in candidate if ch not in NUMERIC_PUNCTUATION | {"%"}).replace("--", "-")
     if not cleaned:
         return None
     try:
-        return float(cleaned) * sign * suffix
+        return float(cleaned) * sign * suffix * unit_scale
     except ValueError:
         return None
-
 
 def _looks_date(value: str) -> bool:
     if not value:
         return False
-    if len(value) < 6:
+    normalized = _translate_numeric(value).strip()
+    if len(normalized) < 6:
         return False
-    separators = sum(1 for ch in value if ch in DATE_SEPARATORS)
-    digits = sum(1 for ch in value if ch.isdigit())
-    return separators >= 1 and digits >= (len(value) - separators)
-
+    for pattern in DATE_REGEXPS:
+        if pattern.search(normalized):
+            return True
+    separators = sum(1 for ch in normalized if ch in DATE_SEPARATORS)
+    digits = sum(1 for ch in normalized if ch.isdigit())
+    return separators >= 1 and digits >= max(4, len(normalized) - separators)
 
 def _row_is_data(row: Sequence[str]) -> bool:
     values = [cell for cell in row if cell]

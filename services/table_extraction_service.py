@@ -15,6 +15,7 @@ from core.logging import get_logger
 from models.filing import Filing
 from models.table_extraction import TableCell, TableMeta
 from parse.table_extraction import TableExtractionResult, TableExtractor, TableExtractorError
+from services.table_metrics import record_table_cell_accuracy, record_table_extract_success_ratio
 
 logger = get_logger(__name__)
 
@@ -23,9 +24,9 @@ _DEFAULT_TYPES = tuple(
     for token in (env_str("TABLE_EXTRACTION_TARGET_TYPES", "dividend,treasury,cb_bw,financials") or "").split(",")
     if token.strip()
 )
-_MAX_PAGES = env_int("TABLE_EXTRACTION_MAX_PAGES", 20, minimum=1)
+_MAX_PAGES = env_int("TABLE_EXTRACTION_MAX_PAGES", 30, minimum=1)
 _MAX_TABLES = env_int("TABLE_EXTRACTION_MAX_TABLES", 80, minimum=1)
-_TIME_BUDGET = env_int("TABLE_EXTRACTION_TAT_SECONDS", 90, minimum=30)
+_TIME_BUDGET = env_int("TABLE_EXTRACTION_TAT_SECONDS", 15, minimum=5)
 _WRITE_ARTIFACTS = env_bool("TABLE_EXTRACTION_WRITE_ARTIFACTS", True)
 _INCLUDE_UNKNOWN = env_bool("TABLE_EXTRACTION_INCLUDE_UNKNOWN", False)
 
@@ -143,6 +144,7 @@ def extract_tables_for_filing(
     max_pages: Optional[int] = None,
     max_tables: Optional[int] = None,
     time_budget_seconds: Optional[int] = None,
+    source: str = "ingest",
 ) -> Dict[str, Any]:
     """Run the PDF table extractor and persist normalized results."""
 
@@ -188,8 +190,19 @@ def extract_tables_for_filing(
         artifacts = _write_artifacts(filing.receipt_no, result) if _WRITE_ARTIFACTS else None
         _persist_table(db, filing, pdf_path, result, artifacts=artifacts)
         stored += 1
+        try:
+            accuracy = float(result.stats.get("nonEmptyRatio", 0.0))
+        except (TypeError, ValueError):
+            accuracy = 0.0
+        record_table_cell_accuracy(result.table_type or "unknown", accuracy)
 
     db.commit()
+
+    record_table_extract_success_ratio(
+        stored=stored,
+        total=len(raw_results),
+        source=source or "ingest",
+    )
 
     elapsed_ms = (time.perf_counter() - started) * 1000.0
     return {
@@ -214,7 +227,7 @@ def run_table_extraction_for_receipt(db: Session, receipt_no: str, *, pdf_path: 
     target_pdf = pdf_path or filing.file_path
     if not target_pdf:
         raise TableExtractionServiceError(f"Filing {receipt_no} does not have a resolved PDF path.")
-    return extract_tables_for_filing(db, filing=filing, pdf_path=target_pdf)
+    return extract_tables_for_filing(db, filing=filing, pdf_path=target_pdf, source="backfill")
 
 
 __all__ = [

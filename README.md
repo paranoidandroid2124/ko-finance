@@ -62,12 +62,11 @@ POSTGRES_DB=kfinance_db \
 스크립트는 실패 시 즉시 중단하며, 순서를 보장하므로 수동 `psql -f …` 반복을 피할 수 있습니다. 필요하다면 `DOCKER_POSTGRES_CONTAINER` 대신 `DATABASE_URL`만 지정해도 됩니다.
 
 ### Table Extraction v1
-- **Schema:** `ops/migrations/create_table_extraction.sql` provisions `table_meta` + `table_cells` and is wired into `ops/migrations/apply_all.sh`.
-- **Pipeline:** `parse.table_extraction.TableExtractor` normalises PDF tables into HTML/CSV/JSON (with header hierarchies). `services.table_extraction_service.extract_tables_for_filing` persists rows and saves artefacts under `reports/table_extraction/<receipt>/`.
-- **Ingest stage:** `parse.tasks.process_filing` now executes `extract_tables` right after chunk ingestion; failures fall back to `ingest_dead_letters` with `task_name=table_extraction`.
-- **CLI:** `python scripts/table_extraction.py --receipt 2025XXXXXXX` to reprocess a filing (persisted) or `python scripts/table_extraction.py --file uploads/2025...pdf --output reports/table_extraction/manual` for ad-hoc runs.
-- **Validation:** `python scripts/table_extraction_eval.py --samples 50 --input uploads --output reports/table_extraction/quality_report.json` generates QA metrics (target pass rate ≥0.90 using header coverage / non-empty / numeric checks).
-- **API draft:** `GET /api/v1/table-explorer/tables` (filters: `tableType`, `receiptNo`, `ticker`, `corpCode`) and `GET /api/v1/table-explorer/tables/{table_id}` stream metadata, header paths, and cell-level payloads (guarded by the `table.explorer` entitlement).
+- **Schema & pipeline:** `ops/migrations/create_table_extraction.sql` + `services/table_extraction_service.py` persist HTML/CSV/JSON artefacts per receipt under `reports/table_extraction/<receipt>/`, and ingestion (`parse.tasks.process_filing`) invokes the extractor with DLQ fallback (`task_name=table_extraction`).
+- **Backfill/CLI:** `python scripts/table_extraction.py --receipt 2025XXXXXXX` (DB persist) or `--file uploads/2025...pdf --output reports/table_extraction/manual` for ad-hoc parsing. Celery 백필 잡은 `tables.extract_receipt`(receipt_no 인자)로 제출하면 됩니다.
+- **Validation:** `python scripts/table_extraction_eval.py --samples 50 --input uploads --output reports/table_extraction/quality_report.json` → 헤더 커버리지 ≥0.75, 빈 셀 비율 ≤15%, 핵심필드 정확도 ≥0.90 등을 측정해 `reports/table_extraction/quality_report.json`을 CI 아티팩트로 남기고, pass rate <0.90이면 리그레션 알림을 띄우세요.
+- **API:** `GET /api/v1/table-explorer/tables` (검색/필터 전용), `GET /api/v1/table-explorer/tables/{id}`(세부/셀 미리보기), `GET /api/v1/table-explorer/export?id=<uuid>&fmt=csv|json`이 제공됩니다. `table.explorer` 엔타이틀먼트 + Pro/Enterprise 플랜에서만 세부/다운로드가 허용됩니다.
+- **Runbook:** QA/프론트 연동/운영 플로우는 `docs/table_extraction/runbook.md` 참고.
 
 ### Guest/Public Preview
 - `GET /api/v1/public/filings` · `POST /api/v1/public/chat` 는 인증 없이 최신 공시 목록과 간단한 챗 답변 미리보기를 제공합니다. 기본 rate limit(시간당 5회)이 적용됩니다.
@@ -144,6 +143,8 @@ Ensure Redis/Postgres/Qdrant services are reachable via `.env`.
 - QA: `python scripts/qa/sample_documents.py --total 60 --min-chunks 10 --min-ocr 15`로 매니페스트를 뽑은 뒤, `python scripts/qa/verify_sentence_offsets.py --manifest scripts/qa/samples/manifest_<ts>.json --fail-on-issues`로 hash/offset 검사 리포트를 생성할 수 있습니다. CI에서는 `pytest tests/qa/test_sentence_offsets.py`로 리포트 생성 로직을 sanity-check합니다.
 - Vector store prerequisites: Qdrant reachable, embeddings configured via `.env` (`EMBEDDING_MODEL`, `QDRANT_*`).
 - Guardrail violations return the `SAFE_MESSAGE`; see `original_answer` for the redacted text.
+- Hybrid retrieval (BM25 + dense): run `ops/migrations/20251113_add_hybrid_search_indexes.sql`, set `SEARCH_MODE=hybrid`, and tune `BM25_TOPN`, `DENSE_TOPN`, `RRF_K`. Vertex reranking is enabled via `RERANK_PROVIDER=vertex`, `RERANK_MODEL`, and `RERANK_RANKING_CONFIG` (Discovery Engine rankingConfig path); failures automatically fall back to hybrid-without-rerank.
+- Evaluation: `python scripts/eval_hybrid.py --dataset eval/datasets/hybrid_v1.jsonl --mode hybrid+vertex --top-k 3 --candidate-k 50` writes `reports/hybrid/<ts>/report.json` containing Top-3 accuracy, MRR@10, NDCG@5, Recall@50, and latency p50/p95 so we can compare against previous baselines with `--baseline-report`.
 
 ### Dashboard UI (Frontend)
 - 사용자 대시보드: `web/dashboard` (Next.js 기반 메인 사용자 경험). 디자인 시스템 문서: `design/ui_design_system.md`, `design/dashboard_wireframes.md`. `pnpm dev` 또는 `npm run dev`, Storybook은 `pnpm storybook`.

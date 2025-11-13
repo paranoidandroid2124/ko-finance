@@ -48,7 +48,7 @@ from services.plan_service import PlanContext, update_plan_context
 from web.deps_admin import AdminSession, load_admin_token_map, require_admin_session
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
-protected_router = APIRouter(prefix="/admin", tags=["Admin"], dependencies=[Depends(require_admin_session)])
+protected_router = APIRouter(tags=["Admin"], dependencies=[Depends(require_admin_session)])
 
 _AUDIT_DIR = Path("uploads") / "admin"
 _ALLOWED_EMAILS = {

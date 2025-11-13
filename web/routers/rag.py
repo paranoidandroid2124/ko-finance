@@ -6,7 +6,7 @@ import json
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Mapping
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Mapping
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -30,7 +30,14 @@ from schemas.api.rag import (
     RAGTelemetryResponse,
     SelfCheckResult,
 )
-from services import chat_service, date_range_parser, vector_service, lightmem_gate, deeplink_service
+from services import (
+    chat_service,
+    date_range_parser,
+    hybrid_search,
+    vector_service,
+    lightmem_gate,
+    deeplink_service,
+)
 from services.audit_log import audit_rag_event
 from services.user_settings_service import UserLightMemSettings
 from services.rag_shared import build_anchor_payload, normalize_reliability, safe_float, safe_int
@@ -625,6 +632,44 @@ def _prepare_vector_filters(filters: FilingFilter) -> Dict[str, Any]:
     return vector_filters
 
 
+def _build_related_filings(payload: Optional[Sequence[Mapping[str, Any]]]) -> List[RelatedFiling]:
+    related: List[RelatedFiling] = []
+    if not payload:
+        return related
+    for item in payload:
+        filing_id = item.get("filing_id")
+        if not filing_id:
+            continue
+        related.append(
+            RelatedFiling(
+                filing_id=str(filing_id),
+                score=float(item.get("score") or 0.0),
+                title=item.get("title"),
+                sentiment=item.get("sentiment"),
+                published_at=item.get("published_at"),
+            )
+        )
+    return related
+
+
+def _resolve_selected_filing_id(
+    retrieval: Optional[vector_service.VectorSearchResult],
+    requested_filing_id: Optional[str],
+    related_filings: Sequence[RelatedFiling],
+) -> Optional[str]:
+    if retrieval and retrieval.filing_id:
+        return retrieval.filing_id
+    if requested_filing_id:
+        return requested_filing_id
+    if related_filings:
+        return related_filings[0].filing_id
+    return None
+
+
+def _related_filings_meta(related_filings: Sequence[RelatedFiling]) -> List[Dict[str, Any]]:
+    return [item.model_dump() for item in related_filings]
+
+
 RELATIVE_LABEL_DISPLAY = {
     "today": "오늘",
     "yesterday": "어제",
@@ -705,8 +750,18 @@ def _vector_search(
     top_k: int,
     max_filings: int,
     filters: Dict[str, Any],
+    db: Optional[Session] = None,
 ) -> vector_service.VectorSearchResult:
     try:
+        if db is not None and hybrid_search.is_hybrid_enabled():
+            return hybrid_search.query_hybrid(
+                db,
+                question,
+                filing_id=filing_id,
+                top_k=top_k,
+                max_filings=max_filings,
+                filters=filters,
+            )
         return vector_service.query_vector_store(
             query_text=question,
             filing_id=filing_id,
@@ -919,20 +974,8 @@ def build_basic_reply(
             filters=filters or {},
         )
         context_chunks = retrieval.chunks
-        related_filings = [
-            RelatedFiling(
-                filing_id=item["filing_id"],
-                score=float(item.get("score") or 0.0),
-                title=item.get("title"),
-                sentiment=item.get("sentiment"),
-                published_at=item.get("published_at"),
-            )
-            for item in retrieval.related_filings
-            if item.get("filing_id")
-        ]
-        selected_filing_id = retrieval.filing_id or filing_id
-        if selected_filing_id is None and related_filings:
-            selected_filing_id = related_filings[0].filing_id
+        related_filings = _build_related_filings(retrieval.related_filings)
+        selected_filing_id = _resolve_selected_filing_id(retrieval, filing_id, related_filings)
 
         if rag_mode == "vector" and not context_chunks:
             return RAGQueryResponse(
@@ -953,7 +996,7 @@ def build_basic_reply(
                 trace_id=trace_id,
                 meta={
                     "selected_filing_id": selected_filing_id,
-                    "related_filings": [item.model_dump() for item in related_filings],
+                    "related_filings": _related_filings_meta(related_filings),
                     "evidence_version": "v2",
                     "evidence_diff": {"enabled": False, "removed": []},
                     "guardrail": {
@@ -980,7 +1023,7 @@ def build_basic_reply(
     retrieval_meta.setdefault("rag_mode", payload_rag_mode)
     meta_payload["retrieval"] = retrieval_meta
     meta_payload.setdefault("selected_filing_id", selected_filing_id)
-    meta_payload.setdefault("related_filings", [item.model_dump() for item in related_filings])
+    meta_payload.setdefault("related_filings", _related_filings_meta(related_filings))
     guard_meta = dict(meta_payload.get("guardrail") or {})
     guard_meta.setdefault("decision", payload.get("judge_decision"))
     guard_meta.setdefault("reason", payload.get("judge_reason"))
@@ -1264,22 +1307,11 @@ def query_rag(
                 top_k=request.top_k,
                 max_filings=max_filings,
                 filters=filter_payload,
+                db=db,
             )
             context_chunks = retrieval.chunks
-            related_filings = [
-                RelatedFiling(
-                    filing_id=item["filing_id"],
-                    score=float(item.get("score") or 0.0),
-                    title=item.get("title"),
-                    sentiment=item.get("sentiment"),
-                    published_at=item.get("published_at"),
-                )
-                for item in retrieval.related_filings
-                if item.get("filing_id")
-            ]
-            active_filing_id = retrieval.filing_id or filing_id
-            if active_filing_id is None and related_filings:
-                active_filing_id = related_filings[0].filing_id
+            related_filings = _build_related_filings(retrieval.related_filings)
+            active_filing_id = _resolve_selected_filing_id(retrieval, filing_id, related_filings)
 
             if rag_mode == "vector" and not context_chunks:
                 logger.info("No context chunks found (filing=%s, trace_id=%s).", active_filing_id or "<auto>", trace_id)
@@ -1372,7 +1404,7 @@ def query_rag(
             "recent_turn_count": recent_turn_count,
             "answer_preview": chat_service.trim_preview(answer_text),
             "selected_filing_id": selected_filing_id,
-            "related_filings": [item.model_dump() for item in related_filings],
+            "related_filings": _related_filings_meta(related_filings),
             "intent_decision": intent_decision,
             "intent_reason": intent_reason,
             "intent_model": intent_result.get("model_used"),
@@ -1623,22 +1655,11 @@ def query_rag_stream(
                 top_k=request.top_k,
                 max_filings=max_filings,
                 filters=filter_payload,
+                db=db,
             )
             context_chunks = retrieval.chunks
-            related_filings = [
-                RelatedFiling(
-                    filing_id=item["filing_id"],
-                    score=float(item.get("score") or 0.0),
-                    title=item.get("title"),
-                    sentiment=item.get("sentiment"),
-                    published_at=item.get("published_at"),
-                )
-                for item in retrieval.related_filings
-                if item.get("filing_id")
-            ]
-            active_filing_id = retrieval.filing_id or filing_id
-            if active_filing_id is None and related_filings:
-                active_filing_id = related_filings[0].filing_id
+            related_filings = _build_related_filings(retrieval.related_filings)
+            active_filing_id = _resolve_selected_filing_id(retrieval, filing_id, related_filings)
 
             if rag_mode == "vector" and not context_chunks:
                 response, needs_summary = build_empty_response(
@@ -1676,7 +1697,7 @@ def query_rag_stream(
         memory_summary = conversation_memory.get("summary") if conversation_memory else None
         memory_turn_count = len(conversation_memory.get("recent_turns") or []) if conversation_memory else 0
         selected_filing_id = active_filing_id
-        related_meta = [item.model_dump() for item in related_filings]
+        related_meta = _related_filings_meta(related_filings)
 
         def event_stream():
             streamed_tokens: List[str] = []

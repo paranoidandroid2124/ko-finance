@@ -1,7 +1,8 @@
 ## Table Explorer API (Draft v1)
 
 ### Entitlement
-All endpoints require the `table.explorer` plan entitlement. Requests without the feature return `403 {"detail": {"code": "plan.entitlement_required", ...}}`.
+- 모든 엔드포인트는 `table.explorer` 엔타이틀먼트가 필요하며, 상세 표/다운로드(`/{id}`, `/export`)는 Pro/Enterprise 플랜에서만 허용됩니다.
+- Free/Starter 플랜이거나 기능이 비활성화된 경우 `403 {"detail": {"code": "...", ...}}`가 반환됩니다.
 
 ### 1. `GET /api/v1/table-explorer/tables`
 List normalised tables with optional filters.
@@ -107,14 +108,24 @@ Fetch granular metadata plus cell-level payloads.
 }
 ```
 
-### 3. Error handling
+### 3. `GET /api/v1/table-explorer/export`
+Download the normalized table as CSV/JSON.
+
+| Query | Type | Description |
+| --- | --- | --- |
+| `id` | UUID | Table identifier (same as `/tables/{id}`). |
+| `fmt` | enum | `csv` (default) or `json`. |
+
+CSV 응답은 `Content-Disposition: attachment` 헤더로 파일 다운로드가 가능하며, JSON 모드는 `tableJson` 구조를 그대로 반환합니다.
+
+### 4. Error handling
 | Status | Scenario |
 | --- | --- |
-| `403` | Missing `table.explorer` entitlement or expired plan. |
+| `403` | Missing `table.explorer` entitlement or insufficient plan tier. |
 | `404` | Unknown `table_id`. |
 | `422` | Invalid UUID / query parameter. |
 
-### 4. Related configuration
+### 5. Related configuration
 - `.env`: `TABLE_EXTRACTION_*` knobs control the extractor (pages/tables/time budget + artefact output).
 - `uploads/admin/plan_settings.json`: ensure the `table.explorer` entitlement is present for plans that can access these APIs.
 - QA report: `reports/table_extraction/quality_report.json` tracks the latest 50-sample validation run (`scripts/table_extraction_eval.py`).

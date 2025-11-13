@@ -27,26 +27,53 @@ logger = logging.getLogger("table_extraction_eval")
 DEFAULT_OUTPUT = Path("reports/table_extraction/quality_report.json")
 
 
+CORE_FIELD_KEYWORDS: Dict[str, List[str]] = {
+    "dividend": ["배당", "주당", "배당률"],
+    "treasury": ["자사주", "취득", "처분"],
+    "cb_bw": ["전환", "사채", "권리"],
+    "financials": ["자산", "부채", "손익"],
+}
+
+
+def _core_accuracy(table_type: Optional[str], header_paths: Optional[List[List[str]]]) -> float:
+    if not table_type:
+        return 1.0
+    keywords = CORE_FIELD_KEYWORDS.get(table_type)
+    if not keywords:
+        return 1.0
+    flattened = [" ".join(path) for path in (header_paths or []) if path]
+    if not flattened:
+        return 0.0
+    hits = 0
+    for keyword in keywords:
+        if any(keyword in header for header in flattened):
+            hits += 1
+    return hits / len(keywords)
+
+
 def _validate_table(table_payload: Dict[str, Any]) -> Dict[str, Any]:
     stats = table_payload.get("stats") or {}
     header_coverage = float(stats.get("headerCoverage") or 0.0)
     non_empty_ratio = float(stats.get("nonEmptyRatio") or 0.0)
     numeric_ratio = float(stats.get("numericRatio") or 0.0)
+    core_acc = _core_accuracy(table_payload.get("table_type"), table_payload.get("headerPaths"))
 
     checks = {
         "header_rows": stats.get("headerRows", 0) >= 1,
-        "header_coverage": header_coverage >= 0.6,
-        "non_empty": non_empty_ratio >= 0.1,
+        "header_coverage": header_coverage >= 0.75,
+        "non_empty": non_empty_ratio >= 0.85,
+        "core_fields": core_acc >= 0.9,
         "numeric_density": numeric_ratio >= 0.0,
     }
     passed = all(checks.values())
-    accuracy_score = round((0.7 * header_coverage) + (0.3 * non_empty_ratio), 4)
+    accuracy_score = round((0.5 * header_coverage) + (0.3 * non_empty_ratio) + (0.2 * core_acc), 4)
     return {
         "passed": passed,
         "checks": checks,
         "headerCoverage": header_coverage,
         "nonEmptyRatio": non_empty_ratio,
         "numericRatio": numeric_ratio,
+        "coreAccuracy": round(core_acc, 4),
         "accuracyScore": accuracy_score,
         "tableType": table_payload.get("table_type"),
         "title": table_payload.get("title"),
@@ -93,6 +120,7 @@ def run_evaluation(args: argparse.Namespace) -> Dict[str, Any]:
                 "stats": table.stats,
                 "title": table.title,
                 "confidence": table.confidence,
+                "headerPaths": table.header_paths,
             }
             result = _validate_table(payload)
             table_records.append({**payload, **result})
@@ -103,6 +131,7 @@ def run_evaluation(args: argparse.Namespace) -> Dict[str, Any]:
     passed_tables = sum(1 for record in table_records if record["passed"])
     avg_header = sum(record["headerCoverage"] for record in table_records) / total_tables if total_tables else 0.0
     avg_non_empty = sum(record["nonEmptyRatio"] for record in table_records) / total_tables if total_tables else 0.0
+    avg_core = sum(record.get("coreAccuracy", 0.0) for record in table_records) / total_tables if total_tables else 0.0
     avg_accuracy = sum(record["accuracyScore"] for record in table_records) / total_tables if total_tables else 0.0
 
     summary = {
@@ -113,6 +142,7 @@ def run_evaluation(args: argparse.Namespace) -> Dict[str, Any]:
         "passRate": round(passed_tables / total_tables, 4) if total_tables else 0.0,
         "avgHeaderCoverage": round(avg_header, 4),
         "avgNonEmptyRatio": round(avg_non_empty, 4),
+        "avgCoreAccuracy": round(avg_core, 4),
         "avgAccuracyScore": round(avg_accuracy, 4),
         "targetPassRate": 0.90,
         "config": {

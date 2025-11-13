@@ -2083,3 +2083,31 @@ def aggregate_event_study_summary() -> Dict[str, int]:
 
     logger.info("Event study summary aggregation completed: %d rows.", summaries)
     return {"summaries": summaries}
+
+
+@shared_task(name="tables.extract_receipt", bind=True, max_retries=INGEST_TASK_MAX_RETRIES)
+def extract_tables_for_receipt(self, receipt_no: str) -> Dict[str, Any]:
+    """Backfill normalized tables for a specific DART receipt number."""
+
+    db = _open_session()
+    try:
+        result = table_extraction_service.run_table_extraction_for_receipt(db, receipt_no)
+        logger.info(
+            "tables.extract.completed",
+            extra={"receipt_no": receipt_no, "stored": result.get("stored"), "elapsed_ms": result.get("elapsed_ms")},
+        )
+        return {"receipt_no": receipt_no, **result}
+    except table_extraction_service.TableExtractionServiceError as exc:
+        db.rollback()
+        ingest_dlq_service.record_dead_letter(
+            db,
+            task_name="tables.extract",
+            payload={"receipt_no": receipt_no},
+            error=str(exc),
+            retries=getattr(self.request, "retries", 0),
+            receipt_no=receipt_no,
+        )
+        logger.error("tables.extract.failed receipt=%s error=%s", receipt_no, exc)
+        return {"receipt_no": receipt_no, "error": str(exc)}
+    finally:
+        db.close()
