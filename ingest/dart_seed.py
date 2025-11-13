@@ -14,14 +14,11 @@ from sqlalchemy.orm import Session
 
 from database import SessionLocal
 from ingest.dart_client import DartClient
-from ingest.file_downloader import fetch_viewer_bundle, parse_filing_bundle
-from ingest.legal_guard import evaluate_viewer_access
+from ingest.file_downloader import attempt_viewer_fallback, parse_filing_bundle
 from models.filing import Filing, STATUS_PENDING
 from services import storage_service
-from services.audit_log import audit_ingest_event
 from services.dart_sync import sync_additional_disclosures
 from services.ingest_metrics import observe_latency, record_error, record_result
-from services.ingest_policy_service import viewer_fallback_state
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -148,59 +145,37 @@ def seed_recent_filings(
 
             if not package_data:
                 corp_code = meta.get("corp_code")
-                fallback_allowed, flag_reason = viewer_fallback_state(db, corp_code)
-                legal_meta = evaluate_viewer_access(viewer_url)
-                legal_meta.update(
-                    {
-                        "corp_code": corp_code,
-                        "corp_name": meta.get("corp_name"),
-                        "fallback_allowed": fallback_allowed,
-                        "flag_reason": flag_reason,
-                    }
+                fallback_outcome = attempt_viewer_fallback(
+                    receipt_no=receipt_no,
+                    viewer_url=viewer_url,
+                    save_dir=UPLOAD_DIR,
+                    corp_code=corp_code,
+                    corp_name=meta.get("corp_name"),
+                    db=db,
                 )
-                feature_flags = {"viewer_fallback": fallback_allowed}
+                package_data = fallback_outcome.package
+                package_result = fallback_outcome.status
 
-                if not fallback_allowed:
+                if fallback_outcome.status == "fallback_blocked":
                     logger.warning(
                         "Viewer fallback blocked for receipt %s (corp_code=%s).",
                         receipt_no,
                         corp_code,
                     )
-                    audit_ingest_event(
-                        action="ingest.viewer_fallback",
-                        target_id=receipt_no,
-                        extra={**legal_meta, "blocked": True},
-                        feature_flags=feature_flags,
-                    )
-                    package_result = "fallback_blocked"
-                    fetch_duration = time.perf_counter() - fetch_started
-                    observe_latency(PACKAGE_STAGE, fetch_duration)
-                    record_result(PACKAGE_STAGE, package_result)
-                    continue
-
-                logger.info("Falling back to viewer download for %s.", receipt_no)
-                audit_ingest_event(
-                    action="ingest.viewer_fallback",
-                    target_id=receipt_no,
-                    extra=legal_meta,
-                    feature_flags=feature_flags,
-                )
-                package_data = fetch_viewer_bundle(viewer_url, UPLOAD_DIR)
-                if not package_data:
+                elif fallback_outcome.status == "fallback_disabled":
+                    logger.warning("Viewer fallback globally disabled for %s.", receipt_no)
+                elif fallback_outcome.status == "fallback_failure":
                     logger.error("Failed to obtain filing package for %s via viewer.", receipt_no)
-                    audit_ingest_event(
-                        action="ingest.viewer_fallback_failed",
-                        target_id=receipt_no,
-                        extra=legal_meta,
-                        feature_flags=feature_flags,
-                    )
-                    record_error(PACKAGE_STAGE, "viewer_fallback", "NoPackage")
-                    package_result = "failure"
+                elif fallback_outcome.status == "fallback_success":
+                    logger.info("Recovered filing package for %s via viewer fallback.", receipt_no)
+
+                if not package_data:
+                    if fallback_outcome.status == "fallback_failure":
+                        record_error(PACKAGE_STAGE, "viewer_fallback", "NoPackage")
                     fetch_duration = time.perf_counter() - fetch_started
                     observe_latency(PACKAGE_STAGE, fetch_duration)
                     record_result(PACKAGE_STAGE, package_result)
                     continue
-                package_result = "fallback_success"
 
             fetch_duration = time.perf_counter() - fetch_started
             observe_latency(PACKAGE_STAGE, fetch_duration)

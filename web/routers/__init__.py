@@ -22,10 +22,13 @@ from . import (  # noqa: F401
     payments,
     plan,
     orgs,
+    table_explorer,
+    notebooks,
     rag,
     ops,
     search,
     sectors,
+    scim,
     user_settings,
 )
 
@@ -61,11 +64,14 @@ __all__ = [
     "payments",
     "plan",
     "orgs",
+    "table_explorer",
+    "notebooks",
     "reports",
     "rag",
     "ops",
     "search",
     "sectors",
+    "scim",
     "user_settings",
 ]
 if filing is not None:

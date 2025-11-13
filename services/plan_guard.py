@@ -14,6 +14,7 @@ _FEATURE_LABELS: Dict[str, str] = {
     "evidence.inline_pdf": "Evidence PDF",
     "evidence.diff": "Evidence Diff",
     "timeline.full": "전체 타임라인",
+    "table.explorer": "Table Explorer",
 }
 
 

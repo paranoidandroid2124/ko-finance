@@ -8,14 +8,23 @@ import os
 import re
 import time
 import zipfile
+from dataclasses import dataclass, field
 from html import unescape
 from pathlib import Path
-from typing import List, Optional, Tuple, TypedDict
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, TypedDict
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
 from lxml import etree, html as lxml_html
+
+from core.env import env_bool
+from ingest.legal_guard import evaluate_viewer_access
+from services.audit_log import audit_ingest_event
+from services.ingest_policy_service import viewer_fallback_state
+
+if TYPE_CHECKING:  # pragma: no cover - typing aid only
+    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -85,6 +94,15 @@ class FilingPackage(TypedDict, total=False):
     pdf: Optional[str]
     xml: List[str]
     attachments: List[AttachmentInfo]
+
+
+@dataclass
+class ViewerFallbackResult:
+    package: Optional[FilingPackage]
+    status: str
+    blocked: bool
+    feature_flags: Dict[str, object] = field(default_factory=dict)
+    metadata: Dict[str, object] = field(default_factory=dict)
 
 
 def parse_filing_bundle(
@@ -487,6 +505,134 @@ def fetch_viewer_bundle(viewer_url: str, save_dir: str) -> Optional[FilingPackag
         return None
 
 
+def _viewer_fallback_enabled() -> bool:
+    return env_bool("INGEST_VIEWER_FALLBACK", True)
+
+
+def _legal_logging_enabled() -> bool:
+    return env_bool("LEGAL_LOG", True)
+
+
+def attempt_viewer_fallback(
+    *,
+    receipt_no: str,
+    viewer_url: str,
+    save_dir: str,
+    corp_code: Optional[str],
+    corp_name: Optional[str],
+    db: Optional["Session"],
+    viewer_fetcher: Callable[[str, str], Optional[FilingPackage]] = fetch_viewer_bundle,
+    legal_evaluator: Callable[[str], Dict[str, object]] = evaluate_viewer_access,
+    audit_logger: Callable[..., None] = audit_ingest_event,
+) -> ViewerFallbackResult:
+    """Attempt to download a filing via the viewer scraper with audit logging."""
+    try:
+        legal_meta = dict(legal_evaluator(viewer_url))
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logger.warning("Legal metadata evaluation failed for %s: %s", viewer_url, exc)
+        parsed = urlparse(viewer_url)
+        legal_meta = {
+            "viewer_url": viewer_url,
+            "viewer_path": parsed.path or "/",
+            "robots_allowed": None,
+            "robots_checked": False,
+            "tos_checked": False,
+        }
+
+    fallback_enabled = _viewer_fallback_enabled()
+    flag_allowed = True
+    flag_reason = None
+    if db is not None:
+        flag_allowed, flag_reason = viewer_fallback_state(db, corp_code)
+
+    feature_flags: Dict[str, object] = {
+        "viewer_fallback": bool(fallback_enabled and flag_allowed),
+        "viewer_fallback_env": fallback_enabled,
+        "viewer_fallback_flag": flag_allowed,
+    }
+
+    legal_meta.update(
+        {
+            "corp_code": corp_code,
+            "corp_name": corp_name,
+            "issuer": corp_name or corp_code or receipt_no,
+            "flag_reason": flag_reason,
+            "fallback_allowed": flag_allowed,
+            "global_fallback_enabled": fallback_enabled,
+            "feature_flags_snapshot": feature_flags,
+        }
+    )
+
+    def _audit(action: str, *, blocked: bool, extra: Optional[Dict[str, object]] = None) -> None:
+        if not _legal_logging_enabled():
+            return
+        payload = dict(legal_meta)
+        if extra:
+            payload.update(extra)
+        payload["blocked"] = blocked
+        audit_logger(
+            action=action,
+            target_id=receipt_no,
+            extra=payload,
+            feature_flags=feature_flags,
+        )
+
+    def _audit_block(block_reason: str) -> None:
+        _audit("ingest.viewer_fallback", blocked=True, extra={"block_reason": block_reason})
+
+    if not fallback_enabled:
+        _audit_block("env_disabled")
+        return ViewerFallbackResult(
+            package=None,
+            status="fallback_disabled",
+            blocked=True,
+            feature_flags=feature_flags,
+            metadata=dict(legal_meta),
+        )
+
+    if not flag_allowed:
+        block_reason = flag_reason or "issuer_disabled"
+        _audit_block(block_reason)
+        return ViewerFallbackResult(
+            package=None,
+            status="fallback_blocked",
+            blocked=True,
+            feature_flags=feature_flags,
+            metadata=dict(legal_meta),
+        )
+
+    _audit("ingest.viewer_fallback", blocked=False)
+
+    package: Optional[FilingPackage]
+    error_payload: Optional[Dict[str, object]] = None
+    try:
+        package = viewer_fetcher(viewer_url, save_dir)
+    except Exception as exc:  # pragma: no cover - defensive network guard
+        logger.error("Viewer fallback fetch failed for %s: %s", receipt_no, exc, exc_info=True)
+        package = None
+        error_payload = {"error": str(exc)}
+
+    if not package:
+        if error_payload is None:
+            error_payload = {"error": "NoPackage"}
+        _audit("ingest.viewer_fallback_failed", blocked=False, extra=error_payload)
+        return ViewerFallbackResult(
+            package=None,
+            status="fallback_failure",
+            blocked=False,
+            feature_flags=feature_flags,
+            metadata=dict(legal_meta),
+        )
+
+    return ViewerFallbackResult(
+        package=package,
+        status="fallback_success",
+        blocked=False,
+        feature_flags=feature_flags,
+        metadata=dict(legal_meta),
+    )
+
+
 def download_dart_pdf(viewer_url: str, save_dir: str) -> Optional[str]:
     """Convenience helper returning only the PDF path."""
     package = fetch_viewer_bundle(viewer_url, save_dir)
@@ -496,4 +642,4 @@ def download_dart_pdf(viewer_url: str, save_dir: str) -> Optional[str]:
     return pdf_path
 
 
-__all__ = ["parse_filing_bundle", "fetch_viewer_bundle", "download_dart_pdf"]
+__all__ = ["parse_filing_bundle", "fetch_viewer_bundle", "attempt_viewer_fallback", "ViewerFallbackResult", "download_dart_pdf"]

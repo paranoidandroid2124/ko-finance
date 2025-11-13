@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
 from database import Base
+from models._metadata_proxy import JSONMetadataProxy
 
 
 class OrgRole(Base):
@@ -36,7 +37,8 @@ class Org(Base):
     name = Column(String(160), nullable=False)
     status = Column(String(32), nullable=False, default="active")
     default_role = Column(String(32), ForeignKey("org_roles.key", onupdate="CASCADE"), nullable=False, default="viewer")
-    metadata = Column(JSONB, nullable=False, default=dict)
+    metadata_json = Column("metadata", JSONB, nullable=False, default=dict)
+    metadata = JSONMetadataProxy("metadata_json")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -54,7 +56,8 @@ class UserOrg(Base):
     invited_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     invited_at = Column(DateTime(timezone=True), nullable=True)
     accepted_at = Column(DateTime(timezone=True), nullable=True)
-    metadata = Column(JSONB, nullable=False, default=dict)
+    metadata_json = Column("metadata", JSONB, nullable=False, default=dict)
+    metadata = JSONMetadataProxy("metadata_json")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 

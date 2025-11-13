@@ -1,0 +1,17 @@
+{
+  "generatedAt": "2025-11-13T06:10:19.540458+00:00",
+  "pdfRoot": "uploads",
+  "sampleSize": 1,
+  "tableCount": 6,
+  "passRate": 1.0,
+  "avgHeaderCoverage": 0.9667,
+  "avgNonEmptyRatio": 0.2659,
+  "avgAccuracyScore": 0.7564,
+  "targetPassRate": 0.9,
+  "config": {
+    "maxPages": 15,
+    "maxTables": 60,
+    "timeBudget": 90.0
+  },
+  "failures": []
+}

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
+import hmac
 import ipaddress
 import json
 import logging
@@ -10,15 +13,18 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
+from urllib.parse import urlencode
 
+import httpx
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from xmltodict import parse as parse_xml
 
 from core.auth.constants import ALLOWED_SIGNUP_CHANNELS, DEFAULT_SIGNUP_CHANNEL, SignupChannel
-from core.env import env_int
+from core.env import env_bool, env_int, env_str
 from services.auth_tokens import (
     AuthTokenError,
     AuthTokenType,
@@ -35,6 +41,9 @@ from services.email_service import (
     send_password_reset_email,
     send_verification_email,
 )
+
+from services.audit_log import audit_rbac_event
+from services.rbac_service import ROLE_ORDER
 
 try:  # pragma: no cover - optional rate limiter
     from services.auth_rate_limiter import RateLimitResult, check_limit as _check_limit
@@ -67,6 +76,110 @@ _PASSWORD_HASHER = PasswordHasher(
     parallelism=_ARGON_PARALLELISM,
     hash_len=32,
     salt_len=16,
+)
+
+_SSO_STATE_SECRET = env_str("AUTH_SSO_STATE_SECRET") or env_str("AUTH_JWT_SECRET") or env_str("AUTH_SECRET") or secrets.token_urlsafe(32)
+_SSO_STATE_TTL_SECONDS = env_int("AUTH_SSO_STATE_TTL_SECONDS", 600, minimum=60)
+_PLAN_TIERS = {"free", "pro", "enterprise"}
+_USER_ROLES = {"user", "admin"}
+
+
+def _parse_role_mapping(raw: Optional[str]) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    if not raw:
+        return mapping
+    for pair in raw.split(";"):
+        if not pair.strip():
+            continue
+        if ":" not in pair:
+            continue
+        source, target = pair.split(":", 1)
+        mapping[source.strip().lower()] = target.strip().lower()
+    return mapping
+
+
+@dataclass(frozen=True)
+class SamlProviderConfig:
+    enabled: bool
+    sp_entity_id: Optional[str]
+    acs_url: Optional[str]
+    metadata_url: Optional[str]
+    sp_certificate: Optional[str]
+    idp_entity_id: Optional[str]
+    idp_sso_url: Optional[str]
+    idp_certificate: Optional[str]
+    email_attribute: str
+    name_attribute: Optional[str]
+    org_attribute: Optional[str]
+    role_attribute: Optional[str]
+    default_org_slug: Optional[str]
+    default_role: str
+    role_mapping: Dict[str, str]
+    auto_provision_orgs: bool
+    default_plan_tier: str
+
+
+@dataclass(frozen=True)
+class OidcProviderConfig:
+    enabled: bool
+    client_id: Optional[str]
+    client_secret: Optional[str]
+    authorization_url: Optional[str]
+    token_url: Optional[str]
+    userinfo_url: Optional[str]
+    redirect_uri: Optional[str]
+    scopes: Sequence[str]
+    default_org_slug: Optional[str]
+    org_claim: Optional[str]
+    role_claim: Optional[str]
+    plan_claim: Optional[str]
+    email_claim: Optional[str]
+    name_claim: Optional[str]
+    default_role: str
+    role_mapping: Dict[str, str]
+    auto_provision_orgs: bool
+    default_plan_tier: str
+
+
+_SAML_CONFIG = SamlProviderConfig(
+    enabled=env_bool("AUTH_SAML_ENABLED", False),
+    sp_entity_id=env_str("AUTH_SAML_SP_ENTITY_ID"),
+    acs_url=env_str("AUTH_SAML_ACS_URL"),
+    metadata_url=env_str("AUTH_SAML_METADATA_URL"),
+    sp_certificate=env_str("AUTH_SAML_SP_CERT"),
+    idp_entity_id=env_str("AUTH_SAML_IDP_ENTITY_ID"),
+    idp_sso_url=env_str("AUTH_SAML_IDP_SSO_URL"),
+    idp_certificate=env_str("AUTH_SAML_IDP_CERT"),
+    email_attribute=env_str("AUTH_SAML_EMAIL_ATTRIBUTE", "email"),
+    name_attribute=env_str("AUTH_SAML_NAME_ATTRIBUTE", "displayName"),
+    org_attribute=env_str("AUTH_SAML_ORG_ATTRIBUTE", "orgSlug"),
+    role_attribute=env_str("AUTH_SAML_ROLE_ATTRIBUTE", "role"),
+    default_org_slug=env_str("AUTH_SAML_DEFAULT_ORG_SLUG"),
+    default_role=env_str("AUTH_SAML_DEFAULT_RBAC_ROLE", "viewer"),
+    role_mapping=_parse_role_mapping(env_str("AUTH_SAML_ROLE_MAPPING", "admin:admin;owner:admin;editor:editor;viewer:viewer")),
+    auto_provision_orgs=env_bool("AUTH_SAML_AUTO_PROVISION_ORG", False),
+    default_plan_tier=env_str("AUTH_SAML_DEFAULT_PLAN_TIER", "enterprise"),
+)
+
+_OIDC_CONFIG = OidcProviderConfig(
+    enabled=env_bool("AUTH_OIDC_ENABLED", False),
+    client_id=env_str("AUTH_OIDC_CLIENT_ID"),
+    client_secret=env_str("AUTH_OIDC_CLIENT_SECRET"),
+    authorization_url=env_str("AUTH_OIDC_AUTHORIZATION_URL"),
+    token_url=env_str("AUTH_OIDC_TOKEN_URL"),
+    userinfo_url=env_str("AUTH_OIDC_USERINFO_URL"),
+    redirect_uri=env_str("AUTH_OIDC_REDIRECT_URI"),
+    scopes=tuple(scope for scope in (env_str("AUTH_OIDC_SCOPES") or "openid email profile").split() if scope),
+    default_org_slug=env_str("AUTH_OIDC_DEFAULT_ORG_SLUG"),
+    org_claim=env_str("AUTH_OIDC_ORG_CLAIM", "org"),
+    role_claim=env_str("AUTH_OIDC_ROLE_CLAIM", "role"),
+    plan_claim=env_str("AUTH_OIDC_PLAN_CLAIM", "plan"),
+    email_claim=env_str("AUTH_OIDC_EMAIL_CLAIM", "email"),
+    name_claim=env_str("AUTH_OIDC_NAME_CLAIM", "name"),
+    default_role=env_str("AUTH_OIDC_DEFAULT_RBAC_ROLE", "viewer"),
+    role_mapping=_parse_role_mapping(env_str("AUTH_OIDC_ROLE_MAPPING", "admin:admin;owner:admin;editor:editor;viewer:viewer")),
+    default_plan_tier=env_str("AUTH_OIDC_DEFAULT_PLAN_TIER", "enterprise"),
+    auto_provision_orgs=env_bool("AUTH_OIDC_AUTO_PROVISION_ORG", False),
 )
 
 @dataclass(frozen=True)
@@ -127,6 +240,28 @@ class AccountUnlockRequestResult:
 @dataclass(frozen=True)
 class AccountUnlockConfirmResult:
     unlocked: bool
+
+
+@dataclass(frozen=True)
+class SsoIdentity:
+    provider: str
+    email: str
+    display_name: Optional[str]
+    external_id: Optional[str]
+    plan_tier: Optional[str]
+    user_role: Optional[str]
+    org_id: Optional[str]
+    org_slug: Optional[str]
+    org_name: Optional[str]
+    rbac_role: Optional[str]
+    attributes: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class OidcAuthorizeResult:
+    authorization_url: str
+    state: str
+    expires_in: int
 
 
 class AuthServiceError(RuntimeError):
@@ -271,84 +406,20 @@ def login_user(session: Session, payload: Dict[str, Any], *, context: RequestCon
         if not user["email_verified_at"]:
             raise AuthServiceError("auth.needs_verification", "이메일 인증이 필요합니다.", 403)
 
-        session.execute(
-            text(
-                """
-                UPDATE "users"
-                SET failed_attempts = 0,
-                    locked_until = NULL,
-                    last_login_at = :now,
-                    last_login_ip = :ip
-                WHERE id = :id
-                """
-        ),
-        {"now": now, "ip": _safe_ip_value(context.ip), "id": user["id"]},
-        )
-
-        access_token, access_ttl = create_access_token(
+        _mark_login_success(session, str(user["id"]), context, now)
+        result = _issue_login_result(
+            session,
             user_id=str(user["id"]),
             email=user["email"],
             plan=user["plan_tier"],
             role=user["role"],
-            email_verified=bool(user["email_verified_at"]),
-        )
-
-        refresh_jti = str(uuid.uuid4())
-        session_token = secrets.token_urlsafe(32)
-        session_uuid = str(uuid.uuid4())
-
-        refresh_token, refresh_ttl = create_refresh_token(
-            user_id=str(user["id"]),
-            session_id=session_uuid,
-            refresh_jti=refresh_jti,
-        )
-
-        expires_at = now + timedelta(seconds=refresh_ttl)
-        row = session.execute(
-            text(
-                """
-                INSERT INTO session_tokens (
-                    id, user_id, session_token, refresh_jti, device_label, ip, user_agent_hash, expires_at
-                )
-                VALUES (:id, :user_id, :session_token, :refresh_jti, :device_label, :ip, :user_agent_hash, :expires_at)
-                RETURNING id
-                """
-            ),
-            {
-                "id": session_uuid,
-                "user_id": user["id"],
-                "session_token": session_token,
-                "refresh_jti": refresh_jti,
-                "device_label": "web",
-                "ip": _safe_ip_value(context.ip),
-                "user_agent_hash": _hash_user_agent(context.user_agent),
-                "expires_at": expires_at,
-            },
-        ).mappings().first()
-        session_id = str(row["id"])
-
-        _record_audit_event(
-            session,
-            event_type="login_success",
-            user_id=str(user["id"]),
+            email_verified=True,
             channel="email",
             context=context,
+            now=now,
         )
 
-    return LoginResult(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_in=access_ttl,
-        session_id=session_id,
-        session_token=session_token,
-        user={
-            "id": str(user["id"]),
-            "email": user["email"],
-            "plan": user["plan_tier"],
-            "role": user["role"],
-            "emailVerified": True,
-        },
-    )
+    return result
 
 
 def verify_email(
@@ -761,6 +832,225 @@ def logout_session(
             )
 
 
+def generate_saml_metadata() -> str:
+    """Return SP metadata XML for IdP configuration."""
+    config = _SAML_CONFIG
+    if not (config.enabled and config.sp_entity_id and config.acs_url):
+        raise AuthServiceError("auth.saml_disabled", "SAML 서비스가 비활성화되어 있습니다.", 404)
+    cert_block = ""
+    cert_body = _sanitize_certificate(config.sp_certificate)
+    if cert_body:
+        cert_block = (
+            "<KeyDescriptor use=\"signing\">"
+            "<ds:KeyInfo xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\">"
+            "<ds:X509Data><ds:X509Certificate>"
+            f"{cert_body}"
+            "</ds:X509Certificate></ds:X509Data>"
+            "</ds:KeyInfo>"
+            "</KeyDescriptor>"
+        )
+    metadata = f"""<?xml version="1.0" encoding="UTF-8"?>
+<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="{config.sp_entity_id}">
+  <SPSSODescriptor AuthnRequestsSigned="false" WantAssertionsSigned="true" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    {cert_block}
+    <AssertionConsumerService index="1" isDefault="true" Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="{config.acs_url}"/>
+  </SPSSODescriptor>
+</EntityDescriptor>"""
+    return metadata.strip()
+
+
+def consume_saml_assertion(
+    session: Session,
+    *,
+    saml_response: str,
+    relay_state: Optional[str],
+    context: RequestContext,
+) -> LoginResult:
+    """Handle SAMLResponse POSTs from the IdP."""
+    config = _SAML_CONFIG
+    if not config.enabled or not config.acs_url or not config.sp_entity_id:
+        raise AuthServiceError("auth.saml_disabled", "SAML 서비스가 비활성화되어 있습니다.", 404)
+    try:
+        xml_payload = base64.b64decode(saml_response, validate=True)
+    except binascii.Error as exc:
+        raise AuthServiceError("auth.saml_invalid_payload", "SAMLResponse 디코딩에 실패했습니다.", 400) from exc
+    try:
+        document = parse_xml(xml_payload)
+    except Exception as exc:  # pragma: no cover - XML parsing guard
+        raise AuthServiceError("auth.saml_invalid_payload", "SAML 응답을 파싱할 수 없습니다.", 400) from exc
+    response = document.get("samlp:Response") or document.get("Response")
+    if not response:
+        raise AuthServiceError("auth.saml_invalid_response", "SAML Response 노드를 찾을 수 없습니다.", 400)
+    destination = response.get("@Destination") or response.get("Destination")
+    if destination and destination.rstrip("/") != config.acs_url.rstrip("/"):
+        raise AuthServiceError("auth.saml_destination_mismatch", "Destination 값이 일치하지 않습니다.", 400)
+    assertion = _extract_first(response, ["saml:Assertion", "Assertion"])
+    if not assertion:
+        raise AuthServiceError("auth.saml_missing_assertion", "Assertion 정보가 없습니다.", 400)
+    conditions = _extract_first(assertion, ["saml:Conditions", "Conditions"])
+    audience_restriction = _extract_first(conditions, ["saml:AudienceRestriction", "AudienceRestriction"]) if conditions else None
+    audience_value = _coerce_text(_extract_first(audience_restriction, ["saml:Audience", "Audience"])) if audience_restriction else None
+    if audience_value and audience_value != config.sp_entity_id:
+        raise AuthServiceError("auth.saml_audience_mismatch", "Audience 값이 일치하지 않습니다.", 403)
+    attribute_statement = _extract_first(assertion, ["saml:AttributeStatement", "AttributeStatement"])
+    attributes = _extract_attribute_map(attribute_statement)
+    if relay_state:
+        attributes["RelayState"] = relay_state
+    name_id = _extract_name_id(assertion)
+    email = attributes.get(config.email_attribute) or name_id
+    if not email:
+        raise AuthServiceError("auth.saml_missing_email", "SAML Assertion에 이메일이 없습니다.", 400)
+    raw_role = (attributes.get(config.role_attribute) or "").strip().lower()
+    mapped_role = config.role_mapping.get(raw_role, raw_role)
+    rbac_role = _normalize_rbac_role_value(mapped_role, default=config.default_role)
+    user_role = "admin" if raw_role in {"admin", "owner"} else "user"
+    identity = SsoIdentity(
+        provider="saml",
+        email=email,
+        display_name=attributes.get(config.name_attribute) or attributes.get("displayName") or name_id,
+        external_id=attributes.get("externalId") or name_id,
+        plan_tier=attributes.get("planTier") or config.default_plan_tier,
+        user_role=user_role,
+        org_id=attributes.get("orgId"),
+        org_slug=attributes.get(config.org_attribute) or config.default_org_slug,
+        org_name=attributes.get("orgName") or attributes.get("company"),
+        rbac_role=rbac_role,
+        attributes=attributes,
+    )
+    return _complete_sso_login(
+        session,
+        identity=identity,
+        default_plan=config.default_plan_tier,
+        default_org_slug=config.default_org_slug,
+        auto_provision_org=config.auto_provision_orgs,
+        default_rbac_role=config.default_role,
+        context=context,
+    )
+
+
+def build_oidc_authorize_url(
+    *,
+    return_to: Optional[str],
+    org_slug: Optional[str],
+    prompt: Optional[str],
+    login_hint: Optional[str],
+    context: RequestContext,
+) -> OidcAuthorizeResult:
+    """Construct the OIDC authorization URL + state payload."""
+    config = _OIDC_CONFIG
+    if not (
+        config.enabled
+        and config.authorization_url
+        and config.client_id
+        and config.redirect_uri
+    ):
+        raise AuthServiceError("auth.oidc_disabled", "OIDC 서비스가 비활성화되어 있습니다.", 404)
+    nonce = secrets.token_urlsafe(16)
+    payload: Dict[str, Any] = {
+        "provider": "oidc",
+        "nonce": nonce,
+        "exp": int((datetime.now(timezone.utc) + timedelta(seconds=_SSO_STATE_TTL_SECONDS)).timestamp()),
+    }
+    if return_to:
+        payload["returnTo"] = return_to
+    if org_slug:
+        payload["orgSlug"] = org_slug
+    state = _encode_state(payload)
+    params: Dict[str, Any] = {
+        "client_id": config.client_id,
+        "response_type": "code",
+        "redirect_uri": config.redirect_uri,
+        "scope": " ".join(config.scopes),
+        "state": state,
+        "nonce": nonce,
+    }
+    if prompt:
+        params["prompt"] = prompt
+    if login_hint:
+        params["login_hint"] = login_hint
+    url = f"{config.authorization_url}?{urlencode(params)}"
+    return OidcAuthorizeResult(authorization_url=url, state=state, expires_in=_SSO_STATE_TTL_SECONDS)
+
+
+def complete_oidc_login(
+    session: Session,
+    *,
+    code: str,
+    state: str,
+    context: RequestContext,
+) -> LoginResult:
+    """Exchange an OIDC authorization code for tokens + login."""
+    config = _OIDC_CONFIG
+    if not (
+        config.enabled
+        and config.token_url
+        and config.userinfo_url
+        and config.client_id
+        and config.client_secret
+        and config.redirect_uri
+    ):
+        raise AuthServiceError("auth.oidc_disabled", "OIDC 서비스가 비활성화되어 있습니다.", 404)
+    payload = _decode_state(state)
+    if payload.get("provider") != "oidc":
+        raise AuthServiceError("auth.oidc_invalid_state", "상태 토큰이 일치하지 않습니다.", 400)
+    token_request = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": config.redirect_uri,
+        "client_id": config.client_id,
+        "client_secret": config.client_secret,
+    }
+    try:
+        with httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
+            token_resp = client.post(config.token_url, data=token_request, headers={"Accept": "application/json"})
+            token_resp.raise_for_status()
+            token_data = token_resp.json()
+            userinfo_resp = client.get(
+                config.userinfo_url,
+                headers={"Authorization": f"Bearer {token_data.get('access_token')}"},
+                timeout=httpx.Timeout(10.0, connect=5.0),
+            )
+            userinfo_resp.raise_for_status()
+            userinfo = userinfo_resp.json()
+    except httpx.HTTPError as exc:
+        raise AuthServiceError("auth.oidc_http_error", "OIDC 서버와 통신하지 못했습니다.", 502) from exc
+    access_token = token_data.get("access_token")
+    if not access_token:
+        raise AuthServiceError("auth.oidc_invalid_response", "토큰 응답에 access_token 이 없습니다.", 502)
+    email_claim = config.email_claim or "email"
+    email = userinfo.get(email_claim) or userinfo.get("email") or userinfo.get("preferred_username")
+    if not email:
+        raise AuthServiceError("auth.oidc_missing_email", "사용자 정보에 이메일이 없습니다.", 400)
+    raw_role = (userinfo.get(config.role_claim or "role") or "").strip().lower()
+    mapped_role = config.role_mapping.get(raw_role, raw_role)
+    rbac_role = _normalize_rbac_role_value(mapped_role, default=config.default_role)
+    user_role = "admin" if raw_role in {"admin", "owner"} else "user"
+    if payload.get("returnTo"):
+        userinfo.setdefault("returnTo", payload.get("returnTo"))
+    identity = SsoIdentity(
+        provider="oidc",
+        email=email,
+        display_name=userinfo.get(config.name_claim or "name") or userinfo.get("given_name"),
+        external_id=str(userinfo.get("sub") or userinfo.get("id") or ""),
+        plan_tier=userinfo.get(config.plan_claim or "plan") or config.default_plan_tier,
+        user_role=user_role,
+        org_id=userinfo.get("orgId"),
+        org_slug=userinfo.get(config.org_claim or "org") or payload.get("orgSlug") or config.default_org_slug,
+        org_name=userinfo.get("orgName"),
+        rbac_role=rbac_role,
+        attributes=userinfo,
+    )
+    return _complete_sso_login(
+        session,
+        identity=identity,
+        default_plan=config.default_plan_tier,
+        default_org_slug=payload.get("orgSlug") or config.default_org_slug,
+        auto_provision_org=config.auto_provision_orgs,
+        default_rbac_role=config.default_role,
+        context=context,
+    )
+
+
 def _normalize_email(email: str) -> str:
     value = (email or "").strip().lower()
     if not value:
@@ -910,6 +1200,515 @@ def _enforce_rate_limit(scope: str, identifier: Optional[str], *, limit: int, wi
         ) from None
 
 
+def _mark_login_success(session: Session, user_id: str, context: RequestContext, now: datetime) -> None:
+    session.execute(
+        text(
+            """
+            UPDATE "users"
+            SET failed_attempts = 0,
+                locked_until = NULL,
+                last_login_at = :now,
+                last_login_ip = :ip
+            WHERE id = :id
+            """
+        ),
+        {"now": now, "ip": _safe_ip_value(context.ip), "id": user_id},
+    )
+
+
+def _issue_login_result(
+    session: Session,
+    *,
+    user_id: str,
+    email: str,
+    plan: str,
+    role: str,
+    email_verified: bool,
+    channel: str,
+    context: RequestContext,
+    now: Optional[datetime] = None,
+) -> LoginResult:
+    current = now or datetime.now(timezone.utc)
+    access_token, access_ttl = create_access_token(
+        user_id=user_id,
+        email=email,
+        plan=plan,
+        role=role,
+        email_verified=email_verified,
+    )
+    refresh_jti = str(uuid.uuid4())
+    session_token = secrets.token_urlsafe(32)
+    session_uuid = str(uuid.uuid4())
+    refresh_token, refresh_ttl = create_refresh_token(
+        user_id=user_id,
+        session_id=session_uuid,
+        refresh_jti=refresh_jti,
+    )
+    expires_at = current + timedelta(seconds=refresh_ttl)
+    row = (
+        session.execute(
+            text(
+                """
+                INSERT INTO session_tokens (
+                    id, user_id, session_token, refresh_jti, device_label, ip, user_agent_hash, expires_at
+                )
+                VALUES (:id, :user_id, :session_token, :refresh_jti, :device_label, :ip, :user_agent_hash, :expires_at)
+                RETURNING id
+                """
+            ),
+            {
+                "id": session_uuid,
+                "user_id": user_id,
+                "session_token": session_token,
+                "refresh_jti": refresh_jti,
+                "device_label": channel,
+                "ip": _safe_ip_value(context.ip),
+                "user_agent_hash": _hash_user_agent(context.user_agent),
+                "expires_at": expires_at,
+            },
+        )
+        .mappings()
+        .first()
+    )
+    session_id = str(row["id"])
+    _record_audit_event(
+        session,
+        event_type="login_success",
+        user_id=user_id,
+        channel=channel,
+        context=context,
+    )
+    return LoginResult(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=access_ttl,
+        session_id=session_id,
+        session_token=session_token,
+        user={
+            "id": user_id,
+            "email": email,
+            "plan": plan,
+            "role": role,
+            "emailVerified": email_verified,
+        },
+    )
+
+
+def _normalize_plan_tier_value(value: Optional[str], *, default: str) -> str:
+    candidate = (value or default or "free").strip().lower()
+    if candidate not in _PLAN_TIERS:
+        return default if default in _PLAN_TIERS else "free"
+    return candidate
+
+
+def _normalize_user_role_value(value: Optional[str]) -> str:
+    candidate = (value or "user").strip().lower()
+    if candidate not in _USER_ROLES:
+        return "user"
+    return candidate
+
+
+def _normalize_rbac_role_value(value: Optional[str], *, default: str) -> str:
+    candidate = (value or default).strip().lower()
+    if candidate not in ROLE_ORDER:
+        return default
+    return candidate
+
+
+def _ensure_sso_user(
+    session: Session,
+    *,
+    identity: SsoIdentity,
+    default_plan: str,
+) -> Dict[str, Any]:
+    normalized_email = _normalize_email(identity.email)
+    now = datetime.now(timezone.utc)
+    plan_tier = _normalize_plan_tier_value(identity.plan_tier, default=default_plan)
+    app_role = _normalize_user_role_value(identity.user_role)
+    existing = (
+        session.execute(
+            text(
+                """
+                SELECT id, locked_until
+                FROM "users"
+                WHERE LOWER(email) = :email
+                FOR UPDATE
+                """
+            ),
+            {"email": normalized_email},
+        )
+        .mappings()
+        .first()
+    )
+    if existing:
+        locked_until = existing.get("locked_until")
+        if locked_until and locked_until > now:
+            raise AuthServiceError("auth.account_locked", "계정이 잠금 상태입니다.", 423)
+        row = (
+            session.execute(
+                text(
+                    """
+                    UPDATE "users"
+                    SET name = COALESCE(:name, name),
+                        plan_tier = :plan_tier,
+                        role = :role,
+                        email_verified_at = COALESCE(email_verified_at, :now)
+                    WHERE id = :id
+                    RETURNING id, email, plan_tier, role, email_verified_at
+                    """
+                ),
+                {
+                    "id": existing["id"],
+                    "name": identity.display_name,
+                    "plan_tier": plan_tier,
+                    "role": app_role,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .first()
+        )
+        if not row:
+            raise AuthServiceError("auth.sso_update_failed", "사용자 정보를 갱신하지 못했습니다.", 500)
+        return row
+
+    row = (
+        session.execute(
+            text(
+                """
+                INSERT INTO "users" (email, name, signup_channel, plan_tier, role, email_verified_at, failed_attempts, locked_until)
+                VALUES (:email_original, :name, :signup_channel, :plan_tier, :role, :now, 0, NULL)
+                RETURNING id, email, plan_tier, role, email_verified_at
+                """
+            ),
+            {
+                "email_original": identity.email.strip(),
+                "name": identity.display_name,
+                "signup_channel": identity.provider,
+                "plan_tier": plan_tier,
+                "role": app_role,
+                "now": now,
+            },
+        )
+        .mappings()
+        .first()
+    )
+    if not row:
+        raise AuthServiceError("auth.sso_create_failed", "사용자를 생성하지 못했습니다.", 500)
+    return row
+
+
+def _safe_uuid(value: Optional[str]) -> Optional[uuid.UUID]:
+    if not value:
+        return None
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError):
+        return None
+
+
+def _lookup_org_by_slug(session: Session, slug: str) -> Optional[uuid.UUID]:
+    normalized = slug.strip().lower()
+    row = (
+        session.execute(
+            text(
+                """
+                SELECT id
+                FROM orgs
+                WHERE LOWER(slug) = :slug
+                LIMIT 1
+                """
+            ),
+            {"slug": normalized},
+        )
+        .mappings()
+        .first()
+    )
+    return row["id"] if row else None
+
+
+def _slugify(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    normalized = "".join(ch if ch.isalnum() else "-" for ch in value.lower())
+    normalized = "-".join(filter(None, normalized.split("-"))).strip("-")
+    return normalized[:60] or None
+
+
+def _create_org(session: Session, slug: Optional[str], name: Optional[str], provider: str) -> uuid.UUID:
+    org_id = uuid.uuid4()
+    safe_slug = _slugify(slug)
+    display_name = (name or slug or f"Workspace {str(org_id)[:8]}").strip()
+    session.execute(
+        text(
+            """
+            INSERT INTO orgs (id, name, slug, status, default_role, metadata)
+            VALUES (:id, :name, :slug, 'active', 'viewer', CAST(:metadata AS JSONB))
+            ON CONFLICT (id) DO NOTHING
+            """
+        ),
+        {
+            "id": str(org_id),
+            "name": display_name,
+            "slug": safe_slug,
+            "metadata": json.dumps({"provisionedBy": provider}),
+        },
+    )
+    return org_id
+
+
+def _ensure_default_org(session: Session, user_id: uuid.UUID) -> uuid.UUID:
+    existing = (
+        session.execute(
+            text(
+                """
+                SELECT org_id
+                FROM user_orgs
+                WHERE user_id = :user_id
+                  AND status = 'active'
+                ORDER BY created_at ASC
+                LIMIT 1
+                """
+            ),
+            {"user_id": str(user_id)},
+        )
+        .mappings()
+        .first()
+    )
+    if existing:
+        return existing["org_id"]
+    org_id = uuid.uuid4()
+    session.execute(
+        text(
+            """
+            INSERT INTO orgs (id, name, status, default_role)
+            VALUES (:id, :name, 'active', 'viewer')
+            ON CONFLICT (id) DO NOTHING
+            """
+        ),
+        {"id": str(org_id), "name": f"Workspace {str(user_id)[:8]}"},
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO user_orgs (org_id, user_id, role_key, status, invited_by, invited_at, accepted_at)
+            VALUES (:org_id, :user_id, 'admin', 'active', :user_id, NOW(), NOW())
+            ON CONFLICT (org_id, user_id) DO NOTHING
+            """
+        ),
+        {"org_id": str(org_id), "user_id": str(user_id)},
+    )
+    audit_rbac_event(
+        action="rbac.org.bootstrap",
+        actor=str(user_id),
+        org_id=org_id,
+        target_id=str(user_id),
+        extra={"source": "sso"},
+    )
+    return org_id
+
+
+def _ensure_membership_for_user(
+    session: Session,
+    *,
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    rbac_role: str,
+) -> None:
+    normalized_role = _normalize_rbac_role_value(rbac_role, default="viewer")
+    session.execute(
+        text(
+            """
+            INSERT INTO user_orgs (org_id, user_id, role_key, status, invited_by, invited_at, accepted_at)
+            VALUES (:org_id, :user_id, :role_key, 'active', :user_id, NOW(), NOW())
+            ON CONFLICT (org_id, user_id) DO UPDATE SET
+                role_key = EXCLUDED.role_key,
+                status = 'active',
+                accepted_at = COALESCE(user_orgs.accepted_at, EXCLUDED.accepted_at),
+                updated_at = NOW()
+            """
+        ),
+        {"org_id": str(org_id), "user_id": str(user_id), "role_key": normalized_role},
+    )
+    audit_rbac_event(
+        action="rbac.membership.upsert",
+        actor=str(user_id),
+        org_id=org_id,
+        target_id=str(user_id),
+        extra={"role": normalized_role, "source": "sso"},
+    )
+
+
+def _ensure_org_target(
+    session: Session,
+    *,
+    user_id: uuid.UUID,
+    identity: SsoIdentity,
+    default_slug: Optional[str],
+    auto_provision: bool,
+) -> uuid.UUID:
+    if identity.org_id:
+        parsed = _safe_uuid(identity.org_id)
+        if not parsed:
+            raise AuthServiceError("auth.sso.org_invalid", "잘못된 조직 ID 입니다.", 400)
+        row = (
+            session.execute(
+                text("SELECT id FROM orgs WHERE id = :id"),
+                {"id": str(parsed)},
+            )
+            .mappings()
+            .first()
+        )
+        if not row:
+            raise AuthServiceError("auth.sso.org_not_found", "조직을 찾을 수 없습니다.", 404)
+        return parsed
+    slug_candidate = identity.org_slug or default_slug
+    if slug_candidate:
+        existing = _lookup_org_by_slug(session, slug_candidate)
+        if existing:
+            return existing
+        if auto_provision:
+            return _create_org(session, slug_candidate, identity.org_name, identity.provider)
+        raise AuthServiceError("auth.sso.org_not_found", f"'{slug_candidate}' 조직이 없습니다.", 404)
+    return _ensure_default_org(session, user_id)
+
+
+def _complete_sso_login(
+    session: Session,
+    *,
+    identity: SsoIdentity,
+    default_plan: str,
+    default_org_slug: Optional[str],
+    auto_provision_org: bool,
+    default_rbac_role: str,
+    context: RequestContext,
+) -> LoginResult:
+    now = datetime.now(timezone.utc)
+    with session.begin():
+        user_row = _ensure_sso_user(session, identity=identity, default_plan=default_plan)
+        user_uuid = uuid.UUID(str(user_row["id"]))
+        org_id = _ensure_org_target(
+            session,
+            user_id=user_uuid,
+            identity=identity,
+            default_slug=default_org_slug,
+            auto_provision=auto_provision_org,
+        )
+        target_role = identity.rbac_role or default_rbac_role
+        _ensure_membership_for_user(session, org_id=org_id, user_id=user_uuid, rbac_role=target_role)
+        _mark_login_success(session, str(user_uuid), context, now)
+        result = _issue_login_result(
+            session,
+            user_id=str(user_uuid),
+            email=user_row["email"],
+            plan=user_row["plan_tier"],
+            role=user_row["role"],
+            email_verified=bool(user_row.get("email_verified_at")),
+            channel=identity.provider,
+            context=context,
+            now=now,
+        )
+    return result
+
+
+def _encode_state(payload: Mapping[str, Any]) -> str:
+    serialized = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    signature = hmac.new(_SSO_STATE_SECRET.encode("utf-8"), serialized.encode("utf-8"), hashlib.sha256).hexdigest()
+    blob = json.dumps({"p": payload, "s": signature}, separators=(",", ":"), sort_keys=True)
+    return base64.urlsafe_b64encode(blob.encode("utf-8")).decode("utf-8").rstrip("=")
+
+
+def _decode_state(token: str) -> Mapping[str, Any]:
+    padding = "=" * (-len(token) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(token + padding).decode("utf-8")
+        parsed = json.loads(raw)
+    except (ValueError, binascii.Error):
+        raise AuthServiceError("auth.oidc_invalid_state", "상태 토큰이 손상되었습니다.", 400) from None
+    payload = parsed.get("p") or {}
+    signature = parsed.get("s")
+    serialized = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    expected = hmac.new(_SSO_STATE_SECRET.encode("utf-8"), serialized.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not signature or not hmac.compare_digest(signature, expected):
+        raise AuthServiceError("auth.oidc_invalid_state", "상태 토큰이 유효하지 않습니다.", 400)
+    expires_at = payload.get("exp")
+    if expires_at and int(expires_at) < int(datetime.now(timezone.utc).timestamp()):
+        raise AuthServiceError("auth.oidc_state_expired", "상태 토큰이 만료되었습니다.", 400)
+    return payload
+
+
+def _sanitize_certificate(pem_value: Optional[str]) -> Optional[str]:
+    if not pem_value:
+        return None
+    lines = []
+    for line in pem_value.strip().splitlines():
+        stripped = line.strip()
+        if "BEGIN CERTIFICATE" in stripped or "END CERTIFICATE" in stripped:
+            continue
+        if stripped:
+            lines.append(stripped)
+    return "".join(lines) or None
+
+
+def _extract_first(obj: Optional[Mapping[str, Any]], keys: Sequence[str]) -> Optional[Any]:
+    if not obj:
+        return None
+    for key in keys:
+        value = obj.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _coerce_list(value: Any) -> List[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _coerce_text(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        if "#text" in value:
+            return str(value["#text"])
+        if "value" in value:
+            return str(value["value"])
+    return str(value)
+
+
+def _extract_attribute_map(statement: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    if not statement:
+        return {}
+    attributes = statement.get("saml:Attribute") or statement.get("Attribute")
+    items = _coerce_list(attributes)
+    result: Dict[str, Any] = {}
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        name = (
+            item.get("@Name")
+            or item.get("Name")
+            or item.get("@FriendlyName")
+            or item.get("FriendlyName")
+        )
+        if not name:
+            continue
+        values = item.get("saml:AttributeValue") or item.get("AttributeValue")
+        value_list = _coerce_list(values)
+        text_value = _coerce_text(value_list[0]) if value_list else None
+        result[str(name)] = text_value
+    return result
+
+
+def _extract_name_id(assertion: Mapping[str, Any]) -> Optional[str]:
+    subject = _extract_first(assertion, ["saml:Subject", "Subject"])
+    name_id = _extract_first(subject, ["saml:NameID", "NameID"]) if subject else None
+    return _coerce_text(name_id)
+
+
 __all__ = [
     "AuthServiceError",
     "AccountUnlockConfirmResult",
@@ -932,4 +1731,8 @@ __all__ = [
     "request_password_reset",
     "resend_verification_email",
     "verify_email",
+    "generate_saml_metadata",
+    "consume_saml_assertion",
+    "build_oidc_authorize_url",
+    "complete_oidc_login",
 ]

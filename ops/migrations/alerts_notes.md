@@ -66,3 +66,19 @@ DROP TYPE IF EXISTS alert_status;
 2. Ensure web/API pods pick up new env vars & restart worker/beat.
 3. Verify `/api/v1/alerts` responses include `trigger`, `frequency`, `cooledUntil`.
 4. Monitor audit log table for `alerts.create/update/delete/cooldown_blocked` entries.
+
+---
+
+## 2025-11-14 Rule Compiler & Worker Snapshotting
+
+- **Code**: `alerts/rule_compiler.py`, `services/alert_service.py`, `services/alert_metrics.py`.
+- **DSL**: Alert triggers may now include `dsl` strings (e.g., `news ticker:005930 keyword:'buyback' window:24h`). Compiler normalizes keywords/entities/tickers/window/min sentiment into execution plans.
+- **Worker state**: `alerts.evaluate_rules` persists `extras.alertWorkerState` (plan hash, event digest, window range, duplicate flag). Duplicate payloads are skipped before dispatch.
+- **Metrics**:
+  - `alert_rule_eval_latency` (Histogram, labels: `plan_tier`, `result`, captures seconds per evaluation — target p95 < 1s).
+  - `alert_rule_duplicate_total` (Counter, labels: `plan_tier`, `cause`, measures blocked duplicates).
+- **Operational checklist**:
+  1. Restart Celery worker/beat after deploy to register the metrics collectors.
+  2. Update Grafana dashboard to chart `histogram_quantile(0.95, sum(rate(alert_rule_eval_latency_bucket[5m])) by (le))`.
+  3. Alert on duplicate ratio: `increase(alert_rule_duplicate_total[30m]) / increase(alert_rule_eval_latency_count[30m]) > 0.03`.
+  4. Optional backfill to tag existing rules: `UPDATE alert_rules SET extras = jsonb_set(COALESCE(extras, '{}'), '{alertWorkerState}', '{"version":1}'::jsonb, true) WHERE NOT (extras ? 'alertWorkerState');`

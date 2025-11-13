@@ -25,11 +25,12 @@ events tagged with `source=rbac` are emitted for every inconsistency. Use the fo
 - [ ] Ensure service accounts/batch jobs either include headers or call `require_org_role(..., enforce=False)` dependencies.
 - [ ] Document default org usage for personal plans (if header omitted we stay in per-user mode).
 
-## 4. Endpoint Rollout Plan
+## 4. Enforcement Playbook
 
-1. **Shadow soak** – Keep `RBAC_ENFORCE=false`, monitor audit stream for ≥3 days.
-2. **Selective enforce** – For critical endpoints (e.g., `/orgs/*`, `/alerts/*` mutations) wrap with `require_org_role(..., enforce=True)`.
-3. **Global enforce** – Flip `RBAC_ENFORCE=true` once <1% of traffic triggers shadow issues for 48h.
+1. **Shadow soak (Week 0-1)** – Keep `RBAC_ENFORCE=false` and focus on cleaning up `rbac.shadow.*` audit events.
+2. **Selective enforce (Week 2)** – For critical mutations (`/orgs/*`, `/alerts/*`, `/reports/*`) call `require_org_role(..., enforce=True)` so violations fail fast without flipping the global switch.
+3. **Per-service bake (Week 3)** – Turn on enforcement for low-risk GET endpoints and ensure service accounts/cron jobs always send `X-Org-Id` + `X-User-Id`.
+4. **Global enforce (Week 4)** – Flip `RBAC_ENFORCE=true` once <1% of traffic triggers shadow issues for 48h. Keep per-endpoint `enforce=True` calls in place for future regression tests.
 
 ## 5. Regression Tests
 

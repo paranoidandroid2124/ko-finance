@@ -88,7 +88,7 @@ _DEFAULT_TIER_CARDS: List[Dict[str, Any]] = [
         "imageUrl": None,
         "supportNote": "보안·감사 자료 세트 포함",
     },
-]
+
 ]
 
 

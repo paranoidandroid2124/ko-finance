@@ -42,6 +42,10 @@ pip install -r requirements.txt
 4. **Env vars.** `DATABASE_URL` must be reachable from both FastAPI and Next.js processes (e.g., override to `postgresql://kfinance:your_strong_password@localhost:5432/kfinance_db` when running tests on the host). Set `AUTH_JWT_SECRET`, `NEXTAUTH_URL`, and `NEXT_PUBLIC_API_BASE_URL` for the dashboard.
 5. **Docs & tests.** See `docs/auth/email_password_design.md` for the latest API contract/error table and run `pytest tests/test_auth_api.py` plus `npm run test -- --run tests/auth/formatAuthError.test.ts` after making auth changes.
 
+#### SSO & SCIM (Enterprise)
+- SAML/OIDC login endpoints now live under `/api/v1/auth/saml/*` and `/api/v1/auth/oidc/*`; configure them via the `AUTH_SAML_*`, `AUTH_OIDC_*`, and `AUTH_SSO_STATE_*` env vars added to `.env.example`.
+- SCIM provisioning (`/scim/v2/Users`, `/scim/v2/Groups`) is protected by `SCIM_BEARER_TOKEN` and maps directly to `users`, `orgs`, and `user_orgs`. See `docs/sso_scim_runbook.md` for the rollout checklist and pilot dashboard.
+
 ### Core schema migrations
 새로운 엔타이틀먼트/RBAC/Alert 스키마는 `ops/migrations/apply_all.sh`로 한 번에 적용할 수 있습니다.
 ```bash
@@ -56,6 +60,14 @@ POSTGRES_DB=kfinance_db \
   ./ops/migrations/apply_all.sh
 ```
 스크립트는 실패 시 즉시 중단하며, 순서를 보장하므로 수동 `psql -f …` 반복을 피할 수 있습니다. 필요하다면 `DOCKER_POSTGRES_CONTAINER` 대신 `DATABASE_URL`만 지정해도 됩니다.
+
+### Table Extraction v1
+- **Schema:** `ops/migrations/create_table_extraction.sql` provisions `table_meta` + `table_cells` and is wired into `ops/migrations/apply_all.sh`.
+- **Pipeline:** `parse.table_extraction.TableExtractor` normalises PDF tables into HTML/CSV/JSON (with header hierarchies). `services.table_extraction_service.extract_tables_for_filing` persists rows and saves artefacts under `reports/table_extraction/<receipt>/`.
+- **Ingest stage:** `parse.tasks.process_filing` now executes `extract_tables` right after chunk ingestion; failures fall back to `ingest_dead_letters` with `task_name=table_extraction`.
+- **CLI:** `python scripts/table_extraction.py --receipt 2025XXXXXXX` to reprocess a filing (persisted) or `python scripts/table_extraction.py --file uploads/2025...pdf --output reports/table_extraction/manual` for ad-hoc runs.
+- **Validation:** `python scripts/table_extraction_eval.py --samples 50 --input uploads --output reports/table_extraction/quality_report.json` generates QA metrics (target pass rate ≥0.90 using header coverage / non-empty / numeric checks).
+- **API draft:** `GET /api/v1/table-explorer/tables` (filters: `tableType`, `receiptNo`, `ticker`, `corpCode`) and `GET /api/v1/table-explorer/tables/{table_id}` stream metadata, header paths, and cell-level payloads (guarded by the `table.explorer` entitlement).
 
 ### Guest/Public Preview
 - `GET /api/v1/public/filings` · `POST /api/v1/public/chat` 는 인증 없이 최신 공시 목록과 간단한 챗 답변 미리보기를 제공합니다. 기본 rate limit(시간당 5회)이 적용됩니다.
@@ -138,3 +150,10 @@ Ensure Redis/Postgres/Qdrant services are reachable via `.env`.
 - 운영자 콘솔: `web/admin-dashboard` (Next.js App Router · 별도 번들, 기본 포트 `3100`). 기존 컴포넌트는 `web/dashboard/src`를 alias로 재사용하므로 동작을 바꾸지 않고도 빠르게 독립 배포를 실험할 수 있습니다. `pnpm install && pnpm dev`를 `web/admin-dashboard`에서 실행하면 `localhost:3100`에서 admin UI가 구동되고, API는 `web/admin_main.py`/`docker-compose`의 `admin-api`가 담당합니다.
 - Google Workspace SSO를 붙일 경우 `GOOGLE_ADMIN_CLIENT_ID`(OAuth Client ID)와 `GOOGLE_ADMIN_ALLOWED_DOMAIN`을 환경변수로 지정하고, 프런트엔드에서 Google OAuth로 발급받은 `id_token`을 `/api/v1/admin/session`에 전달하면 됩니다. 설정이 없는 경우에는 기존의 정적 토큰(`token`) 흐름이 그대로 유지됩니다.
 - Workspace 없이 자체 인증을 쓰려면 `ADMIN_ALLOWED_EMAILS`, `ADMIN_MFA_SECRETS`, `ADMIN_REQUIRE_MFA`를 지정한 뒤 `/api/v1/admin/auth/login`으로 이메일+비밀번호(+TOTP) 검증을 통과해야 운영 세션을 발급받도록 구성했습니다. Admin UI의 로그인 카드도 해당 엔드포인트를 사용합니다.
+
+### Research Notebook (Labs)
+- **Schema**: apply `ops/migrations/add_research_notebooks.sql` to provision `notebooks`, `notebook_entries`, `notebook_shares` (+ triggers for `entry_count` / activity).
+- **API**: FastAPI router at `/api/v1/notebooks` (CRUD, tag filters, share links w/ password + TTL). Audit actions emit `collab.notebook.*`.
+- **Dashboard**: Next.js page at `/labs/notebook` (Markdown highlight composer, inline entry edit/delete, share panel) using `web/dashboard/src/components/notebook/*`.
+- **Public share**: password-aware viewer at `/labs/notebook/share/[token]` powered by `POST /api/v1/notebooks/shares/access`.
+- **Docs**: UX capture (`docs/ux/research_notebook.md`) and QA checklist (`docs/qa/research_notebook_checklist.md`) outline expected flows + validation steps.

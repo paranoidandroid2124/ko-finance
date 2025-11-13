@@ -207,11 +207,32 @@ def audit_alert_event(
     )
 
 
+def audit_collab_event(
+    *,
+    action: str,
+    user_id: Optional[uuid.UUID],
+    org_id: Optional[uuid.UUID],
+    target_id: Optional[str],
+    feature_flags: Optional[Mapping[str, Any]] = None,
+    extra: Optional[Mapping[str, Any]] = None,
+) -> None:
+    record_audit_event(
+        action=action,
+        source="collab",
+        user_id=user_id,
+        org_id=org_id,
+        target_id=target_id,
+        feature_flags=feature_flags,
+        extra=extra,
+    )
+
+
 __all__ = [
     "audit_billing_event",
     "audit_ingest_event",
     "audit_alert_event",
     "audit_rag_event",
     "audit_rbac_event",
+    "audit_collab_event",
     "record_audit_event",
 ]

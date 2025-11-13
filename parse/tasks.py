@@ -60,6 +60,7 @@ from services import (
     market_data_service,
     security_metadata_service,
     ingest_dlq_service,
+    table_extraction_service,
 )
 import services.lightmem_gate as lightmem_gate
 from services.lightmem_config import DIGEST_RATE_LIMIT_PER_MINUTE
@@ -700,6 +701,7 @@ def process_filing(self, filing_id: str) -> str:
 
         raw_content = filing.raw_md or ""
         chunk_count = len(filing.chunks or [])
+        resolved_pdf_path: Optional[str] = None
 
         def run_stage(name: str, func: Callable[[], None], *, critical: bool) -> bool:
             try:
@@ -736,7 +738,7 @@ def process_filing(self, filing_id: str) -> str:
             return True
 
         def ingest_stage() -> None:
-            nonlocal raw_content, chunk_count
+            nonlocal raw_content, chunk_count, resolved_pdf_path
             pdf_path = _ensure_pdf_path(filing)
             xml_paths = _load_xml_paths(filing)
             if not pdf_path and not xml_paths:
@@ -745,6 +747,7 @@ def process_filing(self, filing_id: str) -> str:
 
             extracted: List[Dict[str, Any]] = []
             if pdf_path:
+                resolved_pdf_path = pdf_path
                 pdf_chunks = extract_chunks(pdf_path)
                 extracted.extend(pdf_chunks)
                 pdf_text_characters = _count_text_characters(pdf_chunks, source="pdf")
@@ -791,6 +794,40 @@ def process_filing(self, filing_id: str) -> str:
 
             raw_content = filing.raw_md or raw_content
             chunk_count = len(extracted)
+
+        def table_extraction_stage() -> None:
+            pdf_path = resolved_pdf_path or _ensure_pdf_path(filing)
+            if not pdf_path:
+                raise StageSkip("No PDF available for table extraction.")
+            try:
+                stats = table_extraction_service.extract_tables_for_filing(
+                    db,
+                    filing=filing,
+                    pdf_path=pdf_path,
+                )
+            except table_extraction_service.TableExtractionServiceError as exc:
+                ingest_dlq_service.record_dead_letter(
+                    db,
+                    task_name="table_extraction",
+                    payload={"filing_id": str(filing.id), "pdf_path": pdf_path},
+                    error=str(exc),
+                    retries=getattr(self.request, "retries", 0),
+                    receipt_no=filing.receipt_no,
+                    corp_code=filing.corp_code,
+                    ticker=filing.ticker,
+                )
+                raise
+            else:
+                logger.info(
+                    "table_extraction.persisted",
+                    extra={
+                        "filing_id": str(filing.id),
+                        "receipt_no": filing.receipt_no,
+                        "stored": stats.get("stored"),
+                        "deleted": stats.get("deleted"),
+                        "elapsed_ms": stats.get("elapsed_ms"),
+                    },
+                )
 
         def classification_stage() -> None:
             nonlocal raw_content
@@ -870,6 +907,7 @@ def process_filing(self, filing_id: str) -> str:
         ingest_success = run_stage("ingest_chunks", ingest_stage, critical=True)
 
         if ingest_success:
+            run_stage("extract_tables", table_extraction_stage, critical=False)
             run_stage("classify_category", classification_stage, critical=False)
             run_stage("extract_facts", facts_stage, critical=False)
             run_stage("summarize_and_notify", summary_stage, critical=False)

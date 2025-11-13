@@ -86,8 +86,14 @@ class AlertTriggerSchema(BaseModel):
         default=None,
         description="뉴스 감성 임계값 (type=news에만 적용).",
     )
+    keywords: List[str] = Field(default_factory=list, description="키워드 필터 (헤드라인/보고서 제목 검색).")
+    entities: List[str] = Field(default_factory=list, description="엔터티/회사명 필터.")
+    dsl: Optional[str] = Field(
+        default=None,
+        description="고급 DSL 표현식 (예: \"news ticker:005930 keyword:'자사주' window:24h\").",
+    )
 
-    @field_validator("tickers", "categories", "sectors", mode="before")
+    @field_validator("tickers", "categories", "sectors", "keywords", "entities", mode="before")
     def _strip_values(cls, value: Any):
         if value is None:
             return []
@@ -97,6 +103,15 @@ class AlertTriggerSchema(BaseModel):
             stripped = value.strip()
             return [stripped] if stripped else []
         return value
+
+    @field_validator("dsl", mode="before")
+    def _normalize_dsl(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return str(value)
 
 
 # Legacy alias for backwards compatibility

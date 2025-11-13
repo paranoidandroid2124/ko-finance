@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime, timezone
-from typing import Dict
+from typing import Dict, Tuple
 from urllib import robotparser
 from urllib.parse import urlparse
 
@@ -21,6 +21,7 @@ TOS_VERSION = env_str("DART_VIEWER_TOS_VERSION", "dart-viewer-2024-01") or "dart
 _ROBOTS_PARSER: robotparser.RobotFileParser | None = None
 _ROBOTS_REFRESH_AT: float = 0.0
 _LOCK = threading.Lock()
+_ACCESS_CACHE: Dict[str, Tuple[float, Dict[str, object]]] = {}
 
 
 def _ensure_robot_parser(now: float) -> robotparser.RobotFileParser | None:
@@ -42,32 +43,83 @@ def _ensure_robot_parser(now: float) -> robotparser.RobotFileParser | None:
         return _ROBOTS_PARSER
 
 
-def evaluate_viewer_access(viewer_url: str, *, now: float | None = None) -> Dict[str, object]:
+def _cache_key(viewer_url: str) -> str:
+    parsed = urlparse(viewer_url)
+    host = parsed.netloc.lower()
+    path = (parsed.path or "/").lower()
+    return f"{host}{path}"
+
+
+def _get_cached_metadata(key: str, now: float) -> Dict[str, object] | None:
+    with _LOCK:
+        entry = _ACCESS_CACHE.get(key)
+        if not entry:
+            return None
+        expires_at, payload = entry
+        if now >= expires_at:
+            _ACCESS_CACHE.pop(key, None)
+            return None
+        return dict(payload)
+
+
+def _set_cached_metadata(key: str, expires_at: float, payload: Dict[str, object]) -> None:
+    with _LOCK:
+        _ACCESS_CACHE[key] = (expires_at, dict(payload))
+
+
+def reset_legal_cache() -> None:
+    """Clear cached robots/TOS evaluations (used by tests and CLI tooling)."""
+    with _LOCK:
+        _ACCESS_CACHE.clear()
+
+
+def evaluate_viewer_access(
+    viewer_url: str,
+    *,
+    now: float | None = None,
+    force_refresh: bool = False,
+) -> Dict[str, object]:
     """Return metadata describing robots/ToS compliance for a viewer URL."""
     current_ts = now if now is not None else datetime.now(tz=timezone.utc).timestamp()
+    key = _cache_key(viewer_url)
+    if not force_refresh:
+        cached = _get_cached_metadata(key, current_ts)
+        if cached is not None:
+            cached["cache_hit"] = True
+            return cached
+
     parser = _ensure_robot_parser(current_ts)
     parsed = urlparse(viewer_url)
     path = parsed.path or "/"
 
     robots_allowed: bool | None = None
+    robots_checked = parser is not None
     if parser is not None:
         try:
             robots_allowed = parser.can_fetch(ROBOTS_USER_AGENT, viewer_url)
         except Exception as exc:  # pragma: no cover - robot parser edge case
             logger.debug("Robots parser exception for %s: %s", viewer_url, exc)
             robots_allowed = None
+            robots_checked = False
 
+    checked_at_iso = datetime.fromtimestamp(current_ts, tz=timezone.utc).isoformat()
+    expires_at = current_ts + float(ROBOTS_TTL_SECONDS)
     metadata: Dict[str, object] = {
         "viewer_url": viewer_url,
         "viewer_path": path,
         "robots_url": ROBOTS_URL,
         "robots_user_agent": ROBOTS_USER_AGENT,
         "robots_allowed": robots_allowed,
-        "robots_checked_at": datetime.fromtimestamp(current_ts, tz=timezone.utc).isoformat(),
+        "robots_checked": robots_checked,
+        "robots_checked_at": checked_at_iso,
+        "robots_cache_expires_at": datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat(),
         "tos_version": TOS_VERSION,
+        "tos_checked": True,
+        "tos_checked_at": checked_at_iso,
+        "cache_hit": False,
     }
-    return metadata
+    _set_cached_metadata(key, expires_at, metadata)
+    return dict(metadata)
 
 
-__all__ = ["evaluate_viewer_access", "ROBOTS_URL", "ROBOTS_USER_AGENT", "TOS_VERSION"]
-
+__all__ = ["evaluate_viewer_access", "reset_legal_cache", "ROBOTS_URL", "ROBOTS_USER_AGENT", "TOS_VERSION"]

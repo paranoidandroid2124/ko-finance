@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import FrozenSet, Literal
 
-SignupChannel = Literal["email", "google", "kakao", "naver", "admin_invite"]
+SignupChannel = Literal["email", "google", "kakao", "naver", "admin_invite", "saml", "oidc", "scim"]
 AuthTokenType = Literal["email_verify", "password_reset", "email_change", "account_unlock"]
 
 ALLOWED_SIGNUP_CHANNELS: FrozenSet[SignupChannel] = frozenset(
-    ["email", "google", "kakao", "naver", "admin_invite"]
+    ["email", "google", "kakao", "naver", "admin_invite", "saml", "oidc", "scim"]
 )
 DEFAULT_SIGNUP_CHANNEL: SignupChannel = "email"
 AUTH_TOKEN_TYPES: FrozenSet[AuthTokenType] = frozenset(

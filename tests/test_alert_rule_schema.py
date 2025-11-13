@@ -59,3 +59,12 @@ def test_update_request_accepts_new_trigger_and_frequency() -> None:
     assert "trigger" in data
     assert "frequency" in data
     assert data["frequency"]["evaluationIntervalMinutes"] == 20
+
+
+def test_trigger_schema_normalizes_keywords_and_dsl() -> None:
+    payload = AlertTriggerSchema(
+        dsl="  news ticker:005930 keyword:'buyback'  ",
+        keywords=["  buyback  ", "earnings"],
+    )
+    assert payload.dsl == "news ticker:005930 keyword:'buyback'"
+    assert payload.keywords == ["buyback", "earnings"]

@@ -68,6 +68,12 @@ class LoginResponse(BaseModel):
     user: AuthUserSchema
 
 
+class OidcAuthorizeResponse(BaseModel):
+    authorizationUrl: str
+    state: str
+    expiresIn: int
+
+
 class EmailVerifyRequest(BaseModel):
     token: str
 

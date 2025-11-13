@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
+from typing import Optional
 
 from database import get_db
 from schemas.api.auth import (
@@ -26,12 +27,17 @@ from schemas.api.auth import (
     RegisterResponse,
     SessionRefreshRequest,
     SessionRefreshResponse,
+    OidcAuthorizeResponse,
 )
 from services.auth_service import (
     AuthServiceError,
     RequestContext,
+    build_oidc_authorize_url,
+    complete_oidc_login,
     confirm_account_unlock,
     confirm_password_reset,
+    consume_saml_assertion,
+    generate_saml_metadata,
     login_user,
     logout_session,
     request_account_unlock,
@@ -60,6 +66,107 @@ def _raise(exc: AuthServiceError) -> None:
         detail=detail,
         headers=exc.headers,
     ) from exc
+
+
+@router.get(
+    "/saml/metadata",
+    summary="SAML SP metadata 다운로드",
+)
+def saml_metadata_route() -> Response:
+    try:
+        metadata = generate_saml_metadata()
+    except AuthServiceError as exc:
+        _raise(exc)
+    return Response(content=metadata, media_type="application/samlmetadata+xml")
+
+
+@router.post(
+    "/saml/acs",
+    response_model=LoginResponse,
+    summary="SAML Assertion Consumer Service",
+)
+async def saml_acs_route(
+    request: Request,
+    saml_response: str = Form(..., alias="SAMLResponse"),
+    relay_state: Optional[str] = Form(default=None, alias="RelayState"),
+    db: Session = Depends(get_db),
+) -> LoginResponse:
+    try:
+        result = consume_saml_assertion(
+            db,
+            saml_response=saml_response,
+            relay_state=relay_state,
+            context=_ctx(request),
+        )
+    except AuthServiceError as exc:
+        _raise(exc)
+    return LoginResponse(
+        accessToken=result.access_token,
+        refreshToken=result.refresh_token,
+        expiresIn=result.expires_in,
+        sessionId=result.session_id,
+        sessionToken=result.session_token,
+        user=result.user,
+    )
+
+
+@router.get(
+    "/oidc/authorize",
+    response_model=OidcAuthorizeResponse,
+    summary="OIDC 로그인 URL 생성",
+)
+def oidc_authorize_route(
+    request: Request,
+    returnTo: Optional[str] = None,
+    orgSlug: Optional[str] = None,
+    prompt: Optional[str] = None,
+    loginHint: Optional[str] = None,
+) -> OidcAuthorizeResponse:
+    try:
+        result = build_oidc_authorize_url(
+            return_to=returnTo,
+            org_slug=orgSlug,
+            prompt=prompt,
+            login_hint=loginHint,
+            context=_ctx(request),
+        )
+    except AuthServiceError as exc:
+        _raise(exc)
+    return OidcAuthorizeResponse(
+        authorizationUrl=result.authorization_url,
+        state=result.state,
+        expiresIn=result.expires_in,
+    )
+
+
+@router.get(
+    "/oidc/callback",
+    response_model=LoginResponse,
+    summary="OIDC 코드 교환",
+)
+def oidc_callback_route(
+    code: str,
+    state: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> LoginResponse:
+    try:
+        result = complete_oidc_login(
+            db,
+            code=code,
+            state=state,
+            context=_ctx(request),
+        )
+    except AuthServiceError as exc:
+        _raise(exc)
+    return LoginResponse(
+        accessToken=result.access_token,
+        refreshToken=result.refresh_token,
+        expiresIn=result.expires_in,
+        sessionId=result.session_id,
+        sessionToken=result.session_token,
+        user=result.user,
+    )
 
 
 @router.post(

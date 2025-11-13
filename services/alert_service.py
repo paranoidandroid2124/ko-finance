@@ -5,16 +5,19 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from dataclasses import dataclass, field
 
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
+from alerts.rule_compiler import CompiledRulePlan, compile_trigger, plan_signature, snapshot_digest
 from core.env import env_bool
 from models.alert import AlertDelivery, AlertRule
 from models.filing import Filing
 from models.news import NewsSignal
+from services import alert_metrics, quota_guard
 from services.notification_service import NotificationResult, dispatch_notification
 from services.alert_channel_registry import validate_channel_payload
 from services.audit_log import audit_alert_event
@@ -68,6 +71,9 @@ LEGACY_FREQUENCY_FIELDS = {
 }
 
 DEFAULT_MESSAGE = "새로운 알림이 감지되었습니다."
+_EVAL_STATE_KEY = "alertWorkerState"
+_EVAL_STATE_VERSION = 1
+_MAX_STATE_EVENT_IDS = 50
 
 
 class PlanQuotaError(RuntimeError):
@@ -322,8 +328,9 @@ def archive_alert_rule(db: Session, *, rule: AlertRule) -> None:
     rule.status = "archived"
 
 
-def _window_start(rule: AlertRule, now: datetime) -> datetime:
-    window = max(rule.window_minutes or 60, 5)
+def _window_start(rule: AlertRule, now: datetime, override_minutes: Optional[int] = None) -> datetime:
+    window = override_minutes if override_minutes is not None else rule.window_minutes
+    window = max(window or 60, 5)
     return now - timedelta(minutes=window)
 
 
@@ -348,6 +355,8 @@ def _query_filings(
     *,
     tickers: Sequence[str],
     categories: Sequence[str],
+    keywords: Sequence[str],
+    entities: Sequence[str],
     since: datetime,
 ) -> List[Filing]:
     since_naive = since.replace(tzinfo=None)
@@ -357,6 +366,21 @@ def _query_filings(
         query = query.filter(Filing.ticker.in_(tickers))
     if categories:
         query = query.filter(Filing.category.in_(categories))
+    if keywords:
+        keyword_clauses = []
+        for keyword in keywords:
+            lowered = keyword.lower()
+            pattern = f"%{lowered}%"
+            keyword_clauses.append(func.lower(Filing.report_name).like(pattern))
+            keyword_clauses.append(func.lower(Filing.title).like(pattern))
+        query = query.filter(or_(*keyword_clauses))
+    if entities:
+        entity_clauses = []
+        for entity in entities:
+            lowered = entity.lower()
+            pattern = f"%{lowered}%"
+            entity_clauses.append(func.lower(Filing.corp_name).like(pattern))
+        query = query.filter(or_(*entity_clauses))
     query = query.order_by(Filing.filed_at.desc())
     return list(query.limit(10).all())
 
@@ -366,6 +390,8 @@ def _query_news(
     *,
     tickers: Sequence[str],
     sectors: Sequence[str],
+    keywords: Sequence[str],
+    entities: Sequence[str],
     min_sentiment: Optional[float],
     since: datetime,
 ) -> List[NewsSignal]:
@@ -374,6 +400,29 @@ def _query_news(
         query = query.filter(NewsSignal.ticker.in_(tickers))
     if sectors:
         query = query.filter(or_(NewsSignal.sector.in_(sectors), NewsSignal.industry.in_(sectors)))
+    if keywords:
+        keyword_clauses = []
+        for keyword in keywords:
+            lowered = keyword.lower()
+            pattern = f"%{lowered}%"
+            keyword_clauses.append(func.lower(NewsSignal.headline).like(pattern))
+            keyword_clauses.append(func.lower(NewsSignal.summary).like(pattern))
+        query = query.filter(or_(*keyword_clauses))
+    if entities:
+        entity_clauses = []
+        ticker_matches: List[str] = []
+        for entity in entities:
+            lowered = entity.lower()
+            if entity.upper() == entity and 1 <= len(entity) <= 6:
+                ticker_matches.append(entity)
+            pattern = f"%{lowered}%"
+            entity_clauses.append(func.lower(NewsSignal.headline).like(pattern))
+            entity_clauses.append(func.lower(NewsSignal.summary).like(pattern))
+        combined_filters = list(entity_clauses)
+        if ticker_matches:
+            combined_filters.append(NewsSignal.ticker.in_(ticker_matches))
+        if combined_filters:
+            query = query.filter(or_(*combined_filters))
     if min_sentiment is not None:
         query = query.filter(NewsSignal.sentiment.isnot(None), NewsSignal.sentiment >= float(min_sentiment))
     query = query.order_by(NewsSignal.published_at.desc())
@@ -487,11 +536,51 @@ def _record_delivery(
 
 
 @dataclass
+class _RuleSnapshot:
+    plan_signature: str
+    event_hash: str
+    event_ids: Tuple[str, ...]
+    event_count: int
+    window_minutes: int
+    window_start: datetime
+    evaluated_at: datetime
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "version": 1,
+            "planSignature": self.plan_signature,
+            "eventHash": self.event_hash,
+            "eventIds": list(self.event_ids),
+            "eventCount": self.event_count,
+            "windowMinutes": self.window_minutes,
+            "windowStart": self.window_start.isoformat(),
+            "evaluatedAt": self.evaluated_at.isoformat(),
+        }
+
+    @property
+    def has_events(self) -> bool:
+        return self.event_count > 0
+
+
+@dataclass
+class _RuleEvaluationResult:
+    plan: CompiledRulePlan
+    event_type: str
+    events: Sequence[Any]
+    events_json: List[Dict[str, Any]]
+    message: str
+    matches: bool
+    window_start: datetime
+    snapshot: _RuleSnapshot
+
+
+@dataclass
 class _PlanEvaluationStats:
     evaluated: int = 0
     triggered: int = 0
     skipped: int = 0
     errors: int = 0
+    duplicates: int = 0
 
 
 @dataclass
@@ -500,6 +589,7 @@ class _EvaluationAccumulator:
     triggered: int = 0
     skipped: int = 0
     errors: int = 0
+    duplicates: int = 0
     by_plan: Dict[str, _PlanEvaluationStats] = field(default_factory=dict)
 
     def _plan(self, plan_tier: str) -> _PlanEvaluationStats:
@@ -523,14 +613,74 @@ class _EvaluationAccumulator:
         self.errors += 1
         self._plan(plan_tier).errors += 1
 
+    def record_duplicate(self, plan_tier: str) -> None:
+        self.duplicates += 1
+        self._plan(plan_tier).duplicates += 1
+
     def as_dict(self) -> Dict[str, Any]:
         return {
             "evaluated": self.evaluated,
             "triggered": self.triggered,
             "skipped": self.skipped,
             "errors": self.errors,
+            "duplicates": self.duplicates,
             "by_plan": {plan: vars(stats).copy() for plan, stats in self.by_plan.items()},
         }
+
+
+def _load_worker_state(rule: AlertRule) -> Mapping[str, Any]:
+    extras = rule.extras or {}
+    state = extras.get(_EVAL_STATE_KEY, {})
+    return state if isinstance(state, dict) else {}
+
+
+def _persist_worker_state(rule: AlertRule, snapshot: _RuleSnapshot, *, duplicate: bool) -> None:
+    extras = dict(rule.extras or {})
+    payload = snapshot.as_dict()
+    payload["version"] = _EVAL_STATE_VERSION
+    payload["duplicateBlocked"] = bool(duplicate)
+    extras[_EVAL_STATE_KEY] = payload
+    rule.extras = extras
+
+
+def _is_duplicate_snapshot(state: Mapping[str, Any], snapshot: _RuleSnapshot) -> bool:
+    if not snapshot.has_events:
+        return False
+    return (
+        state.get("planSignature") == snapshot.plan_signature
+        and state.get("eventHash") == snapshot.event_hash
+    )
+
+
+def _event_identity(event: Mapping[str, Any]) -> str:
+    for key in ("id", "url", "ticker", "corp_name", "headline"):
+        value = event.get(key)
+        if value:
+            return str(value)
+    return snapshot_digest([event])
+
+
+def _build_snapshot(
+    plan: CompiledRulePlan,
+    events_json: List[Dict[str, Any]],
+    window_start: datetime,
+    evaluated_at: datetime,
+) -> _RuleSnapshot:
+    identifiers = tuple(
+        _event_identity(event)
+        for event in events_json[:_MAX_STATE_EVENT_IDS]
+    )
+    digest = snapshot_digest(events_json)
+    signature = plan_signature(plan)
+    return _RuleSnapshot(
+        plan_signature=signature,
+        event_hash=digest,
+        event_ids=identifiers,
+        event_count=len(events_json),
+        window_minutes=plan.window_minutes,
+        window_start=window_start,
+        evaluated_at=evaluated_at,
+    )
 
 
 def evaluate_due_alerts(
@@ -570,63 +720,88 @@ def _process_rule(
     stats: _EvaluationAccumulator,
 ) -> None:
     stats.record_evaluated(rule.plan_tier)
-
-    if _rule_is_throttled(rule, now):
-        stats.record_skipped(rule.plan_tier)
-        _audit_cooldown_block(rule)
-        return
-
-    if _rule_not_due(rule, now):
-        stats.record_skipped(rule.plan_tier)
-        return
-
-    if not _apply_daily_cap(db, rule, now):
-        logger.info("Daily cap reached for alert %s", rule.id)
-        stats.record_skipped(rule.plan_tier)
-        return
+    outcome = "evaluated"
+    timer_start = time.perf_counter()
 
     try:
-        matches, message, events_json = _evaluate_rule(db, rule, now)
-        rule.last_evaluated_at = now
-    except Exception as exc:  # pragma: no cover - defensive guard
-        stats.record_error(rule.plan_tier)
-        current_errors = int(rule.error_count or 0) + 1
-        rule.error_count = current_errors
-        backoff_minutes = _error_backoff_minutes(current_errors)
-        if backoff_minutes:
-            rule.cooled_until = now + timedelta(minutes=backoff_minutes)
-        logger.error(
-            "Alert evaluation error (rule=%s plan=%s task=%s retries=%s): %s",
-            rule.id,
-            rule.plan_tier,
-            task_id,
-            current_errors,
-            exc,
-            exc_info=True,
-        )
-        return
+        if _rule_is_throttled(rule, now):
+            stats.record_skipped(rule.plan_tier)
+            _audit_cooldown_block(rule)
+            outcome = "cooldown"
+            return
 
-    if not matches:
-        return
+        if _rule_not_due(rule, now):
+            stats.record_skipped(rule.plan_tier)
+            outcome = "not_due"
+            return
 
-    stats.record_triggered(rule.plan_tier)
-    rule.last_triggered_at = now
+        if not _apply_daily_cap(db, rule, now):
+            logger.info("Daily cap reached for alert %s", rule.id)
+            stats.record_skipped(rule.plan_tier)
+            outcome = "daily_cap"
+            return
 
-    cooldown = max(rule.cooldown_minutes or 0, 0)
-    if cooldown:
-        rule.cooled_until = now + timedelta(minutes=cooldown)
+        try:
+            evaluation = _evaluate_rule(db, rule, now)
+            rule.last_evaluated_at = now
+        except Exception as exc:  # pragma: no cover - defensive guard
+            stats.record_error(rule.plan_tier)
+            current_errors = int(rule.error_count or 0) + 1
+            rule.error_count = current_errors
+            backoff_minutes = _error_backoff_minutes(current_errors)
+            if backoff_minutes:
+                rule.cooled_until = now + timedelta(minutes=backoff_minutes)
+            logger.error(
+                "Alert evaluation error (rule=%s plan=%s task=%s retries=%s): %s",
+                rule.id,
+                rule.plan_tier,
+                task_id,
+                current_errors,
+                exc,
+                exc_info=True,
+            )
+            outcome = "error"
+            return
 
-    channel_failures = _dispatch_rule_notifications(db, rule, message, events_json)
-    if channel_failures:
-        rule.error_count = min(int(rule.error_count or 0) + channel_failures, 1000)
-        logger.warning(
-            "Alert delivery failures (rule=%s failed_channels=%s task=%s)",
-            rule.id,
-            channel_failures,
-            task_id,
-        )
-    else:
-        rule.error_count = 0
+        snapshot = evaluation.snapshot
+        state = _load_worker_state(rule)
+
+        if not evaluation.matches:
+            _persist_worker_state(rule, snapshot, duplicate=False)
+            outcome = "no_match"
+            return
+
+        if _is_duplicate_snapshot(state, snapshot):
+            stats.record_duplicate(rule.plan_tier)
+            _persist_worker_state(rule, snapshot, duplicate=True)
+            alert_metrics.record_duplicate(rule.plan_tier, cause="snapshot")
+            outcome = "duplicate"
+            return
+
+        stats.record_triggered(rule.plan_tier)
+        rule.last_triggered_at = now
+
+        cooldown = max(rule.cooldown_minutes or 0, 0)
+        if cooldown:
+            rule.cooled_until = now + timedelta(minutes=cooldown)
+
+        channel_failures = _dispatch_rule_notifications(db, rule, evaluation.message, evaluation.events_json)
+        if channel_failures:
+            rule.error_count = min(int(rule.error_count or 0) + channel_failures, 1000)
+            logger.warning(
+                "Alert delivery failures (rule=%s failed_channels=%s task=%s)",
+                rule.id,
+                channel_failures,
+                task_id,
+            )
+            outcome = "delivery_error"
+        else:
+            rule.error_count = 0
+            outcome = "triggered"
+        _persist_worker_state(rule, snapshot, duplicate=False)
+    finally:
+        duration = max(time.perf_counter() - timer_start, 0.0)
+        alert_metrics.observe_rule_latency(rule.plan_tier, outcome, duration)
 
 
 def _dispatch_rule_notifications(
@@ -688,38 +863,51 @@ def _evaluate_rule(
     db: Session,
     rule: AlertRule,
     now: datetime,
-) -> Tuple[bool, str, List[Dict[str, Any]]]:
+) -> _RuleEvaluationResult:
     condition = rule.condition or {}
-    event_type = str(condition.get("type") or "filing").lower()
-    window_start = _window_start(rule, now)
-    tickers = condition.get("tickers") or []
+    plan = compile_trigger(
+        condition,
+        default_window_minutes=rule.window_minutes,
+        default_source=str(condition.get("type") or "filing").lower(),
+    )
+    event_type = plan.source if plan.source in {"news", "filing"} else "filing"
+    window_start = _window_start(rule, now, override_minutes=plan.window_minutes)
 
-    events: Sequence[Any]
     if event_type == "news":
-        sectors = condition.get("sectors") or []
-        min_sentiment = condition.get("minSentiment")
-        events = _query_news(
+        events: Sequence[Any] = _query_news(
             db,
-            tickers=tickers,
-            sectors=sectors,
-            min_sentiment=min_sentiment,
+            tickers=plan.tickers,
+            sectors=plan.sectors,
+            keywords=plan.keywords,
+            entities=plan.entities,
+            min_sentiment=plan.min_sentiment,
             since=window_start,
         )
     else:
-        categories = condition.get("categories") or []
         events = _query_filings(
             db,
-            tickers=tickers,
-            categories=categories,
+            tickers=plan.tickers,
+            categories=plan.categories,
+            keywords=plan.keywords,
+            entities=plan.entities,
             since=window_start,
         )
 
-    if not events:
-        return False, DEFAULT_MESSAGE, []
+    events_list = list(events)
+    events_json = _build_event_context(events_list, event_type)
+    message = _render_message(rule, events_list, event_type) if events_list else DEFAULT_MESSAGE
+    snapshot = _build_snapshot(plan, events_json, window_start, now)
 
-    events_json = _build_event_context(events, event_type)
-    message = _render_message(rule, events, event_type)
-    return True, message, events_json
+    return _RuleEvaluationResult(
+        plan=plan,
+        event_type=event_type,
+        events=events_list,
+        events_json=events_json,
+        message=message,
+        matches=bool(events_list),
+        window_start=window_start,
+        snapshot=snapshot,
+    )
 
 
 def _serialize_frequency(rule: AlertRule) -> Dict[str, Optional[int]]:

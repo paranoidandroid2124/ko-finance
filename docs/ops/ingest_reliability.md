@@ -3,23 +3,24 @@
 ## 1. Viewer Fallback Legal Guard
 
 - Primary flow downloads OpenDART ZIP bundles; failure paths trigger the viewer scraper **only** when the per-issuer feature flag allows it.
-- Feature flags live in `ingest_viewer_flags` (see `ops/migrations/add_ingest_viewer_flags.sql`):
-  - `fallback_enabled = true` (default) permits viewer scraping.
-  - `reason`/`updated_by` capture audit context (e.g., `"Legal hold for AAA Corp"`).
-- Toggle example:
-  ```sql
-  INSERT INTO ingest_viewer_flags (corp_code, fallback_enabled, reason, updated_by)
-  VALUES ('00123456', false, 'Robots hold (LG legal case)', 'ops@ko-finance')
-  ON CONFLICT (corp_code)
-  DO UPDATE SET fallback_enabled = EXCLUDED.fallback_enabled,
-                reason = EXCLUDED.reason,
-                updated_by = EXCLUDED.updated_by,
-                updated_at = NOW();
+- Global toggles live in `.env`:
+  - `INGEST_VIEWER_FALLBACK=true|false` enables/disables the viewer fallback globally.
+  - `LEGAL_LOG=true|false` gates whether legal metadata is persisted to `audit_logs`.
+  - `DART_ROBOTS_TTL_SECONDS` (default `3600`) controls the robots metadata cache/window.
+- Issuer-specific overrides are stored in `ingest_viewer_flags` and should be managed via the CLI:
+  ```bash
+  python scripts/ingest_viewer_flags.py list
+  python scripts/ingest_viewer_flags.py disable 00123456 --reason "Robots hold (LG legal case)" --updated-by ops@ko-finance
+  python scripts/ingest_viewer_flags.py enable 00123456 --updated-by ops@ko-finance
+  python scripts/ingest_viewer_flags.py clear-cache  # force-refresh cached flags
   ```
-- Every fallback attempt records `audit_logs.action = 'ingest.viewer_fallback'` with:
-  - `extra.viewer_url`, `robots_allowed`, `robots_checked_at`, `tos_version`.
-  - `extra.blocked = true` when the issuer feature flag disables fallback.
-  - `feature_flags.viewer_fallback` mirrors the flag state for later filtering.
+  The CLI wraps the same table used by migrations and automatically invalidates the in-process cache (`viewer_fallback_state`).
+- Robots.txt and ToS evaluations are cached per viewer path for the TTL above; use `LEGAL_LOG=false` or reduce `DART_ROBOTS_TTL_SECONDS` if you need to suppress or tighten the logging window temporarily.
+- Every fallback attempt records `audit_logs.action = 'ingest.viewer_fallback'` with extended metadata:
+  - `extra` now includes `issuer`, `viewer_path`, `robots_checked`, `robots_checked_at`, `tos_checked`, `tos_version`, and `feature_flags_snapshot`.
+  - `extra.blocked = true` plus `extra.block_reason` when the issuer flag or global toggle denies fallback.
+  - `feature_flags.viewer_fallback`, `feature_flags.viewer_fallback_env`, and `feature_flags.viewer_fallback_flag` capture the decision state.
+  - Failures record `action='ingest.viewer_fallback_failed'` with the same metadata + `extra.error`.
 
 ## 2. Celery Retry + Dead-letter Queue
 
