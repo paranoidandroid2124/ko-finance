@@ -90,6 +90,12 @@ const basePlan: AlertPlanInfo = {
   minEvaluationIntervalMinutes: 1,
   minCooldownMinutes: 5,
   nextEvaluationAt: null,
+  frequencyDefaults: {
+    evaluationIntervalMinutes: 5,
+    windowMinutes: 60,
+    cooldownMinutes: 30,
+    maxTriggersPerDay: 20,
+  },
 };
 
 const freePlan: AlertPlanInfo = {
@@ -98,6 +104,18 @@ const freePlan: AlertPlanInfo = {
   maxAlerts: 0,
   remainingAlerts: 0,
   channels: ["email"],
+  maxDailyTriggers: 1,
+  defaultEvaluationIntervalMinutes: 15,
+  defaultWindowMinutes: 120,
+  defaultCooldownMinutes: 120,
+  minEvaluationIntervalMinutes: 5,
+  minCooldownMinutes: 30,
+  frequencyDefaults: {
+    evaluationIntervalMinutes: 15,
+    windowMinutes: 120,
+    cooldownMinutes: 120,
+    maxTriggersPerDay: 1,
+  },
 };
 
 const proPlan: AlertPlanInfo = {
@@ -118,6 +136,19 @@ const sampleRule: AlertRule = {
     sectors: [],
     minSentiment: 0.2,
   },
+  trigger: {
+    type: "news",
+    tickers: ["KRX:005930"],
+    categories: [],
+    sectors: [],
+    minSentiment: 0.2,
+  },
+  frequency: {
+    evaluationIntervalMinutes: 10,
+    windowMinutes: 60,
+    cooldownMinutes: 30,
+    maxTriggersPerDay: 5,
+  },
   channels: [
     {
       type: "email",
@@ -133,6 +164,7 @@ const sampleRule: AlertRule = {
   maxTriggersPerDay: 5,
   lastTriggeredAt: null,
   lastEvaluatedAt: null,
+  cooledUntil: null,
   throttleUntil: null,
   errorCount: 0,
   extras: {},

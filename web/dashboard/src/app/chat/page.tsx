@@ -484,8 +484,8 @@ export default function ChatPage() {
           activeId: undefined,
           confidence: undefined,
           errorMessage: message,
-          documentTitle: context.documentTitle,
-          documentUrl: context.documentUrl
+          documentTitle: context.documentTitle ?? undefined,
+          documentUrl: context.documentUrl ?? undefined
         });
         setSessionTelemetry(context.sessionId, {
           guardrail: { status: 'error', message },
@@ -553,7 +553,7 @@ export default function ChatPage() {
       showToast({
         intent: 'warning',
         title: '저장 실패',
-        message: persistenceError
+        message: persistenceError ?? undefined
       });
       resetStoreError();
     }

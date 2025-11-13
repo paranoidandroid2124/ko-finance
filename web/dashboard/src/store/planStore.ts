@@ -110,7 +110,7 @@ type PlanStoreState = {
   presets: Record<PlanTier, PlanPreset> | null;
   presetsLoading: boolean;
   presetsError?: string | null;
-  lastServerPlan: PlanContextPayload;
+  lastServerPlan: NormalizedPlanContext;
   debugToolsEnabled: boolean;
   debugOverride: PlanDebugOverride | null;
   fetchPlan: (options?: { signal?: AbortSignal }) => Promise<void>;
@@ -531,7 +531,7 @@ export const usePlanStore = create<PlanStoreState>((set, get) => {
 
     async startTrial(input) {
       if (get().trialStarting) {
-        return;
+        throw new Error('plan trial request already in flight');
       }
       set({ trialStarting: true, trialError: undefined });
 

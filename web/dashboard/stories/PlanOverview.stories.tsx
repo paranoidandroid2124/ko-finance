@@ -7,6 +7,7 @@ import {
   AlertStoryProviders,
   enterprisePlanInfo,
   freePlanInfo,
+  starterPlanInfo,
   proPlanInfo,
 } from "@/testing/fixtures/alerts";
 
@@ -25,7 +26,7 @@ const meta: Meta<StoryArgs> = {
   argTypes: {
     planTier: {
       control: { type: "radio" },
-      options: ["free", "pro", "enterprise"],
+      options: ["free", "starter", "pro", "enterprise"],
     },
   },
 };
@@ -46,6 +47,7 @@ export const SummaryCard: Story = {
 
 const planByTier: Record<PlanTier, typeof freePlanInfo> = {
   free: freePlanInfo,
+  starter: starterPlanInfo,
   pro: proPlanInfo,
   enterprise: enterprisePlanInfo,
 };

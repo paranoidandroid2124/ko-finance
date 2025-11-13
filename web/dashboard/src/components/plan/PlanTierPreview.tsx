@@ -10,11 +10,12 @@ import { getTrialCountdownLabel } from "@/lib/trialUtils";
 
 const PLAN_DESCRIPTIONS: Record<PlanTier, string> = {
   free: "가볍게 써보는 체험 플랜이에요. 핵심 기능만 맛볼 수 있어요.",
+  starter: "경량 자동화와 RAG 확장을 미리 경험해 보고 싶을 때 활용해 보세요.",
   pro: "팀과 함께 자동화까지 해보고 싶은 분들을 위한 플랜이에요. 이메일/웹훅이 바로 열려요.",
   enterprise: "모든 채널과 맞춤 한도를 마음껏 쓰는 파트너 전용 플랜이에요.",
 };
 
-const PLAN_TIER_SEQUENCE: PlanTier[] = ["free", "pro", "enterprise"];
+const PLAN_TIER_SEQUENCE: PlanTier[] = ["free", "starter", "pro", "enterprise"];
 
 type PlanTierPreviewProps = {
   className?: string;

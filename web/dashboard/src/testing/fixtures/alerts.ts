@@ -65,6 +65,26 @@ export const proPlanInfo: AlertPlanInfo = {
   nextEvaluationAt: null,
 };
 
+export const starterPlanInfo: AlertPlanInfo = {
+  ...proPlanInfo,
+  planTier: "starter",
+  maxAlerts: 4,
+  remainingAlerts: 3,
+  channels: ["email", "slack"],
+  maxDailyTriggers: 3,
+  defaultEvaluationIntervalMinutes: 10,
+  defaultWindowMinutes: 90,
+  defaultCooldownMinutes: 60,
+  minEvaluationIntervalMinutes: 2,
+  minCooldownMinutes: 10,
+  frequencyDefaults: {
+    evaluationIntervalMinutes: 10,
+    windowMinutes: 90,
+    cooldownMinutes: 60,
+    maxTriggersPerDay: 3,
+  },
+};
+
 export const enterprisePlanInfo: AlertPlanInfo = {
   planTier: "enterprise",
   maxAlerts: 25,

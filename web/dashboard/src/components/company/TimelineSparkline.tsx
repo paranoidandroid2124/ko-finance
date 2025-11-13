@@ -32,6 +32,7 @@ export type TimelineSparklineProps = {
 
 const PLAN_DESCRIPTION: Record<PlanTier, string> = {
   free: "핵심 감성 흐름을 먼저 함께 나눠드려요. 더 살펴보고 싶을 땐 언제든 말씀 주세요.",
+  starter: "주요 감성 흐름을 빠르게 확인하고 필요 시 Pro 인사이트로 확장해 보세요.",
   pro: "감성과 가격을 나란히 살피며 오늘의 변화를 차분히 안내해 드릴게요.",
   enterprise: "감성·가격·거래량까지 한눈에 담아 조직의 걸음을 함께 챙겨드리고 있습니다.",
 };

@@ -9,6 +9,7 @@ import { SettingsOverlay } from "@/components/settings/SettingsOverlay";
 
 const PLAN_LABEL: Record<string, string> = {
   free: "Free",
+  starter: "Starter",
   pro: "Pro",
   enterprise: "Enterprise",
 };
@@ -180,6 +181,9 @@ function MenuLink({ href, icon: Icon, label, external, onClick }: MenuLinkProps)
   }
 
   if (external) {
+    if (!href) {
+      return null;
+    }
     return (
       <a
         href={href}
@@ -192,9 +196,15 @@ function MenuLink({ href, icon: Icon, label, external, onClick }: MenuLinkProps)
     );
   }
 
+  if (!href) {
+    return null;
+  }
+
+  const nextHref = href as unknown as Parameters<typeof Link>[0]["href"];
+
   return (
     <Link
-      href={href}
+      href={nextHref}
       className="flex items-center gap-2 rounded-lg px-2 py-2 transition hover:bg-border-light/50 dark:hover:bg-white/10"
     >
       {shared}

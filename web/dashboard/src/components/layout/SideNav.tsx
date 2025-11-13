@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowUpRight,
   Building2,
   CreditCard,
   FlaskConical,
@@ -9,32 +10,55 @@ import {
   MessageSquare,
   Newspaper,
   Radar,
-  Settings,
+  Table2,
   Shield,
 } from "lucide-react";
 import Link from "next/link";
+import { useMemo } from "react";
 import { usePathname } from "next/navigation";
-import type { Route } from "next";
 
-type NavItem = { href: Route; label: string; icon: typeof LayoutDashboard };
+import { isTierAtLeast, usePlanStore } from "@/store/planStore";
 
-const BASE_NAV_ITEMS: NavItem[] = [
+type NavItem = { href: string; label: string; icon: typeof LayoutDashboard };
+
+const DEFAULT_COMPANY_TICKER = process.env.NEXT_PUBLIC_DEFAULT_COMPANY_TICKER?.trim();
+const COMPANY_ROUTE = DEFAULT_COMPANY_TICKER ? `/company/${DEFAULT_COMPANY_TICKER}` : "/company";
+const HELP_CENTER_URL = "https://docs.kfinance.co/help";
+const SHOW_ADMIN_NAV = process.env.NEXT_PUBLIC_ENABLE_ADMIN_NAV === "true";
+
+const createBaseNavItems = (): NavItem[] => [
   { href: "/", label: "한눈에 보기", icon: LayoutDashboard },
   { href: "/watchlist", label: "워치리스트", icon: Radar },
   { href: "/news", label: "뉴스", icon: Newspaper },
   { href: "/filings", label: "공시 자료", icon: FileText },
-  { href: "/company", label: "기업 살펴보기", icon: Building2 },
+  { href: COMPANY_ROUTE, label: "기업 살펴보기", icon: Building2 },
   { href: "/labs/event-study", label: "Labs · 이벤트 스터디", icon: FlaskConical },
   { href: "/chat", label: "대화", icon: MessageSquare },
   { href: "/pricing", label: "플랜 & 가격", icon: CreditCard },
 ];
 
 const ADMIN_NAV_ITEM: NavItem = { href: "/admin", label: "운영 콘솔", icon: Shield };
-const SHOW_ADMIN_NAV = process.env.NEXT_PUBLIC_ENABLE_ADMIN_NAV === "true";
+const TABLE_EXPLORER_ITEM: NavItem = { href: "/tables", label: "Table Explorer", icon: Table2 };
 
 export function SideNav() {
   const pathname = usePathname() ?? "";
-  const navItems = SHOW_ADMIN_NAV ? [...BASE_NAV_ITEMS, ADMIN_NAV_ITEM] : BASE_NAV_ITEMS;
+  const planSnapshot = usePlanStore((state) => ({
+    initialized: state.initialized,
+    planTier: state.planTier,
+  }));
+  const showTableExplorerNav =
+    !planSnapshot.initialized || isTierAtLeast(planSnapshot.planTier, "pro");
+
+  const navItems = useMemo(() => {
+    const items = createBaseNavItems();
+    if (showTableExplorerNav) {
+      items.splice(5, 0, TABLE_EXPLORER_ITEM);
+    }
+    if (SHOW_ADMIN_NAV) {
+      items.push(ADMIN_NAV_ITEM);
+    }
+    return items;
+  }, [showTableExplorerNav]);
 
   return (
     <aside className="hidden min-h-screen w-64 flex-col border-r border-border-light bg-background-cardLight px-4 py-6 dark:border-border-dark dark:bg-background-cardDark lg:flex">
@@ -54,7 +78,12 @@ export function SideNav() {
             : "text-text-secondaryLight dark:text-text-secondaryDark";
 
           return (
-            <Link key={href} href={href} className={`${baseClasses} ${activeClasses}`} aria-current={isActive ? "page" : undefined}>
+            <Link
+              key={href}
+              href={href as unknown as Parameters<typeof Link>[0]["href"]}
+              className={`${baseClasses} ${activeClasses}`}
+              aria-current={isActive ? "page" : undefined}
+            >
               <Icon className="h-5 w-5" />
               <span>{label}</span>
             </Link>
@@ -66,6 +95,15 @@ export function SideNav() {
         <p className="mt-1">
           운영 런북과 Langfuse 트레이스, 인프라 대시보드를 살펴보시면 빠르게 정리할 수 있어요.
         </p>
+        <a
+          href={HELP_CENTER_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 inline-flex items-center gap-1 rounded-md text-primary transition-colors hover:text-primary/80 dark:text-primary.dark dark:hover:text-primary.dark/80"
+        >
+          Help Center
+          <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
+        </a>
       </div>
     </aside>
   );
