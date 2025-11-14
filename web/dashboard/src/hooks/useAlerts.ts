@@ -2,12 +2,16 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertEventMatchResponse,
   AlertRuleCreatePayload,
   AlertRuleListResponse,
+  AlertRuleStats,
   AlertRuleUpdatePayload,
   createAlertRule,
   dispatchWatchlistDigest,
   deleteAlertRule,
+  fetchAlertEventMatches,
+  fetchAlertRuleStats,
   fetchAlertRules,
   fetchAlertChannelSchema,
   type AlertChannelSchemaResponse,
@@ -22,6 +26,7 @@ import {
 } from "@/lib/alertsApi";
 
 const ALERT_RULES_QUERY_KEY = ["alerts", "rules"];
+const ALERT_RULE_STATS_QUERY_KEY = (id: string, windowMinutes: number) => ["alerts", "rules", id, "stats", windowMinutes];
 const ALERT_CHANNEL_SCHEMA_QUERY_KEY = ["alerts", "channel-schema"];
 
 export const useAlertRules = () =>
@@ -60,6 +65,19 @@ export const useDeleteAlertRule = () => {
     },
   });
 };
+
+export const useAlertRuleStats = (id: string | null, windowMinutes = 1440) =>
+  useQuery<AlertRuleStats>({
+    queryKey: ALERT_RULE_STATS_QUERY_KEY(id ?? "unknown", windowMinutes),
+    enabled: Boolean(id),
+    staleTime: 30_000,
+    queryFn: () => {
+      if (!id) {
+        return Promise.reject(new Error("ruleId is required"));
+      }
+      return fetchAlertRuleStats(id, windowMinutes);
+    },
+  });
 
 export const useAlertChannelSchema = () =>
   useQuery<AlertChannelSchemaResponse>({
@@ -140,4 +158,11 @@ export const useWatchlistRuleDetail = (
 export const useDispatchWatchlistDigest = () =>
   useMutation<WatchlistDispatchResponse, unknown, WatchlistDispatchRequest>({
     mutationFn: (payload) => dispatchWatchlistDigest(payload),
+  });
+
+export const useAlertEventMatches = (params: { limit?: number; since?: string } = {}) =>
+  useQuery<AlertEventMatchResponse>({
+    queryKey: ["alerts", "event-matches", params.limit ?? 20, params.since ?? ""],
+    queryFn: () => fetchAlertEventMatches(params),
+    staleTime: 60_000,
   });

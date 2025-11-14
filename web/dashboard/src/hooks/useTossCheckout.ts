@@ -1,12 +1,11 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import type { TossPaymentsInstance } from "@tosspayments/payment__types";
 import { resolveApiBase } from "@/lib/apiBase";
 import { loadTossPayments } from "@/lib/tossPayments";
 import { logEvent } from "@/lib/telemetry";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import { useToastStore } from "@/store/toastStore";
 import type { PlanTier } from "@/store/planStore";
 import { planTierLabel, PLAN_CHECKOUT_PRESETS } from "@/constants/planPricing";
@@ -26,6 +25,16 @@ type CheckoutOptions = {
   redirectPath?: string;
 };
 
+type CheckoutInitResponse = {
+  orderId: string;
+  planTier: PlanTier;
+  amount: number;
+  currency: string;
+  orderName: string;
+  successPath: string;
+  failPath: string;
+};
+
 const buildUrl = (baseUrl: string | null | undefined, fallbackPath: string) => {
   const origin = typeof window !== "undefined" ? window.location.origin : "https://localhost";
   try {
@@ -35,9 +44,18 @@ const buildUrl = (baseUrl: string | null | undefined, fallbackPath: string) => {
   }
 };
 
-const generateOrderId = (tier: PlanTier) => {
-  const random = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Date.now().toString();
-  return `kfinance-${tier}-${random}`;
+type ApiErrorDetail = {
+  detail?: {
+    message?: string;
+  };
+};
+
+const readErrorDetail = async (response: Response): Promise<ApiErrorDetail | undefined> => {
+  try {
+    return (await response.json()) as ApiErrorDetail;
+  } catch {
+    return undefined;
+  }
 };
 
 export const useTossCheckout = () => {
@@ -76,42 +94,51 @@ export const useTossCheckout = () => {
 
       try {
         const config = await ensureConfig();
-        const toss = await loadTossPayments(config.clientKey);
+        const toss: TossPaymentsInstance = await loadTossPayments(config.clientKey);
 
         const preset = PLAN_CHECKOUT_PRESETS[targetTier];
-        const effectiveAmount = amount ?? preset.amount;
-        const effectiveName = orderName ?? preset.orderName;
-
-        if (!effectiveAmount || effectiveAmount <= 0) {
-          throw new Error("테스트 결제 금액이 설정되지 않았어요. 관리자에게 문의해 주세요.");
-        }
-
-        const orderId = generateOrderId(targetTier);
         const currentPath =
           redirectPath ??
           (typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}` : "/settings");
 
-        const successUrl = buildUrl(config.successUrl, "/payments/success");
-        successUrl.searchParams.set("orderId", orderId);
-        successUrl.searchParams.set("tier", targetTier);
-        successUrl.searchParams.set("amount", String(effectiveAmount));
-        successUrl.searchParams.set("redirectPath", currentPath);
+        const baseUrl = resolveApiBase();
+        const initResponse = await fetchWithAuth(`${baseUrl}/api/v1/payments/toss/checkout`, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            planTier: targetTier,
+            amount,
+            orderName: orderName ?? preset.orderName,
+            customerName,
+            customerEmail,
+            redirectPath: currentPath,
+          }),
+        });
 
-        const failUrl = buildUrl(config.failUrl, "/payments/fail");
-        failUrl.searchParams.set("orderId", orderId);
-        failUrl.searchParams.set("tier", targetTier);
-        failUrl.searchParams.set("amount", String(effectiveAmount));
-        failUrl.searchParams.set("redirectPath", currentPath);
+        if (!initResponse.ok) {
+          const detail = await readErrorDetail(initResponse);
+          const message = detail?.detail?.message ?? "결제 준비 요청이 실패했어요. 잠시 후 다시 시도해 주세요.";
+          throw new Error(message);
+        }
+
+        const checkout = (await initResponse.json()) as CheckoutInitResponse;
+
+        const successUrl = buildUrl(config.successUrl, checkout.successPath);
+        const failUrl = buildUrl(config.failUrl, checkout.failPath);
 
         logEvent("payments.checkout.request", {
           targetTier,
-          amount: effectiveAmount,
+          amount: checkout.amount,
+          orderId: checkout.orderId,
         });
 
         await toss.requestPayment("CARD", {
-          amount: effectiveAmount,
-          orderId,
-          orderName: effectiveName,
+          amount: checkout.amount,
+          orderId: checkout.orderId,
+          orderName: checkout.orderName,
           customerName: customerName ?? undefined,
           customerEmail: customerEmail ?? undefined,
           successUrl: successUrl.toString(),

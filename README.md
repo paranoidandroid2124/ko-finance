@@ -14,6 +14,7 @@ python -m venv .venv
 .\.venv\Scripts\activate  # Windows
 pip install -r requirements.txt
 ```
+- Python dependencies are managed via `pip-compile`. After editing `requirements.in`, run `pip-compile --annotate --output-file requirements.txt requirements.in` (or `make lint`, which checks this) to refresh the lockfile. Install `pip-tools` (`python -m pip install pip-tools`) if you don't already have it.
 
 ### 3. Configuration
 - Copy `.env.example` to `.env` and fill the secrets.
@@ -22,6 +23,9 @@ pip install -r requirements.txt
   - `NEWS_AGGREGATION_MINUTES`, `NEWS_TOPICS_LIMIT`, `NEWS_NEUTRAL_THRESHOLD`
   - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` if you want notifications
   - `GEMINI_API_KEY`/`OPENAI_API_KEY` for LiteLLM routing
+  - `PLAN_CONFIG_FILE` / `PLAN_CATALOG_FILE` / `PLAN_SETTINGS_FILE` to override the default `uploads/admin/*.json` persistence paths (point these to `tmp/` when running tests to avoid dirty git state; CI uses `/tmp/...` automatically via `scripts/ci_tmp_env.sh`)
+  - `NEWS_SUMMARY_CACHE_PATH` for redirecting the news summary cache (set this to a tmp location in CI)
+  - `NEXT_PUBLIC_ENABLE_PLAN_DEBUG_TOOLS` (set to 1 only in non-production dashboards when you need plan debug overrides)
 - Optional integrations: `LANGFUSE_*`, `MINIO_*`, `QDRANT_*`
 - Optional OCR fallback (Google Cloud Vision):
   - `ENABLE_VISION_OCR=true` to activate Vision-backed OCR for image-based filings
@@ -41,6 +45,13 @@ pip install -r requirements.txt
 3. **Next.js Credentials provider.** `web/dashboard/src/lib/authOptions.ts` calls `POST /api/v1/auth/login`, stores `accessToken`, `refreshToken`, `sessionId`, and `sessionToken` inside the NextAuth JWT/session, and keeps OAuth providers untouched. `/auth/register`, `/auth/login`, `/auth/forgot-password`, `/auth/reset/[token]`, and `/auth/verify/[token]` are implemented with loading/error states that surface `detail.code/message` from FastAPI.
 4. **Env vars.** `DATABASE_URL` must be reachable from both FastAPI and Next.js processes (e.g., override to `postgresql://kfinance:your_strong_password@localhost:5432/kfinance_db` when running tests on the host). Set `AUTH_JWT_SECRET`, `NEXTAUTH_URL`, and `NEXT_PUBLIC_API_BASE_URL` for the dashboard.
 5. **Docs & tests.** See `docs/auth/email_password_design.md` for the latest API contract/error table and run `pytest tests/test_auth_api.py` plus `npm run test -- --run tests/auth/formatAuthError.test.ts` after making auth changes.
+
+### 4. CI / Quality Gates
+
+- Run `make ci` locally or in CI to execute the default pipeline: `pip-compile` consistency check → `pytest -q` → `ruff check` → `mypy`.
+- To avoid polluting the repo with file-based plan/news state, wrap any pytest/migration command with `scripts/ci_tmp_env.sh`. Example: `./scripts/ci_tmp_env.sh make test` or `./scripts/ci_tmp_env.sh docker-compose run --rm api pytest -q`.
+- The script pins `PLAN_SETTINGS_FILE`, `PLAN_CONFIG_FILE`, `PLAN_CATALOG_FILE`, and `NEWS_SUMMARY_CACHE_PATH` to `/tmp/kofinance_state/...`; customize via `CI_STATE_ROOT` if your CI provides a different tmpfs mount.
+- Long term we are migrating these JSON stores into PostgreSQL/Cloud Storage—see `docs/state_storage_migration.md` for the roadmap.
 
 #### SSO & SCIM (Enterprise)
 - SAML/OIDC login endpoints now live under `/api/v1/auth/saml/*` and `/api/v1/auth/oidc/*`; configure them via the `AUTH_SAML_*`, `AUTH_OIDC_*`, and `AUTH_SSO_STATE_*` env vars added to `.env.example`.

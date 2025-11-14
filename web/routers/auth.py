@@ -107,6 +107,7 @@ async def saml_acs_route(
         sessionId=result.session_id,
         sessionToken=result.session_token,
         user=result.user,
+        onboardingRequired=result.onboarding_required,
     )
 
 

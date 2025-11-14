@@ -4,16 +4,12 @@ import clsx from "classnames";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { usePlanPresets } from "@/hooks/usePlanPresets";
-import { usePlanStore, type PlanTier, usePlanTrial, usePlanTrialRequestState } from "@/store/planStore";
+import { usePlanStore, type PlanTier } from "@/store/planStore";
 import { useToastStore } from "@/store/toastStore";
 import { getTrialCountdownLabel } from "@/lib/trialUtils";
-
-const PLAN_DESCRIPTIONS: Record<PlanTier, string> = {
-  free: "가볍게 써보는 체험 플랜이에요. 핵심 기능만 맛볼 수 있어요.",
-  starter: "경량 자동화와 RAG 확장을 미리 경험해 보고 싶을 때 활용해 보세요.",
-  pro: "팀과 함께 자동화까지 해보고 싶은 분들을 위한 플랜이에요. 이메일/웹훅이 바로 열려요.",
-  enterprise: "모든 채널과 맞춤 한도를 마음껏 쓰는 파트너 전용 플랜이에요.",
-};
+import { usePlanCatalog } from "@/hooks/usePlanCatalog";
+import { resolvePlanMarketingCopy } from "@/lib/planContext";
+import { usePlanTrialCta } from "@/hooks/usePlanTrialCta";
 
 const PLAN_TIER_SEQUENCE: PlanTier[] = ["free", "starter", "pro", "enterprise"];
 
@@ -29,13 +25,12 @@ export function PlanTierPreview({ className, variant = "card", focusTier }: Plan
     expiresAt: state.expiresAt,
     memoryFlags: state.memoryFlags,
   }));
-  const startTrial = usePlanStore((state) => state.startTrial);
   const setPlanFromServer = usePlanStore((state) => state.setPlanFromServer);
-  const trial = usePlanTrial();
-  const { trialStarting } = usePlanTrialRequestState();
   const pushToast = useToastStore((state) => state.show);
   const { presets, loading: presetsLoading } = usePlanPresets();
   const [selectedTier, setSelectedTier] = useState<PlanTier>(focusTier ?? planTier);
+  const { catalog } = usePlanCatalog();
+  const { trial, trialActive, trialAvailable, trialDurationDays, trialStarting, startTrialCta } = usePlanTrialCta();
 
   const tierOptions = useMemo(() => {
     if (!presets) {
@@ -45,10 +40,11 @@ export function PlanTierPreview({ className, variant = "card", focusTier }: Plan
   }, [presets]);
 
   const preset = useMemo(() => (presets ? presets[selectedTier] : null), [presets, selectedTier]);
-  const trialActive = Boolean(trial?.active);
-  const trialAvailable = Boolean(trial && !trial.active && !trial.used);
-  const trialDurationDays = trial?.durationDays ?? 7;
   const trialEndsLabel = getTrialCountdownLabel(trial?.endsAt);
+  const selectedTierCopy = useMemo(
+    () => resolvePlanMarketingCopy(selectedTier, catalog),
+    [selectedTier, catalog],
+  );
 
   useEffect(() => {
     if (focusTier && focusTier !== selectedTier) {
@@ -85,31 +81,15 @@ export function PlanTierPreview({ className, variant = "card", focusTier }: Plan
     });
     pushToast({
       id: `plan-preview/${selectedTier}`,
-      title: `${selectedTier === "free" ? "Free" : selectedTier === "pro" ? "Pro" : "Enterprise"} 플랜 미리보기 적용!`,
+      title: `${selectedTierCopy.title} 플랜 미리보기 적용!`,
       message: "지금 보는 화면과 한도가 선택한 플랜 기준으로 새로고침됐어요.",
       intent: "success",
     });
-  }, [expiresAt, planTier, preset, pushToast, selectedTier, setPlanFromServer]);
+  }, [expiresAt, planTier, preset, pushToast, selectedTier, selectedTierCopy.title, setPlanFromServer]);
 
-  const handleStartTrial = useCallback(async () => {
-    try {
-      await startTrial();
-      pushToast({
-        id: "plan-preview/trial-started",
-        title: "Pro 무료 체험을 열었어요",
-        message: `${trialDurationDays}일 동안 상위 구간을 모두 사용할 수 있습니다.`,
-        intent: "success",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "무료 체험을 시작하지 못했어요.";
-      pushToast({
-        id: "plan-preview/trial-failed",
-        title: "무료 체험을 시작할 수 없어요",
-        message,
-        intent: "error",
-      });
-    }
-  }, [pushToast, startTrial, trialDurationDays]);
+  const handleStartTrial = useCallback(() => {
+    startTrialCta({ source: "plan-tier-preview" }).catch(() => undefined);
+  }, [startTrialCta]);
 
   const content = (
     <div className="space-y-4">
@@ -160,35 +140,38 @@ export function PlanTierPreview({ className, variant = "card", focusTier }: Plan
       ) : null}
 
       <div className="space-y-3">
-        {tierOptions.map((tier) => (
-          <label
-            key={tier}
-            className={clsx(
-              "flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 text-sm transition",
-              selectedTier === tier
-                ? "border-primary bg-primary/10 text-text-primaryLight dark:border-primary.dark dark:bg-primary.dark/15"
-                : "border-border-light bg-white/70 text-text-secondaryLight hover:border-primary hover:text-text-primaryLight dark:border-border-dark dark:bg-background-cardDark dark:text-text-secondaryDark dark:hover:border-primary.dark dark:hover:text-text-primaryDark",
-            )}
-          >
-            <input
-              type="radio"
-              name="plan-tier"
-              value={tier}
-              checked={selectedTier === tier}
-              onChange={() => setSelectedTier(tier)}
-              className="mt-1 h-4 w-4 accent-primary"
-            />
-            <span>
-              <span className="font-semibold text-text-primaryLight dark:text-text-primaryDark">
-                {tier === "free" ? "Free" : tier === "pro" ? "Pro" : "Enterprise"}
+        {tierOptions.map((tier) => {
+          const tierCopy = resolvePlanMarketingCopy(tier, catalog);
+          return (
+            <label
+              key={tier}
+              className={clsx(
+                "flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 text-sm transition",
+                selectedTier === tier
+                  ? "border-primary bg-primary/10 text-text-primaryLight dark:border-primary.dark dark:bg-primary.dark/15"
+                  : "border-border-light bg-white/70 text-text-secondaryLight hover:border-primary hover:text-text-primaryLight dark:border-border-dark dark:bg-background-cardDark dark:text-text-secondaryDark dark:hover:border-primary.dark dark:hover:text-text-primaryDark",
+              )}
+            >
+              <input
+                type="radio"
+                name="plan-tier"
+                value={tier}
+                checked={selectedTier === tier}
+                onChange={() => setSelectedTier(tier)}
+                className="mt-1 h-4 w-4 accent-primary"
+              />
+              <span>
+                <span className="font-semibold text-text-primaryLight dark:text-text-primaryDark">
+                  {tierCopy.title}
+                </span>
+                <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] uppercase tracking-wide text-primary dark:bg-primary.dark/20 dark:text-primary.dark">
+                  {tier}
+                </span>
+                <p className="mt-1 text-xs leading-5">{tierCopy.tagline}</p>
               </span>
-              <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] uppercase tracking-wide text-primary dark:bg-primary.dark/20 dark:text-primary.dark">
-                {tier}
-              </span>
-              <p className="mt-1 text-xs leading-5">{PLAN_DESCRIPTIONS[tier]}</p>
-            </span>
-          </label>
-        ))}
+            </label>
+          );
+        })}
       </div>
 
       <div className="rounded-lg border border-dashed border-border-light/70 bg-white/60 p-4 text-xs text-text-secondaryLight dark:border-border-dark/70 dark:bg-background-cardDark/60 dark:text-text-secondaryDark">

@@ -12,6 +12,7 @@ from core.env import env_float, env_int, env_str
 from core.logging import get_logger
 from schemas.news import NewsArticleCreate
 from services.kogl_license import detect_kogl_license
+from services.ingest_errors import FatalIngestError, TransientIngestError
 
 try:
     import feedparser  # type: ignore
@@ -120,14 +121,17 @@ def _iter_feed_sources(feed_urls: Iterable[str]) -> Iterable[str]:
 def _load_feed_bytes(feed_url: str) -> bytes:
     request = Request(feed_url, headers=_get_request_headers())
     timeout = env_float("NEWS_FEED_TIMEOUT", 10.0, minimum=1.0)
-    with urlopen(request, timeout=timeout) as response:  # noqa: S310 - controlled allowlist
-        return response.read()
+    try:
+        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - controlled allowlist
+            return response.read()
+    except (HTTPError, URLError, TimeoutError) as exc:
+        raise TransientIngestError(f"Failed to download feed {feed_url}") from exc
 
 
 def _parse_feed_retry(feed_url: str):
     if feedparser is None:
         logger.warning("feedparser is not installed. Skipping feed %s.", feed_url)
-        return None
+        raise FatalIngestError("feedparser dependency is missing.")
 
     max_attempts = env_int("NEWS_FEED_MAX_ATTEMPTS", 2, minimum=1)
     backoff_base = env_float("NEWS_FEED_RETRY_BACKOFF", 1.5, minimum=0.5)
@@ -165,7 +169,8 @@ def _parse_feed_retry(feed_url: str):
 
     if last_error:
         logger.error("Feed fetch failed after %d attempts for %s: %s", max_attempts, feed_url, last_error)
-    return None
+        raise TransientIngestError(f"Feed {feed_url} failed after retries.") from last_error
+    raise TransientIngestError(f"Feed {feed_url} returned no data.")
 
 
 def _load_mock_articles(limit: int) -> List[NewsArticleCreate]:
@@ -186,7 +191,7 @@ def fetch_news_batch(limit_per_feed: int = 5, *, use_mock_fallback: bool = False
         if use_mock_fallback:
             return _load_mock_articles(limit_per_feed)
         logger.warning("feedparser is not installed and mock fallback is disabled.")
-        return []
+        raise FatalIngestError("feedparser dependency missing for news ingest.")
 
     env_value = env_str("NEWS_FEEDS", "") or ""
     feed_urls = list(_iter_feed_sources(env_value.split(",")))
@@ -195,16 +200,20 @@ def fetch_news_batch(limit_per_feed: int = 5, *, use_mock_fallback: bool = False
         logger.warning("NEWS_FEEDS is empty.")
         if use_mock_fallback:
             return _load_mock_articles(limit_per_feed)
-        return []
+        raise FatalIngestError("NEWS_FEEDS is empty; cannot ingest news.")
 
     articles: List[NewsArticleCreate] = []
     seen_keys: Set[str] = set()
     failed_feeds: List[str] = []
 
     for feed_url in feed_urls:
-        parsed = _parse_feed_retry(feed_url)
-        if not parsed:
+        try:
+            parsed = _parse_feed_retry(feed_url)
+        except FatalIngestError:
+            raise
+        except TransientIngestError as exc:
             failed_feeds.append(feed_url)
+            logger.warning("%s", exc)
             continue
 
         feed_meta = getattr(parsed, "feed", {}) or {}
@@ -236,8 +245,12 @@ def fetch_news_batch(limit_per_feed: int = 5, *, use_mock_fallback: bool = False
     if failed_feeds:
         logger.warning("Failed to fetch %d feed(s): %s", len(failed_feeds), ", ".join(failed_feeds))
 
-    if not articles and use_mock_fallback:
-        return _load_mock_articles(limit_per_feed)
+    if not articles:
+        if use_mock_fallback:
+            return _load_mock_articles(limit_per_feed)
+        if failed_feeds:
+            raise TransientIngestError("All configured news feeds failed.")
+        raise FatalIngestError("Configured news feeds returned no entries.")
 
     return articles
 

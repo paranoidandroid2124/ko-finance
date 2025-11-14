@@ -1,4 +1,4 @@
-"""Build structured payloads for Typst-based event briefs."""
+"""Build structured payloads for LaTeX-based event briefs."""
 
 from __future__ import annotations
 

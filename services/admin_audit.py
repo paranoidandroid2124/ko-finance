@@ -164,5 +164,4 @@ def read_audit_logs(
 
     return results
 
-
 __all__ = ["append_audit_log", "read_audit_logs"]

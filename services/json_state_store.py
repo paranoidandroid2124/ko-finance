@@ -7,6 +7,8 @@ import logging
 from pathlib import Path
 from typing import Any, List, Mapping, Optional, Sequence
 
+from services.file_store import write_json_atomic
+
 
 class JsonStateStore:
     """Persist small JSON lists with minimal caching."""
@@ -42,8 +44,7 @@ class JsonStateStore:
         """Persist ``items`` to disk."""
 
         payload = {self._root_key: [dict(item) for item in items]}
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json_atomic(self._path, payload, logger=self._logger)
         self._cache = [dict(item) for item in items]
         self._cache_path = self._path
 

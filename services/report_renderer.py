@@ -1,148 +1,99 @@
-"""Typst CLI wrapper used to generate PDF reports."""
+"""LaTeX-based renderer for event briefs and research PDFs."""
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
+
 from core.logging import get_logger
+from services.daily_brief_renderer import compile_pdf as compile_latex_pdf
 
 logger = get_logger(__name__)
 
-_DEFAULT_TYPST_BIN = os.getenv("TYPST_BIN", "typst")
-_TEMPLATE_ROOT = Path(os.getenv("TYPST_TEMPLATE_DIR", "templates/typst"))
+_TEMPLATE_DIR = Path(os.getenv("LATEX_TEMPLATE_DIR", "templates/latex"))
+_EVENT_TEMPLATE = os.getenv("EVENT_BRIEF_TEMPLATE", "event_brief.tex.jinja")
 
 
-class TypstRenderError(RuntimeError):
-    """Raised when Typst rendering fails."""
+class LatexRenderError(RuntimeError):
+    """Raised when LaTeX rendering fails."""
 
 
-def _resolve_template(template: Path | str) -> Path:
-    """Resolve a Typst template path relative to the project template directory."""
-
-    path = Path(template)
-    if path.suffix != ".typ":
-        path = path.with_suffix(".typ")
-
-    if not path.is_absolute():
-        candidate = _TEMPLATE_ROOT / path.name
-        if candidate.exists():
-            path = candidate
-        else:
-            candidate = _TEMPLATE_ROOT / path
-            if candidate.exists():
-                path = candidate
-
-    if not path.exists():
-        raise FileNotFoundError(f"Typst template not found: {path}")
-    return path
+def _environment() -> Environment:
+    return Environment(
+        loader=FileSystemLoader(_TEMPLATE_DIR),
+        autoescape=False,
+        undefined=StrictUndefined,
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
 
 
-def render_typst_pdf(
-    template: Path | str,
-    context: Mapping[str, Any],
-    *,
-    output_path: Optional[Path | str] = None,
-    typst_bin: Optional[str] = None,
-    timeout_seconds: int = 120,
-) -> Path:
-    """
-    Render a Typst template into a PDF.
+def _prepare_context(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    data = dict(payload or {})
+    data.setdefault("report", {})
+    data.setdefault("company", {})
+    data.setdefault("summary", {})
+    data.setdefault("evidence", [])
+    data.setdefault("diff_summary", {})
+    data.setdefault("rag", {})
+    return data
 
-    Parameters
-    ----------
-    template:
-        Path or filename of the Typst template (`.typ`).
-    context:
-        JSON-serialisable mapping passed to the template as ``context`` input.
-    output_path:
-        Optional explicit output path. When omitted a temporary file is created.
-    typst_bin:
-        Override for Typst executable (defaults to ``TYPST_BIN`` env or ``typst``).
-    timeout_seconds:
-        Maximum seconds to wait for Typst CLI.
-    """
 
-    template_path = _resolve_template(template)
-    typst_exec = typst_bin or _DEFAULT_TYPST_BIN
-
-    if shutil.which(typst_exec) is None:
-        raise TypstRenderError(f"Typst binary '{typst_exec}' is not available on PATH.")
-
-    if output_path is None:
-        temp_dir = Path(tempfile.mkdtemp(prefix="typst-report-"))
-        output_path = temp_dir / f"{template_path.stem}.pdf"
-    else:
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with tempfile.TemporaryDirectory(prefix="typst-context-") as tmpdir:
-        context_path = Path(tmpdir) / "context.json"
-        context_json = json.dumps(context, ensure_ascii=False, indent=2)
-        context_path.write_text(context_json, encoding="utf-8")
-
-        command = [
-            typst_exec,
-            "compile",
-            str(template_path),
-            str(output_path),
-            "--input",
-            f"context={context_path}",
-        ]
-
-        logger.info("Rendering Typst template %s → %s", template_path, output_path)
-
-        try:
-            result = subprocess.run(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise TypstRenderError(f"Typst rendering timed out after {timeout_seconds}s.") from exc
-        except FileNotFoundError as exc:
-            raise TypstRenderError(f"Typst binary '{typst_exec}' is not accessible.") from exc
-
-        if result.returncode != 0:
-            stderr = (result.stderr or "").strip()
-            stdout = (result.stdout or "").strip()
-            logger.error(
-                "Typst rendering failed (code=%s). stdout=%s stderr=%s",
-                result.returncode,
-                stdout,
-                stderr,
-            )
-            raise TypstRenderError(f"Typst rendering failed: {stderr or stdout or 'unknown error'}")
-
-    if not output_path.is_file():
-        raise TypstRenderError(f"Typst did not produce the expected PDF at {output_path}.")
-
-    return output_path
+def _render_latex_template(template_name: str, context: Mapping[str, Any], output_tex: Path) -> None:
+    env = _environment()
+    try:
+        template = env.get_template(template_name)
+    except Exception as exc:  # pragma: no cover - template resolution issues
+        raise LatexRenderError(f"LaTeX 템플릿을 찾을 수 없습니다: {template_name}") from exc
+    rendered = template.render(**context)
+    output_tex.write_text(rendered, encoding="utf-8")
 
 
 def render_event_brief(
     context: Mapping[str, Any],
     *,
     output_path: Optional[Path | str] = None,
-    typst_bin: Optional[str] = None,
-    timeout_seconds: int = 120,
+    typst_bin: Optional[str] = None,  # kept for backward compatibility
+    timeout_seconds: int = 120,  # kept for backward compatibility
 ) -> Path:
-    """Convenience wrapper to render the default event brief template."""
+    """
+    Render the event brief payload into a PDF using the LaTeX pipeline.
 
-    return render_typst_pdf(
-        "event_brief.typ",
-        context,
-        output_path=output_path,
-        typst_bin=typst_bin,
-        timeout_seconds=timeout_seconds,
-    )
+    Parameters
+    ----------
+    context:
+        Mapping produced by ``services.event_brief_service.make_event_brief``.
+    output_path:
+        Optional target path for the generated PDF. When omitted a temporary directory is used.
+    typst_bin / timeout_seconds:
+        Deprecated arguments kept for compatibility. They have no effect in the LaTeX pipeline.
+    """
+
+    workdir = Path(tempfile.mkdtemp(prefix="event-brief-"))
+    tex_path = workdir / "event_brief.tex"
+    payload = _prepare_context(context)
+
+    try:
+        _render_latex_template(_EVENT_TEMPLATE, payload, tex_path)
+    except Exception as exc:
+        raise LatexRenderError(f"LaTeX 템플릿 렌더링에 실패했습니다: {exc}") from exc
+
+    try:
+        pdf_path = compile_latex_pdf(tex_path)
+    except Exception as exc:  # pragma: no cover - external latexmk errors
+        raise LatexRenderError(f"LaTeX 컴파일에 실패했습니다: {exc}") from exc
+
+    if output_path:
+        target = Path(output_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(pdf_path, target)
+        return target
+    return pdf_path
 
 
-__all__ = ["TypstRenderError", "render_typst_pdf", "render_event_brief"]
+__all__ = ["LatexRenderError", "render_event_brief"]

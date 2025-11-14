@@ -5,14 +5,24 @@ from __future__ import annotations
 import logging
 import math
 from collections import defaultdict
-from datetime import date, datetime, timedelta
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+import uuid
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import and_, asc
 from sqlalchemy.orm import Session
 
 from core.env import env_str
-from models.event_study import EventRecord, EventStudyResult, EventSummary, Price
+from database import SessionLocal
+from models.alert import AlertRule
+from models.event_study import (
+    EventAlertMatch,
+    EventIngestJob,
+    EventRecord,
+    EventStudyResult,
+    EventSummary,
+    Price,
+)
 from models.security_metadata import SecurityMetadata
 from models.filing import Filing
 from services.event_extractor import EventAttributes, extract_event_attributes, get_event_rule_metadata
@@ -57,59 +67,93 @@ def ingest_events_from_filings(
 ) -> int:
     """Convert filings in the date range into normalized event records."""
 
+    job = _create_ingest_job(start_date, end_date)
     created = 0
-    filings = (
+    skipped = 0
+
+    filings_query = (
         db.query(Filing)
         .filter(
             Filing.filed_at >= datetime.combine(start_date, datetime.min.time()),
             Filing.filed_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
         )
-        .all()
+        .order_by(Filing.filed_at.asc())
     )
-    for filing in filings:
-        attributes = extract_event_attributes(filing)
-        if not attributes.event_type or not filing.receipt_no:
-            continue
+    try:
+        for filing in filings_query.yield_per(500):
+            attributes = extract_event_attributes(filing)
+            if not attributes.event_type or not filing.receipt_no:
+                continue
 
-        metadata = None
-        if filing.ticker:
-            metadata = db.get(SecurityMetadata, filing.ticker.upper())
+            metadata = None
+            if filing.ticker:
+                metadata = db.get(SecurityMetadata, filing.ticker.upper())
 
-        existing = db.get(EventRecord, filing.receipt_no)
-        if existing:
-            continue
+            existing = db.get(EventRecord, filing.receipt_no)
+            if existing:
+                skipped += 1
+                continue
 
-        event_day = filing.filed_at.date() if filing.filed_at else None
-        if (
-            event_day
-            and filing.filed_at
-            and attributes.timing_rule == "AFTER_CLOSE_DPLUS1"
-            and filing.filed_at.hour >= _MARKET_CLOSE_HOUR
-        ):
-            event_day = event_day + timedelta(days=1)
+            event_day = filing.filed_at.date() if filing.filed_at else None
+            if (
+                event_day
+                and filing.filed_at
+                and attributes.timing_rule == "AFTER_CLOSE_DPLUS1"
+                and filing.filed_at.hour >= _MARKET_CLOSE_HOUR
+            ):
+                event_day = event_day + timedelta(days=1)
 
-        event = EventRecord(
-            rcept_no=filing.receipt_no,
-            corp_code=filing.corp_code or "",
-            ticker=(filing.ticker or "").upper() or None,
-            corp_name=filing.corp_name,
-            event_type=attributes.event_type,
-            event_date=event_day,
-            amount=attributes.amount,
-            ratio=attributes.ratio,
-            shares=None,
-            method=attributes.method,
-            score=attributes.score,
-            market_cap=metadata.market_cap if metadata else None,
-            cap_bucket=metadata.cap_bucket if metadata else None,
-            created_at=filing.filed_at or datetime.utcnow(),
-            source_url=(filing.urls or {}).get("viewer"),
-        )
-        db.add(event)
-        created += 1
+            metadata_payload: Dict[str, object] = {
+                "timingRule": attributes.timing_rule,
+                "matches": attributes.matches,
+            }
+            event = EventRecord(
+                rcept_no=filing.receipt_no,
+                corp_code=filing.corp_code or "",
+                ticker=(filing.ticker or "").upper() or None,
+                corp_name=filing.corp_name,
+                event_type=attributes.event_type,
+                event_date=event_day,
+                amount=attributes.amount,
+                ratio=attributes.ratio,
+                shares=None,
+                method=attributes.method,
+                score=attributes.score,
+                domain=attributes.domain,
+                subtype=attributes.subtype,
+                confidence=attributes.confidence,
+                is_negative=attributes.is_negative,
+                is_restatement=attributes.is_restatement,
+                matches=attributes.matches or None,
+                market_cap=metadata.market_cap if metadata else None,
+                cap_bucket=metadata.cap_bucket if metadata else None,
+                created_at=filing.filed_at or datetime.utcnow(),
+                source_url=(filing.urls or {}).get("viewer"),
+                metadata=metadata_payload,
+            )
+            db.add(event)
+            _record_event_alert_matches(db, event, attributes)
+            created += 1
 
-    if created:
         db.commit()
+        _update_ingest_job(
+            job.id,
+            status="completed",
+            events_created=created,
+            events_skipped=skipped,
+        )
+    except Exception as exc:  # pragma: no cover - ingestion guard
+        logger.exception("Event ingestion failed: %s", exc)
+        db.rollback()
+        _update_ingest_job(
+            job.id,
+            status="failed",
+            events_created=created,
+            events_skipped=skipped,
+            errors={"message": str(exc)},
+        )
+        raise
+
     return created
 
 
@@ -417,3 +461,114 @@ def _build_histogram(samples: Sequence[float], bins: int = 12) -> List[Dict[str,
             }
         )
     return histogram
+
+
+def _create_ingest_job(start_date: date, end_date: date) -> EventIngestJob:
+    session = SessionLocal()
+    try:
+        job = EventIngestJob(
+            window_start=start_date,
+            window_end=end_date,
+            status="processing",
+            events_created=0,
+            events_skipped=0,
+            metadata={"source": "filings"},
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        return job
+    finally:
+        session.close()
+
+
+def _update_ingest_job(
+    job_id: uuid.UUID,
+    *,
+    status: Optional[str] = None,
+    events_created: Optional[int] = None,
+    events_skipped: Optional[int] = None,
+    errors: Optional[Dict[str, Any]] = None,
+) -> None:
+    session = SessionLocal()
+    try:
+        job = session.get(EventIngestJob, job_id)
+        if not job:
+            return
+        if status:
+            job.status = status
+        if events_created is not None:
+            job.events_created = events_created
+        if events_skipped is not None:
+            job.events_skipped = events_skipped
+        if errors is not None:
+            job.errors = errors
+        job.updated_at = datetime.now(timezone.utc)
+        session.commit()
+    finally:
+        session.close()
+
+
+def _record_event_alert_matches(db: Session, event: EventRecord, attributes: EventAttributes) -> None:
+    matches = _match_alert_rules_for_event(db, event, attributes)
+    if not matches:
+        return
+    now = datetime.now(timezone.utc)
+    for rule, score, metadata in matches:
+        existing = (
+            db.query(EventAlertMatch)
+            .filter(EventAlertMatch.event_id == event.rcept_no, EventAlertMatch.alert_id == rule.id)
+            .first()
+        )
+        if existing:
+            existing.match_score = score
+            existing.metadata = metadata
+            existing.matched_at = now
+        else:
+            db.add(
+                EventAlertMatch(
+                    event_id=event.rcept_no,
+                    alert_id=rule.id,
+                    match_score=score,
+                    metadata=metadata,
+                    matched_at=now,
+                )
+            )
+
+
+def _match_alert_rules_for_event(
+    db: Session,
+    event: EventRecord,
+    attributes: EventAttributes,
+) -> List[Tuple[AlertRule, float, Dict[str, Any]]]:
+    ticker = (event.ticker or "").upper()
+    if not ticker:
+        return []
+    candidates = (
+        db.query(AlertRule)
+        .filter(AlertRule.status == "active")
+        .all()
+    )
+    matches: List[Tuple[AlertRule, float, Dict[str, Any]]] = []
+    for rule in candidates:
+        trigger = rule.trigger or {}
+        trigger_type = str(trigger.get("type") or "filing").lower()
+        if trigger_type != "filing":
+            continue
+        tickers = {
+            str(value).strip().upper()
+            for value in (trigger.get("tickers") or [])
+            if isinstance(value, str) and value.strip()
+        }
+        if not tickers or ticker not in tickers:
+            continue
+        score = 1.0
+        metadata = {
+            "ticker": ticker,
+            "eventType": event.event_type,
+            "ruleName": rule.name,
+            "matchSource": "event_ingest",
+            "subtype": attributes.subtype,
+        }
+        matches.append((rule, score, metadata))
+    return matches

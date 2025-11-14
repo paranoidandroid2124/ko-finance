@@ -28,7 +28,7 @@ app.add_middleware(
 @app.middleware("http")
 async def inject_plan_context(request: Request, call_next):
     """Ensure plan context is available on each request via request.state."""
-    context = resolve_plan_context(request)
+    context = resolve_plan_context(request.headers)
     request.state.plan_context = context
     response = await call_next(request)
     response.headers.setdefault("X-Plan-Tier", context.tier)

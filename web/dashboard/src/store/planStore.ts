@@ -3,90 +3,20 @@
 import { create } from 'zustand';
 import { logEvent } from '@/lib/telemetry';
 import { resolveApiBase } from '@/lib/apiBase';
-import { FEATURE_STARTER_ENABLED } from '@/config/features';
-
-export type PlanTier = 'free' | 'starter' | 'pro' | 'enterprise';
-
-export type PlanFeatureFlags = {
-  searchCompare: boolean;
-  searchAlerts: boolean;
-  searchExport: boolean;
-  ragCore: boolean;
-  evidenceInlinePdf: boolean;
-  evidenceDiff: boolean;
-  timelineFull: boolean;
-};
-
-export type PlanMemoryFlags = {
-  watchlist: boolean;
-  digest: boolean;
-  chat: boolean;
-};
-
-export type PlanQuota = {
-  chatRequestsPerDay: number | null;
-  ragTopK: number | null;
-  selfCheckEnabled: boolean;
-  peerExportRowLimit: number | null;
-};
-
-export type PlanTrialState = {
-  tier: PlanTier;
-  startsAt: string | null;
-  endsAt: string | null;
-  durationDays?: number | null;
-  active: boolean;
-  used: boolean;
-};
-
-export type PlanTrialStartInput = {
-  actor?: string | null;
-  durationDays?: number | null;
-  tier?: PlanTier;
-};
-
-export type PlanPreset = {
-  tier: PlanTier;
-  entitlements: string[];
-  featureFlags: PlanFeatureFlags;
-  quota: PlanQuota;
-};
-
-export type PlanContextPayload = {
-  planTier: PlanTier;
-  expiresAt?: string | null;
-  entitlements: string[];
-  featureFlags: PlanFeatureFlags;
-  memoryFlags: PlanMemoryFlags;
-  quota: PlanQuota;
-  updatedAt?: string | null;
-  updatedBy?: string | null;
-  changeNote?: string | null;
-  checkoutRequested?: boolean;
-  trial?: PlanTrialState | null;
-};
-
-export type PlanContextUpdateInput = {
-  planTier: PlanTier;
-  expiresAt?: string | null;
-  entitlements: string[];
-  memoryFlags: PlanMemoryFlags;
-  quota: PlanQuota;
-  updatedBy?: string | null;
-  changeNote?: string | null;
-  triggerCheckout?: boolean;
-};
-
-export type PlanDebugOverride = {
-  enabled: boolean;
-  planTier?: PlanTier;
-  entitlements?: string[];
-  featureFlags?: Partial<PlanFeatureFlags>;
-  memoryFlags?: Partial<PlanMemoryFlags>;
-  quota?: Partial<PlanQuota>;
-  expiresAt?: string | null;
-  checkoutRequested?: boolean;
-};
+import { fetchWithAuth } from '@/lib/fetchWithAuth';
+import {
+  type PlanContextPayload,
+  type PlanContextUpdateInput,
+  type PlanDebugOverride,
+  type PlanFeatureFlags,
+  type PlanMemoryFlags,
+  type PlanPreset,
+  type PlanQuota,
+  type PlanTier,
+  type PlanTrialStartInput,
+  type PlanTrialState,
+} from '@/store/planStore/types';
+import { isTierAtLeast, nextTier, planTierRank } from '@/store/planStore/helpers';
 
 type PlanStoreState = {
   planTier: PlanTier;
@@ -120,13 +50,6 @@ type PlanStoreState = {
   fetchPlanPresets: (options?: { signal?: AbortSignal }) => Promise<void>;
   applyDebugOverride: (override: PlanDebugOverride) => void;
   clearDebugOverride: () => void;
-};
-
-const PLAN_TIER_ORDER: Record<PlanTier, number> = {
-  free: 0,
-  starter: 1,
-  pro: 2,
-  enterprise: 3,
 };
 
 const DEFAULT_FEATURE_FLAGS: PlanFeatureFlags = {
@@ -398,9 +321,8 @@ export const usePlanStore = create<PlanStoreState>((set, get) => {
 
       try {
         const baseUrl = resolveApiBase();
-        const response = await fetch(`${baseUrl}/api/v1/plan/context`, {
+        const response = await fetchWithAuth(`${baseUrl}/api/v1/plan/context`, {
           cache: 'no-store',
-          credentials: 'include',
           headers: { Accept: 'application/json' },
           signal: options?.signal,
         });
@@ -498,9 +420,8 @@ export const usePlanStore = create<PlanStoreState>((set, get) => {
       };
 
       try {
-        const response = await fetch(`${baseUrl}/api/v1/plan/context`, {
+        const response = await fetchWithAuth(`${baseUrl}/api/v1/plan/context`, {
           method: 'PATCH',
-          credentials: 'include',
           headers: {
             Accept: 'application/json',
             'Content-Type': 'application/json',
@@ -548,9 +469,8 @@ export const usePlanStore = create<PlanStoreState>((set, get) => {
       }
 
       try {
-        const response = await fetch(`${baseUrl}/api/v1/plan/trial`, {
+        const response = await fetchWithAuth(`${baseUrl}/api/v1/plan/trial`, {
           method: 'POST',
-          credentials: 'include',
           headers: {
             Accept: 'application/json',
             'Content-Type': 'application/json',
@@ -598,9 +518,8 @@ export const usePlanStore = create<PlanStoreState>((set, get) => {
       set({ presetsLoading: true, presetsError: undefined });
       try {
         const baseUrl = resolveApiBase();
-        const response = await fetch(`${baseUrl}/api/v1/plan/presets`, {
+        const response = await fetchWithAuth(`${baseUrl}/api/v1/plan/presets`, {
           cache: 'no-store',
-          credentials: 'include',
           headers: { Accept: 'application/json' },
           signal: options?.signal,
         });
@@ -663,18 +582,16 @@ export const usePlanTrialRequestState = () =>
     trialStarting: state.trialStarting,
     trialError: state.trialError,
   }));
-export const planTierRank = (tier: PlanTier): number => PLAN_TIER_ORDER[tier] ?? 0;
-export const isTierAtLeast = (tier: PlanTier, required: PlanTier): boolean =>
-  planTierRank(tier) >= planTierRank(required);
-export const nextTier = (tier: PlanTier): PlanTier | null => {
-  if (tier === 'free') {
-    return FEATURE_STARTER_ENABLED ? 'starter' : 'pro';
-  }
-  if (tier === 'starter') {
-    return 'pro';
-  }
-  if (tier === 'pro') {
-    return 'enterprise';
-  }
-  return null;
-};
+export { planTierRank, isTierAtLeast, nextTier } from '@/store/planStore/helpers';
+export type {
+  PlanTier,
+  PlanFeatureFlags,
+  PlanMemoryFlags,
+  PlanQuota,
+  PlanTrialState,
+  PlanTrialStartInput,
+  PlanPreset,
+  PlanContextPayload,
+  PlanContextUpdateInput,
+  PlanDebugOverride,
+} from '@/store/planStore/types';

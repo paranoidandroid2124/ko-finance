@@ -66,6 +66,7 @@ class LoginResponse(BaseModel):
     sessionId: str
     sessionToken: str
     user: AuthUserSchema
+    onboardingRequired: bool = Field(default=False, description="true면 온보딩 튜토리얼을 노출해야 함.")
 
 
 class OidcAuthorizeResponse(BaseModel):

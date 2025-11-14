@@ -3,6 +3,7 @@ import React from "react";
 import { beforeEach, vi } from "vitest";
 import type { ApiChatMessage, ApiChatSession } from "@/lib/chatApi";
 import { useChatStore } from "@/store/chatStore";
+import { usePlanStore } from "@/store/planStore";
 
 const {
   sessionStore,
@@ -172,6 +173,17 @@ export const resetChatStores = () => {
     loading: false,
     error: null,
   });
+  usePlanStore.setState((state) => ({
+    ...state,
+    planTier: "pro",
+    initialized: true,
+    loading: false,
+    error: null,
+    featureFlags: {
+      ...state.featureFlags,
+      ragCore: true,
+    },
+  }));
 };
 
 vi.mock("@/lib/chatApi", () => ({

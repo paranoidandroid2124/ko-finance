@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -5,6 +7,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Integer,
     Numeric,
     SmallInteger,
     String,
@@ -12,9 +15,10 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from database import Base
+from models._metadata_proxy import JSONMetadataProxy
 
 
 class EventRecord(Base):
@@ -35,6 +39,14 @@ class EventRecord(Base):
     end_date = Column(Date, nullable=True)
     method = Column(String, nullable=True)
     score = Column(Numeric, nullable=True)
+    domain = Column(String, nullable=True, index=True)
+    subtype = Column(String, nullable=True)
+    confidence = Column(Numeric, nullable=True)
+    is_negative = Column(Boolean, nullable=False, default=False, server_default="false")
+    is_restatement = Column(Boolean, nullable=False, default=False, server_default="false")
+    matches = Column(JSONB, nullable=True)
+    metadata_json = Column("metadata", JSONB, nullable=True)
+    metadata = JSONMetadataProxy("metadata_json")
     market_cap = Column(Numeric, nullable=True)
     cap_bucket = Column(String, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -117,10 +129,44 @@ class EventWatchlist(Base):
     )
 
 
+class EventAlertMatch(Base):
+    """Alert rule associations created when an event triggers a watchlist rule."""
+
+    __tablename__ = "event_alert_matches"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_id = Column(String, ForeignKey("events.rcept_no", ondelete="CASCADE"), nullable=False, index=True)
+    alert_id = Column(UUID(as_uuid=True), ForeignKey("alert_rules.id", ondelete="CASCADE"), nullable=False, index=True)
+    match_score = Column(Numeric, nullable=True)
+    metadata_json = Column("metadata", JSONB, nullable=False, default=dict)
+    metadata = JSONMetadataProxy("metadata_json")
+    matched_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class EventIngestJob(Base):
+    """Book-keeps batch ingestion windows so we can resume or monitor progress."""
+
+    __tablename__ = "event_ingest_jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    window_start = Column(Date, nullable=False)
+    window_end = Column(Date, nullable=False)
+    status = Column(String, nullable=False, default="pending")
+    events_created = Column(Integer, nullable=False, default=0)
+    events_skipped = Column(Integer, nullable=False, default=0)
+    errors = Column(JSONB, nullable=False, default=dict)
+    metadata_json = Column("metadata", JSONB, nullable=False, default=dict)
+    metadata = JSONMetadataProxy("metadata_json")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 __all__ = [
     "EventRecord",
     "Price",
     "EventStudyResult",
     "EventSummary",
     "EventWatchlist",
+    "EventAlertMatch",
+    "EventIngestJob",
 ]

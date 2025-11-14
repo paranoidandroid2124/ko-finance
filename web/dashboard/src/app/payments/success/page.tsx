@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { resolveApiBase } from "@/lib/apiBase";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import { logEvent } from "@/lib/telemetry";
 import { usePlanStore, type PlanTier } from "@/store/planStore";
 import { useToastStore } from "@/store/toastStore";
@@ -64,7 +65,7 @@ export default function TossPaymentSuccessPage() {
     const confirmPayment = async () => {
       try {
         const baseUrl = resolveApiBase();
-        const response = await fetch(`${baseUrl}/api/v1/payments/toss/confirm`, {
+        const response = await fetchWithAuth(`${baseUrl}/api/v1/payments/toss/confirm`, {
           method: "POST",
           headers: {
             Accept: "application/json",

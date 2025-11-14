@@ -5,6 +5,7 @@ import { useIntersectionObserver } from "@/hooks/useIntersectionObserver";
 import { PlanLock } from "@/components/ui/PlanLock";
 import type { PlanTier as PlanTierType } from "@/store/planStore";
 import { InlinePdfViewer } from "./InlinePdfViewer";
+import { getPlanLabel } from "@/lib/planTier";
 
 export type PlanTier = PlanTierType;
 
@@ -66,13 +67,6 @@ export type EvidencePanelProps = {
   onRequestOpenPdf?: (urnId: string) => void;
   onRequestUpgrade?: (tier: PlanTier) => void;
   onToggleDiff?: (nextValue: boolean) => void;
-};
-
-const PLAN_LABEL: Record<PlanTier, string> = {
-  free: "Free",
-  starter: "Starter",
-  pro: "Pro",
-  enterprise: "Enterprise",
 };
 
 const RELIABILITY_TONE: Record<
@@ -590,7 +584,7 @@ export function EvidencePanel({
         </div>
         <div className="flex items-center gap-2 text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">
           <span className="rounded-md border border-border-light px-2 py-1 font-semibold uppercase dark:border-border-dark">
-            {PLAN_LABEL[planTier]}
+            {getPlanLabel(planTier)}
           </span>
           {diffEnabled ? (
             <button

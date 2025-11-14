@@ -82,6 +82,10 @@ class PlanContextUpdateRequest(BaseModel):
         default_factory=PlanMemoryFlagsSchema,
         description="LightMem feature toggles applied to the plan tier.",
     )
+    expectedUpdatedAt: Optional[str] = Field(
+        default=None,
+        description="Optional concurrency token; if provided and mismatched, the update is rejected.",
+    )
 
     @field_validator("entitlements", mode="before")
     def _normalize_entitlements(cls, value: Optional[list[str]]) -> list[str]:
@@ -191,6 +195,10 @@ class PlanCatalogUpdateRequest(BaseModel):
     tiers: list[PlanCatalogTierSchema] = Field(default_factory=list, description="Plan catalog tier definitions.")
     updatedBy: Optional[str] = Field(default=None, description="Operator recorded for the update.")
     note: Optional[str] = Field(default=None, description="Optional note describing the catalog change.")
+    expectedUpdatedAt: Optional[str] = Field(
+        default=None,
+        description="Optional concurrency token; rejects updates when the catalog changed since last read.",
+    )
 
 
 class PlanTrialStartRequest(BaseModel):

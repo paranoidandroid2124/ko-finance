@@ -1,0 +1,79 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage{geometry}
+\usepackage{luatexko}
+\usepackage{hyperref}
+\usepackage{longtable}
+\usepackage{enumitem}
+\geometry{margin=20mm}
+
+\setmainhangulfont{Noto Sans CJK KR}
+
+\newcommand{\SectionTitle}[1]{\vspace{1.2em}\noindent\textbf{\large #1}\par\vspace{0.6em}}
+
+\begin{document}
+
+\begin{center}
+    {\LARGE \textbf{ {{ report.title | default("Event Brief") }} }}\\[4pt]
+    {{ report.subtitle | default("") }}\\[6pt]
+    {\small 생성: {{ report.generatedAt | default("") }} \quad 담당: {{ report.actor | default("-") }}}
+\end{center}
+
+\SectionTitle{회사 개요}
+\begin{itemize}[leftmargin=12pt]
+    \item 기업명: {{ company.name | default("-") }}
+    \item 티커: {{ company.ticker | default("-") }}
+    \item 섹터: {{ company.sector | default("-") }}
+    \item 이벤트: {{ company.event_headline | default("-") }} ({{ company.event_date | default("-") }})
+    \item 공시번호: {{ company.receipt_no | default("-") }}
+\end{itemize}
+
+\SectionTitle{요약}
+\begin{itemize}[leftmargin=12pt]
+    \item 개요: {{ summary.overview | default("요약 정보가 제공되지 않았습니다.") }}
+    \item 하이라이트:
+    \begin{itemize}[leftmargin=12pt]
+        {% for item in summary.highlights %}
+            \item {{ item }}
+        {% else %}
+            \item 제공된 하이라이트가 없습니다.
+        {% endfor %}
+    \end{itemize}
+    \item 리스크:
+    \begin{itemize}[leftmargin=12pt]
+        {% for item in summary.risks %}
+            \item {{ item }}
+        {% else %}
+            \item 별도 리스크 코멘트가 없습니다.
+        {% endfor %}
+    \end{itemize}
+\end{itemize}
+
+\SectionTitle{RAG 메트릭}
+\begin{itemize}[leftmargin=12pt]
+    \item 상태: {{ rag.status | default("unknown") }} / 모드: {{ rag.mode | default("-") }}
+    \item 대기(SLA): {{ rag.queue_wait_ms | default(0) }} ms / 총 소요: {{ rag.total_elapsed_ms | default(0) }} ms
+\end{itemize}
+
+\SectionTitle{Diff 요약}
+\begin{itemize}[leftmargin=12pt]
+    \item 총 변경 건: {{ diff_summary.totalChanges | default(0) }}
+    \item 신규: {{ diff_summary.created | default(0) }}개\quad 수정: {{ diff_summary.updated | default(0) }}개\quad 삭제: {{ diff_summary.removed | default(0) }}개
+\end{itemize}
+
+\SectionTitle{근거 (Evidence)}
+\begin{longtable}{p{0.12\textwidth} p{0.82\textwidth}}
+    {% for ev in evidence %}
+    \textbf{근거 {{ loop.index }}} &
+        \textbf{{ ev.title | default("제목 없음") }}\\
+        & {{ ev.quote | default("") }}\\
+        & \textit{섹션: {{ ev.section | default("-") }}, 페이지: {{ ev.page | default("-") }}, 신뢰도: {{ ev.reliability | default("-") }}}\\
+        & 출처: \href{ {{ ev.source_url | default("#") }} }{ {{ ev.source_url | default("URL 미제공") }} }\\[6pt]
+    {% else %}
+    \multicolumn{2}{l}{근거 데이터가 존재하지 않습니다.}\\
+    {% endfor %}
+\end{longtable}
+
+\SectionTitle{추가 메모}
+{{ summary.actions | default([]) | join("; ") }}
+
+\end{document}

@@ -1,4 +1,4 @@
-import NextAuth, { DefaultSession, DefaultUser } from "next-auth";
+import { DefaultSession, DefaultUser } from "next-auth";
 
 declare module "next-auth" {
   interface User extends DefaultUser {
@@ -10,6 +10,7 @@ declare module "next-auth" {
     sessionToken?: string;
     accessTokenExpires?: number;
     expiresIn?: number;
+    onboardingRequired?: boolean;
   }
 
   interface JWT {
@@ -22,6 +23,7 @@ declare module "next-auth" {
     sessionToken?: string;
     accessTokenExpires?: number | null;
     error?: string;
+    onboardingRequired?: boolean;
   }
 
   interface Session {
@@ -29,6 +31,7 @@ declare module "next-auth" {
       id: string;
       plan: "free" | "starter" | "pro" | "enterprise";
       role?: "user" | "admin";
+      onboardingRequired?: boolean;
     } & DefaultSession["user"];
     accessToken?: string;
     refreshToken?: string;
@@ -36,5 +39,7 @@ declare module "next-auth" {
     sessionToken?: string;
     accessTokenExpires?: number | null;
     error?: string;
+    onboardingRequired?: boolean;
+    orgId?: string;
   }
 }

@@ -1,4 +1,4 @@
-.PHONY: dev-up dev-down db-init migrate test lint seed m1-smoke eval
+.PHONY: dev-up dev-down db-init migrate test lint seed m1-smoke eval requirements-check pytest-check ruff-check mypy-check ci
 
 # SSoT(12) 기반 표준 운영 명령어
 
@@ -24,14 +24,34 @@ migrate:
 
 # 유닛 테스트 실행
 test:
-	@echo "Running unit tests (unittest discover)..."
-	docker-compose run --rm api python -m unittest discover tests
+	@echo "Running pytest suite..."
+	./scripts/ci_tmp_env.sh docker-compose run --rm api pytest -q
 
 # 코드 린트 및 포맷팅
-lint:
+lint: requirements-check
 	@echo "Linting and formatting code..."
 	docker-compose run --rm api ruff check .
 	docker-compose run --rm api ruff format .
+
+requirements-check:
+	@echo "Ensuring requirements.txt is up to date..."
+	pip-compile --annotate --output-file requirements.txt requirements.in
+	git diff --exit-code requirements.txt
+
+pytest-check:
+	@echo "Running pytest -q ..."
+	./scripts/ci_tmp_env.sh docker-compose run --rm api pytest -q
+
+ruff-check:
+	@echo "Running ruff check ..."
+	docker-compose run --rm api ruff check .
+
+mypy-check:
+	@echo "Running mypy ..."
+	docker-compose run --rm api mypy .
+
+ci: requirements-check pytest-check ruff-check mypy-check
+	@echo "CI checks completed successfully."
 
 # 샘플 데이터 적재 (Celery 워커 필요)
 seed:

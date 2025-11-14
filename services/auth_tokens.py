@@ -174,8 +174,10 @@ def create_refresh_token(
     user_id: str,
     session_id: str,
     refresh_jti: str,
+    ttl_seconds: Optional[int] = None,
 ) -> Tuple[str, int]:
     now = datetime.now(timezone.utc)
+    effective_ttl = ttl_seconds if ttl_seconds and ttl_seconds > 0 else _REFRESH_TOKEN_TTL
     payload = {
         "sub": user_id,
         "aud": _JWT_AUDIENCE,
@@ -184,10 +186,10 @@ def create_refresh_token(
         "session_id": session_id,
         "jti": refresh_jti,
         "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(seconds=_REFRESH_TOKEN_TTL)).timestamp()),
+        "exp": int((now + timedelta(seconds=effective_ttl)).timestamp()),
     }
     token = jwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALG)
-    return token, _REFRESH_TOKEN_TTL
+    return token, effective_ttl
 
 
 def decode_token(token: str, *, scope: Optional[str] = None) -> Dict[str, Any]:

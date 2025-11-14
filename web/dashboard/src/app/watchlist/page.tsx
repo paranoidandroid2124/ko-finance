@@ -26,6 +26,7 @@ import { WatchlistFilters } from "@/components/watchlist/WatchlistFilters";
 import { WatchlistDetailPanel } from "@/components/watchlist/WatchlistDetailPanel";
 import { WatchlistRuleManager } from "@/components/watchlist/WatchlistRuleManager";
 import { WatchlistRuleWizard } from "@/components/watchlist/WatchlistRuleWizard";
+import { EventMatchList } from "@/components/watchlist/EventMatchList";
 import { motion } from "framer-motion";
 import {
   useWatchlistRadar,
@@ -33,12 +34,14 @@ import {
   useAlertRules,
   useUpdateAlertRule,
   useDeleteAlertRule,
+  useAlertEventMatches,
 } from "@/hooks/useAlerts";
 import { resolveCompanyIdentifier } from "@/hooks/useCompanySearch";
 import {
   ApiError,
   type AlertChannelType,
   type AlertRule,
+  type AlertEventMatch,
   type WatchlistRadarItem,
   type WatchlistDispatchResult,
   type WatchlistRuleChannelSummary,
@@ -309,6 +312,32 @@ const WatchlistDigestItem = ({ item, onSelect, isSelected = false }: WatchlistDi
   );
 };
 
+type EventMatchPanelProps = {
+  matches: AlertEventMatch[];
+  loading: boolean;
+};
+
+const EventMatchPanel = ({ matches, loading }: EventMatchPanelProps) => (
+  <section className="space-y-3 rounded-2xl border border-border-light bg-background-cardLight p-4 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <p className="text-xs font-semibold uppercase text-text-tertiaryLight dark:text-text-tertiaryDark">이벤트 매칭</p>
+        <h2 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">공시 이벤트 ↔ 워치리스트</h2>
+        <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+          워치리스트 룰에 등록된 티커에서 감지된 공시 이벤트 매칭 로그입니다.
+        </p>
+      </div>
+      <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">최근 {matches.length}건</p>
+    </div>
+    <EventMatchList
+      matches={matches}
+      loading={loading}
+      limit={6}
+      emptyMessage="워치리스트 룰에 등록된 티커에서 공시 이벤트가 감지되면 이곳에 표시됩니다."
+    />
+  </section>
+);
+
 export default function WatchlistRadarPage() {
   const defaultWindowMinutes = WINDOW_OPTIONS[2].minutes;
   const [targetStorage, setTargetStorage] = useState<DigestTargetStorage>(createDefaultDigestTargetStorage);
@@ -345,6 +374,7 @@ export default function WatchlistRadarPage() {
     isError: isRulesError,
     refetch: refetchAlertRules,
   } = useAlertRules();
+  const { data: eventMatchesData, isLoading: isEventMatchesLoading } = useAlertEventMatches({ limit: 10 });
   const updateRuleMutation = useUpdateAlertRule();
   const deleteRuleMutation = useDeleteAlertRule();
   useEffect(() => {
@@ -699,6 +729,7 @@ export default function WatchlistRadarPage() {
   const generatedAt = formatKoreanDateTime(data?.generatedAt ?? null, { includeSeconds: true });
   const generatedAtLabel = generatedAt ?? "생성 시각 미상";
   const alertPlanInfo = alertRulesData?.plan ?? null;
+  const eventMatches = eventMatchesData?.matches ?? [];
 
   useEffect(() => {
     if (alertRulesData?.items) {
@@ -1320,6 +1351,8 @@ export default function WatchlistRadarPage() {
               </div>
             ))}
       </section>
+
+      <EventMatchPanel matches={eventMatches} loading={isEventMatchesLoading} />
 
       <WatchlistFilters
         selectedChannels={selectedChannels}

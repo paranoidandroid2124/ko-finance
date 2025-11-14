@@ -205,6 +205,61 @@ def test_plan_context_patch_rejects_invalid_quota(plan_api_client: TestClient):
     assert detail["code"] == "plan.invalid_payload"
 
 
+def test_plan_context_patch_conflict_returns_409(plan_api_client: TestClient):
+    initial = plan_api_client.get("/api/v1/plan/context")
+    assert initial.status_code == 200
+    initial_updated_at = initial.json()["updatedAt"]
+
+    payload = {
+        "planTier": "pro",
+        "entitlements": ["search.compare", "search.alerts"],
+        "quota": {
+            "chatRequestsPerDay": 400,
+            "ragTopK": 4,
+            "selfCheckEnabled": True,
+            "peerExportRowLimit": 50,
+        },
+        "updatedBy": "first@kfinance.ai",
+        "expectedUpdatedAt": initial_updated_at,
+    }
+    first = plan_api_client.patch("/api/v1/plan/context", json=payload, headers=ADMIN_AUTH_HEADER)
+    assert first.status_code == 200
+    first_updated_at = first.json()["updatedAt"]
+
+    second_payload = {
+        "planTier": "pro",
+        "entitlements": ["search.compare"],
+        "quota": {
+            "chatRequestsPerDay": 420,
+            "ragTopK": 4,
+            "selfCheckEnabled": True,
+            "peerExportRowLimit": 60,
+        },
+        "updatedBy": "second@kfinance.ai",
+        "expectedUpdatedAt": first_updated_at,
+    }
+    second = plan_api_client.patch("/api/v1/plan/context", json=second_payload, headers=ADMIN_AUTH_HEADER)
+    assert second.status_code == 200
+
+    # reuse the stale timestamp from the previous save to trigger a conflict
+    stale_payload = {
+        "planTier": "pro",
+        "entitlements": ["search.compare", "search.alerts"],
+        "quota": {
+            "chatRequestsPerDay": 480,
+            "ragTopK": 6,
+            "selfCheckEnabled": True,
+            "peerExportRowLimit": 90,
+        },
+        "updatedBy": "conflict@kfinance.ai",
+        "expectedUpdatedAt": first_updated_at,
+    }
+    conflict = plan_api_client.patch("/api/v1/plan/context", json=stale_payload, headers=ADMIN_AUTH_HEADER)
+    assert conflict.status_code == 409, conflict.text
+    detail = conflict.json()["detail"]
+    assert detail["code"] == "plan.settings_conflict"
+
+
 def test_plan_trial_endpoint_starts_trial(plan_api_client: TestClient, plan_env: Path):
     response = plan_api_client.post(
         "/api/v1/plan/trial",

@@ -200,6 +200,10 @@ class AlertRuleResponse(BaseModel):
     status: str
     trigger: Dict[str, Any]
     condition: Dict[str, Any]
+    triggerType: str = Field(default="filing", description="정규화된 트리거 타입.")
+    filters: Dict[str, Any] = Field(default_factory=dict, description="트리거에서 추출한 필터 값.")
+    state: Dict[str, Any] = Field(default_factory=dict, description="최근 평가 상태/스로틀 메타데이터.")
+    channelFailures: Dict[str, Any] = Field(default_factory=dict, description="채널별 최근 실패 현황.")
     frequency: Dict[str, Any]
     channels: List[Dict[str, Any]]
     messageTemplate: Optional[str]
@@ -215,6 +219,43 @@ class AlertRuleResponse(BaseModel):
     extras: Dict[str, Any]
     createdAt: Optional[str]
     updatedAt: Optional[str]
+
+
+class AlertRuleLastDelivery(BaseModel):
+    id: str
+    status: str
+    channel: Optional[str] = None
+    error: Optional[str] = None
+    createdAt: Optional[str] = None
+
+
+class AlertRuleStatsResponse(BaseModel):
+    ruleId: str
+    windowMinutes: Optional[int] = None
+    total: int
+    delivered: int
+    failed: int
+    throttled: int
+    lastDelivery: Optional[AlertRuleLastDelivery] = None
+
+
+class AlertEventMatchSchema(BaseModel):
+    eventId: str
+    alertId: str
+    ruleName: str
+    eventType: str
+    ticker: Optional[str] = None
+    corpName: Optional[str] = None
+    eventDate: Optional[str] = None
+    domain: Optional[str] = None
+    subtype: Optional[str] = None
+    matchScore: Optional[float] = None
+    matchedAt: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AlertEventMatchResponse(BaseModel):
+    matches: List[AlertEventMatchSchema]
 
 
 class AlertRuleListResponse(BaseModel):

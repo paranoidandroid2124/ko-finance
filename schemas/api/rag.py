@@ -7,6 +7,16 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Union, Literal
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator
+from schemas.api.rag_v2 import (
+    EvidenceSchema as EvidenceSchemaV2,
+    RagGridCellResponse as RagGridCellResponseV2,
+    RagGridRequest as RagGridRequestV2,
+    RagGridResponse as RagGridResponseV2,
+    RagQueryFiltersSchema as RagQueryFiltersSchemaV2,
+    RagQueryRequest as RagQueryRequestV2,
+    RagQueryResponse as RagQueryResponseV2,
+    RagWarningSchema as RagWarningSchemaV2,
+)
 
 
 class FilingFilter(BaseModel):
@@ -271,11 +281,22 @@ class RAGTelemetryResponse(BaseModel):
     accepted: int = Field(..., ge=0, description="Number of events accepted for processing.")
 
 
+EvidenceSchema = EvidenceSchemaV2
+RagGridRequest = RagGridRequestV2
+RagGridResponse = RagGridResponseV2
+RagGridCellResponse = RagGridCellResponseV2
+RagQueryFiltersSchema = RagQueryFiltersSchemaV2
+RagQueryRequest = RagQueryRequestV2
+RagQueryResponse = RagQueryResponseV2
+RagWarningSchema = RagWarningSchemaV2
+
+
 __all__ = [
     "CitationEvidence",
     "EvidenceAnchor",
     "FilingFilter",
     "PDFRect",
+    "EvidenceSchema",
     "RAGEvidence",
     "RAGQueryRequest",
     "RAGQueryResponse",
@@ -285,4 +306,12 @@ __all__ = [
     "RAGTelemetryResponse",
     "RelatedFiling",
     "SelfCheckResult",
+    "EvidenceSchema",
+    "RagGridRequest",
+    "RagGridResponse",
+    "RagGridCellResponse",
+    "RagQueryFiltersSchema",
+    "RagQueryRequest",
+    "RagQueryResponse",
+    "RagWarningSchema",
 ]

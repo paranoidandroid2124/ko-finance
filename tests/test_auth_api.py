@@ -11,18 +11,25 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from core.auth.constants import DEFAULT_SIGNUP_CHANNEL
 from database import get_db
-from services import auth_service, auth_tokens
+from services import auth_service, auth_tokens, email_service
+from services.auth import common as auth_common
 from services.auth_service import RateLimitResult
 from web.routers import auth
+
+pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture(autouse=True)
 def _stub_email_senders(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_service, "send_verification_email", lambda **_: None)
-    monkeypatch.setattr(auth_service, "send_password_reset_email", lambda **_: None)
-    monkeypatch.setattr(auth_service, "send_account_locked_email", lambda **_: None)
-    monkeypatch.setattr(auth_service, "send_account_unlock_email", lambda **_: None)
-    monkeypatch.setattr(auth_service, "_check_limit", lambda *_, **__: RateLimitResult(allowed=True, remaining=None, reset_at=None))
+    monkeypatch.setattr(email_service, "send_verification_email", lambda **_: None)
+    monkeypatch.setattr(email_service, "send_password_reset_email", lambda **_: None)
+    monkeypatch.setattr(email_service, "send_account_locked_email", lambda **_: None)
+    monkeypatch.setattr(email_service, "send_account_unlock_email", lambda **_: None)
+    monkeypatch.setattr(
+        auth_common,
+        "_check_limit",
+        lambda *_, **__: RateLimitResult(allowed=True, remaining=None, reset_at=None),
+    )
 
 
 @pytest.fixture()
@@ -35,7 +42,7 @@ def token_store(monkeypatch: pytest.MonkeyPatch) -> Dict[str, List[str]]:
         captured[kwargs["token_type"]].append(token.token)
         return token
 
-    monkeypatch.setattr(auth_service, "issue_magic_token", capture)
+    monkeypatch.setattr(auth_tokens, "issue_magic_token", capture)
     return captured
 
 
@@ -235,3 +242,84 @@ def test_account_unlock_request_and_confirm(auth_api_client: Tuple[TestClient, S
     ).mappings().first()
     assert row and (row["locked_until"] is None or row["locked_until"] <= datetime.now(timezone.utc))
     assert row["failed_attempts"] == 0
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_code"),
+    [
+        ("saml_invalid_payload", "auth.saml_invalid_payload"),
+        ("oidc_state_expired", "auth.oidc_state_expired"),
+    ],
+)
+def test_sso_failure_scenarios(
+    auth_api_client: Tuple[TestClient, Session],
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+    expected_code: str,
+) -> None:
+    client, _ = auth_api_client
+    if scenario == "saml_invalid_payload":
+        saml_config = auth_common.SamlProviderConfig(
+            enabled=True,
+            sp_entity_id="sp:test",
+            acs_url="https://app.local/api/v1/auth/saml/acs",
+            metadata_url=None,
+            sp_certificate=None,
+            idp_entity_id="idp-test",
+            idp_sso_url="https://idp.local/sso",
+            idp_certificate=None,
+            email_attribute="email",
+            name_attribute="displayName",
+            org_attribute="org",
+            role_attribute="role",
+            default_org_slug="default-org",
+            default_role="viewer",
+            role_mapping={},
+            auto_provision_orgs=False,
+            default_plan_tier="enterprise",
+        )
+        monkeypatch.setattr(auth_common, "_SAML_CONFIG", saml_config)
+        response = client.post(
+            "/api/v1/auth/saml/acs",
+            data={
+                "SAMLResponse": "!!!",  # invalid base64 payload
+                "RelayState": "state",
+            },
+        )
+    else:
+        oidc_config = auth_common.OidcProviderConfig(
+            enabled=True,
+            client_id="client-id",
+            client_secret="client-secret",
+            authorization_url="https://idp.local/authorize",
+            token_url="https://idp.local/token",
+            userinfo_url="https://idp.local/userinfo",
+            redirect_uri="https://app.local/api/v1/auth/oidc/callback",
+            scopes=("openid", "email"),
+            default_org_slug=None,
+            org_claim="org",
+            role_claim="role",
+            plan_claim="plan",
+            email_claim="email",
+            name_claim="name",
+            default_role="viewer",
+            role_mapping={},
+            auto_provision_orgs=False,
+            default_plan_tier="enterprise",
+        )
+        monkeypatch.setattr(auth_common, "_OIDC_CONFIG", oidc_config)
+        expired_state = auth_common._encode_state(  # type: ignore[attr-defined]
+            {
+                "provider": "oidc",
+                "nonce": "expired",
+                "exp": int((datetime.now(timezone.utc) - timedelta(seconds=5)).timestamp()),
+            }
+        )
+        response = client.get(
+            "/api/v1/auth/oidc/callback",
+            params={"code": "dummy-code", "state": expired_state},
+        )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["detail"]["code"] == expected_code

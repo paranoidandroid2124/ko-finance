@@ -1,15 +1,9 @@
 import type { PlanTier } from "@/store/planStore";
+import { getPlanLabel } from "@/lib/planTier";
 
 export type PlanCheckoutPreset = {
   amount: number;
   orderName: string;
-};
-
-const PLAN_LABEL: Record<PlanTier, string> = {
-  free: "Free",
-  starter: "Starter",
-  pro: "Pro",
-  enterprise: "Enterprise",
 };
 
 /**
@@ -30,4 +24,4 @@ export const PLAN_CHECKOUT_PRESETS: Record<Exclude<PlanTier, "free">, PlanChecko
   },
 };
 
-export const planTierLabel = (tier: PlanTier): string => PLAN_LABEL[tier] ?? tier;
+export const planTierLabel = (tier: PlanTier): string => getPlanLabel(tier);

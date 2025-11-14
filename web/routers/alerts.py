@@ -12,10 +12,12 @@ from core.logging import get_logger
 from database import get_db
 from schemas.api.alerts import (
     AlertChannelSchemaResponse,
+    AlertEventMatchResponse,
     AlertRuleCreateRequest,
     AlertRuleListResponse,
     AlertRuleResponse,
     AlertRuleUpdateRequest,
+    AlertRuleStatsResponse,
     AlertPlanInfo,
     WatchlistDispatchRequest,
     WatchlistDispatchResponse,
@@ -28,6 +30,8 @@ from services.alert_service import (
     create_alert_rule,
     get_alert_rule,
     list_alert_rules,
+    list_event_alert_matches,
+    rule_delivery_stats,
     serialize_alert,
     serialize_plan_capabilities,
     update_alert_rule,
@@ -271,6 +275,48 @@ def update_rule(
         raise _plan_http_exception(status.HTTP_400_BAD_REQUEST, "alerts.invalid_payload", str(exc))
     db.refresh(updated)
     return _response_from_rule(updated)
+
+
+@router.get("/{alert_id}/stats", response_model=AlertRuleStatsResponse)
+def read_rule_stats(
+    alert_id: uuid.UUID,
+    window_minutes: int = Query(1440, ge=5, le=7 * 24 * 60),
+    x_user_id: Optional[str] = Header(default=None),
+    x_org_id: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+    plan: PlanContext = Depends(require_plan_feature("search.alerts")),
+) -> AlertRuleStatsResponse:
+    user_id = _parse_uuid(x_user_id)
+    org_id = _parse_uuid(x_org_id)
+    filters = _owner_filters(user_id, org_id)
+    rule = get_alert_rule(db, rule_id=alert_id, owner_filters=filters)
+    if rule is None:
+        raise _plan_http_exception(status.HTTP_404_NOT_FOUND, "alerts.not_found", "알림을 찾을 수 없습니다.")
+    stats_payload = rule_delivery_stats(db, rule_id=alert_id, window_minutes=window_minutes)
+    stats_payload["windowMinutes"] = window_minutes
+    return AlertRuleStatsResponse.model_validate(stats_payload)
+
+
+@router.get("/watchlist/event-matches", response_model=AlertEventMatchResponse)
+def list_event_matches(
+    limit: int = Query(20, ge=1, le=100),
+    since: Optional[str] = Query(default=None),
+    x_user_id: Optional[str] = Header(default=None),
+    x_org_id: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+    plan: PlanContext = Depends(require_plan_feature("search.alerts")),
+) -> AlertEventMatchResponse:
+    user_id = _parse_uuid(x_user_id)
+    org_id = _parse_uuid(x_org_id)
+    filters = _owner_filters(user_id, org_id)
+    since_dt = _parse_iso_datetime(since)
+    matches = list_event_alert_matches(
+        db,
+        owner_filters=filters,
+        limit=limit,
+        since=since_dt,
+    )
+    return AlertEventMatchResponse(matches=matches)
 
 
 @router.delete("/{alert_id}", status_code=status.HTTP_204_NO_CONTENT)

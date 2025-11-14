@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import zipfile
@@ -40,25 +40,18 @@ def test_make_event_brief_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert payload["report"]["brand"]["primaryColor"] == "#123456"
 
 
-def test_render_typst_pdf_invocation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_render_event_brief_with_latex(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     output_path = tmp_path / "event_brief.pdf"
 
-    monkeypatch.setattr(report_renderer.shutil, "which", lambda _: "/usr/bin/typst")
+    def fake_compile(tex_path: Path) -> Path:
+        output_pdf = tex_path.with_suffix(".pdf")
+        output_pdf.write_bytes(b"%PDF-1.4 fake")
+        return output_pdf
 
-    def fake_run(cmd, check, capture_output, text, timeout):  # type: ignore[override]
-        Path(cmd[3]).write_bytes(b"%PDF-1.4 fake")
-
-        class Result:
-            returncode = 0
-            stdout = ""
-            stderr = ""
-
-        return Result()
-
-    monkeypatch.setattr(report_renderer.subprocess, "run", fake_run)
+    monkeypatch.setattr(report_renderer, "compile_latex_pdf", fake_compile)
 
     context = {"report": {"taskId": "task-002"}, "summary": {"overview": "테스트"}}
-    result = report_renderer.render_typst_pdf("event_brief.typ", context, output_path=output_path)
+    result = report_renderer.render_event_brief(context, output_path=output_path)
 
     assert result == output_path
     assert output_path.exists()
@@ -99,4 +92,3 @@ def test_make_evidence_bundle_outputs(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
     manifest = json.loads(package.manifest_path.read_text(encoding="utf-8"))
     assert manifest["taskId"] == "task-003"
-

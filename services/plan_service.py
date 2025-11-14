@@ -8,19 +8,23 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any, Dict, Iterable, Literal, Mapping, MutableMapping, Optional, Sequence
+from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Sequence
 
-from fastapi import Request
+from filelock import FileLock, Timeout
 
-from core.env import env_str
+from core.env import env_int, env_str
+from core.plan_constants import PlanTier, SUPPORTED_PLAN_TIERS
 from services.admin_audit import append_audit_log
 from services import plan_config_store
 
 logger = logging.getLogger(__name__)
 
-PlanTier = Literal["free", "starter", "pro", "enterprise"]
 
-SUPPORTED_PLAN_TIERS: Sequence[str] = ("free", "starter", "pro", "enterprise")
+class PlanSettingsConflictError(ValueError):
+    """Raised when plan settings have changed since the caller last fetched them."""
+
+    def __init__(self, message: str = "다른 사용자가 플랜 설정을 먼저 저장했습니다. 새로고침 후 다시 시도해주세요.") -> None:
+        super().__init__(message)
 
 
 @dataclass(slots=True)
@@ -160,6 +164,7 @@ class PlanContext:
 _DEFAULT_PLAN_SETTINGS_PATH = Path("uploads") / "admin" / "plan_settings.json"
 _PLAN_SETTINGS_CACHE: Optional[PersistedPlanSettings] = None
 _PLAN_SETTINGS_CACHE_PATH: Optional[Path] = None
+_PLAN_SETTINGS_LOCK_TIMEOUT = env_int("PLAN_SETTINGS_LOCK_TIMEOUT_SECONDS", 5, minimum=1)
 
 
 @lru_cache(maxsize=None)
@@ -262,6 +267,12 @@ def _plan_settings_path() -> Path:
         _PLAN_SETTINGS_CACHE = None
     _PLAN_SETTINGS_CACHE_PATH = path
     return path
+
+
+def _plan_settings_lock(path: Path) -> FileLock:
+    lock_path = path.parent / f"{path.name}.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    return FileLock(str(lock_path), timeout=_PLAN_SETTINGS_LOCK_TIMEOUT)
 
 
 def _normalize_actor(value: Optional[str]) -> Optional[str]:
@@ -384,16 +395,22 @@ def _load_plan_settings(*, reload: bool = False) -> Optional[PersistedPlanSettin
     if _PLAN_SETTINGS_CACHE is not None and not reload:
         return _PLAN_SETTINGS_CACHE
 
-    if not path.exists():
-        _PLAN_SETTINGS_CACHE = None
-        return None
-
+    lock = _plan_settings_lock(path)
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("Failed to load plan settings from %s: %s", path, exc)
-        _PLAN_SETTINGS_CACHE = None
-        return None
+        with lock:
+            if not path.exists():
+                _PLAN_SETTINGS_CACHE = None
+                return None
+
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("Failed to load plan settings from %s: %s", path, exc)
+                _PLAN_SETTINGS_CACHE = None
+                return None
+    except Timeout as exc:  # pragma: no cover - file lock contention
+        logger.error("Plan settings lock timeout at %s: %s", path, exc)
+        raise RuntimeError("plan settings are currently locked; please retry.") from exc
 
     tier = _normalize_plan_tier(payload.get("planTier"))
 
@@ -444,18 +461,23 @@ def _store_plan_settings(settings: PersistedPlanSettings) -> None:
         "memoryFlags": settings.memory_flags.to_dict(),
         "trial": settings.trial_state.to_dict(),
     }
+    lock = _plan_settings_lock(path)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = path.with_suffix(".tmp")
-        tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp_path.replace(path)
-        logger.info(
-            "Plan settings persisted by %s (tier=%s).",
-            settings.updated_by or "unknown",
-            settings.plan_tier,
-        )
-        global _PLAN_SETTINGS_CACHE
-        _PLAN_SETTINGS_CACHE = settings
+        with lock:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = path.with_suffix(".tmp")
+            tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp_path.replace(path)
+            logger.info(
+                "Plan settings persisted by %s (tier=%s).",
+                settings.updated_by or "unknown",
+                settings.plan_tier,
+            )
+            global _PLAN_SETTINGS_CACHE
+            _PLAN_SETTINGS_CACHE = settings
+    except Timeout as exc:  # pragma: no cover - file lock contention
+        logger.error("Failed to acquire lock for plan settings at %s: %s", path, exc)
+        raise RuntimeError("plan settings are currently locked; please retry.") from exc
     except OSError as exc:
         logger.error("Failed to write plan settings to %s: %s", path, exc)
         raise
@@ -538,13 +560,14 @@ def _build_plan_context(
     )
 
 
-def resolve_plan_context(request: Request) -> PlanContext:
-    """Infer the current plan tier and entitlements for the request."""
+def resolve_plan_context(headers: Optional[Mapping[str, str]] = None) -> PlanContext:
+    """Infer the current plan tier and entitlements from an optional header mapping."""
+    headers = headers or {}
     return _build_plan_context(
-        header_tier=request.headers.get("x-plan-tier"),
-        header_entitlements=request.headers.get("x-plan-entitlements"),
-        header_expires_at=request.headers.get("x-plan-expires-at"),
-        header_quota=request.headers.get("x-plan-quota"),
+        header_tier=headers.get("x-plan-tier"),
+        header_entitlements=headers.get("x-plan-entitlements"),
+        header_expires_at=headers.get("x-plan-expires-at"),
+        header_quota=headers.get("x-plan-quota"),
     )
 
 
@@ -564,6 +587,7 @@ def update_plan_context(
     trigger_checkout: bool = False,
     force_checkout_requested: Optional[bool] = None,
     memory_flags: Optional[Mapping[str, Any]] = None,
+    expected_updated_at: Optional[str] = None,
 ) -> PlanContext:
     tier = _normalize_plan_tier(plan_tier)
 
@@ -589,6 +613,14 @@ def update_plan_context(
         raise ValueError(str(exc)) from exc
 
     existing_settings = _load_plan_settings()
+    if expected_updated_at is not None:
+        current_updated_at = (
+            existing_settings.updated_at.isoformat()
+            if existing_settings and existing_settings.updated_at
+            else None
+        )
+        if current_updated_at != expected_updated_at:
+            raise PlanSettingsConflictError()
     checkout_requested = existing_settings.checkout_requested if existing_settings else False
     if force_checkout_requested is not None:
         checkout_requested = force_checkout_requested

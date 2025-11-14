@@ -23,12 +23,7 @@ from schemas.api.admin import (
     TossWebhookReplayResponse,
     WebhookAuditListResponse,
 )
-from schemas.api.plan import (
-    PlanContextResponse,
-    PlanFeatureFlagsSchema,
-    PlanMemoryFlagsSchema,
-    PlanQuotaSchema,
-)
+from schemas.api.plan import PlanContextResponse
 from services.admin_session_service import (
     SESSION_COOKIE_NAME,
     SESSION_COOKIE_SAMESITE,
@@ -45,6 +40,7 @@ from services.google_id_token import (
 from services.payments.toss_webhook_audit import read_recent_webhook_entries
 from services.payments.toss_webhook_replay import replay_toss_webhook_event
 from services.plan_service import PlanContext, update_plan_context
+from services.plan_serializers import serialize_plan_context
 from web.deps_admin import AdminSession, load_admin_token_map, require_admin_session
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -381,7 +377,7 @@ def apply_plan_quick_adjust(payload: PlanQuickAdjustRequest) -> PlanContextRespo
             detail={"code": "admin.plan_update_failed", "message": str(exc)},
         ) from exc
 
-    return _plan_context_to_response(context)
+    return serialize_plan_context(context)
 
 
 @protected_router.get(
@@ -394,34 +390,6 @@ def download_plan_audit_log() -> FileResponse:
     if not audit_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="audit_log_not_found")
     return FileResponse(audit_path, media_type="application/json", filename="plan_audit.jsonl")
-
-
-def _plan_context_to_response(context: PlanContext) -> PlanContextResponse:
-    feature_flags = context.feature_flags()
-    return PlanContextResponse(
-        planTier=context.tier,
-        entitlements=sorted(context.entitlements),
-        expiresAt=context.expires_at.isoformat() if context.expires_at else None,
-        checkoutRequested=context.checkout_requested,
-        updatedAt=context.updated_at.isoformat() if context.updated_at else None,
-        updatedBy=context.updated_by,
-        changeNote=context.change_note,
-        quota=PlanQuotaSchema(**context.quota.to_dict()),
-        featureFlags=PlanFeatureFlagsSchema(
-            searchCompare=feature_flags.get("search.compare", False),
-            searchAlerts=feature_flags.get("search.alerts", False),
-            searchExport=feature_flags.get("search.export", False),
-            ragCore=feature_flags.get("rag.core", False),
-            evidenceInlinePdf=feature_flags.get("evidence.inline_pdf", False),
-            evidenceDiff=feature_flags.get("evidence.diff", False),
-            timelineFull=feature_flags.get("timeline.full", False),
-        ),
-        memoryFlags=PlanMemoryFlagsSchema(
-            watchlist=context.memory_watchlist_enabled,
-            digest=context.memory_digest_enabled,
-            chat=context.memory_chat_enabled,
-        ),
-    )
 
 
 router.include_router(protected_router)

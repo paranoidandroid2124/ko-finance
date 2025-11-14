@@ -6,22 +6,29 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from schemas.api.payments import (
+    TossCheckoutCreateRequest,
+    TossCheckoutCreateResponse,
+    TossOrderStatusResponse,
     TossPaymentsConfigResponse,
     TossPaymentsConfirmRequest,
     TossPaymentsConfirmResponse,
 )
+from services.audit_log import audit_billing_event
+from services.entitlement_service import entitlement_service
+from services.id_utils import normalize_uuid
 from services.payments import (
     TossPaymentsError,
     get_toss_payments_client,
     get_toss_public_config,
     verify_toss_webhook_signature,
 )
-from services.payments import order_context_store
+from services.payments import order_context_store, toss_order_store
 from services.payments.toss_webhook_audit import append_webhook_audit_entry
 from services.payments.toss_webhook_store import has_processed_webhook, record_webhook_event
 from services.payments.toss_webhook_utils import (
@@ -30,15 +37,99 @@ from services.payments.toss_webhook_utils import (
     resolve_order_id,
     resolve_payment_status,
 )
-from services.audit_log import audit_billing_event
-from services.entitlement_service import entitlement_service
-from services.id_utils import normalize_uuid
-from services.plan_service import PlanTier, SUPPORTED_PLAN_TIERS, apply_checkout_upgrade, clear_checkout_requested
+from services.plan_catalog_service import load_plan_catalog
+from core.plan_constants import PlanTier, SUPPORTED_PLAN_TIERS
+from services.plan_service import apply_checkout_upgrade, clear_checkout_requested
 from web.deps_rbac import RbacState, get_rbac_state
+from web.middleware.auth_context import AuthenticatedUser
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_CURRENCY = "KRW"
+_DEFAULT_SUCCESS_PATH = "/payments/success"
+_DEFAULT_FAIL_PATH = "/payments/fail"
+_PLAN_LABELS: Dict[PlanTier, str] = {
+    "free": "Free",
+    "starter": "Starter",
+    "pro": "Pro",
+    "enterprise": "Enterprise",
+}
+_PLAN_AMOUNT_FALLBACKS: Dict[PlanTier, int] = {
+    "starter": 9900,
+    "pro": 39000,
+    "enterprise": 185000,
+}
+
+
+def _require_authenticated_user(request: Request) -> AuthenticatedUser:
+    user = getattr(request.state, "user", None)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "auth.required", "message": "로그인이 필요한 요청입니다."},
+        )
+    return user
+
+
+def _sanitize_redirect_path(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    trimmed = value.strip()
+    if not trimmed or not trimmed.startswith("/"):
+        return None
+    return trimmed
+
+
+def _build_redirect_path(
+    base_path: str,
+    *,
+    order_id: str,
+    tier: PlanTier,
+    amount: int,
+    redirect_path: Optional[str],
+) -> str:
+    params = [("orderId", order_id), ("tier", tier), ("amount", str(amount))]
+    if redirect_path:
+        params.append(("redirectPath", redirect_path))
+    return f"{base_path}?{urlencode(params)}"
+
+
+def _default_order_name(tier: PlanTier) -> str:
+    label = _PLAN_LABELS.get(tier, tier.title())
+    return f"K-Finance {label} 플랜 구독"
+
+
+def _resolve_plan_amount(tier: PlanTier, override: Optional[int]) -> int:
+    if override and override > 0:
+        return override
+    catalog = load_plan_catalog()
+    for entry in catalog.get("tiers", []):
+        if entry.get("tier") == tier:
+            price = entry.get("price") or {}
+            amount = price.get("amount")
+            if isinstance(amount, (int, float)) and amount > 0:
+                return int(amount)
+    fallback = _PLAN_AMOUNT_FALLBACKS.get(tier)
+    if fallback:
+        return fallback
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={"code": "payments.pricing_unavailable", "message": "플랜 가격 정보를 찾지 못했습니다."},
+    )
+
+
+def _generate_order_id(tier: PlanTier) -> str:
+    return f"kfinance-{tier}-{uuid.uuid4().hex[:12]}"
+
+
+def _extract_amount_from_event(event: Dict[str, Any]) -> Optional[int]:
+    data = event.get("data") or {}
+    total = data.get("totalAmount") or data.get("amount")
+    if isinstance(total, (int, float)):
+        return int(total)
+    return None
 
 
 @router.get("/toss/config", response_model=TossPaymentsConfigResponse, summary="토스 결제 위젯 설정을 반환합니다.")
@@ -52,6 +143,108 @@ async def read_toss_config() -> TossPaymentsConfigResponse:
             detail={"code": "payments.config_unavailable", "message": str(exc)},
         ) from exc
     return TossPaymentsConfigResponse(**config)
+
+
+@router.post(
+    "/toss/checkout",
+    response_model=TossCheckoutCreateResponse,
+    summary="토스 결제 체크아웃 주문을 생성합니다.",
+)
+async def create_toss_checkout(
+    payload: TossCheckoutCreateRequest,
+    request: Request,
+    state: RbacState = Depends(get_rbac_state),
+) -> TossCheckoutCreateResponse:
+    user = _require_authenticated_user(request)
+    if payload.planTier == "free":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "payments.invalid_plan", "message": "무료 플랜은 결제가 필요하지 않습니다."},
+        )
+
+    amount = _resolve_plan_amount(payload.planTier, payload.amount)
+    currency = (payload.currency or _DEFAULT_CURRENCY).upper()
+    order_name = payload.orderName or _default_order_name(payload.planTier)
+    order_id = _generate_order_id(payload.planTier)
+    redirect_path = _sanitize_redirect_path(payload.redirectPath)
+
+    success_path = _build_redirect_path(
+        _DEFAULT_SUCCESS_PATH,
+        order_id=order_id,
+        tier=payload.planTier,
+        amount=amount,
+        redirect_path=redirect_path,
+    )
+    fail_path = _build_redirect_path(
+        _DEFAULT_FAIL_PATH,
+        order_id=order_id,
+        tier=payload.planTier,
+        amount=amount,
+        redirect_path=redirect_path,
+    )
+
+    metadata: Dict[str, Any] = {}
+    if redirect_path:
+        metadata["redirectPath"] = redirect_path
+    if payload.customerName:
+        metadata["customerName"] = payload.customerName
+    if payload.customerEmail:
+        metadata["customerEmail"] = payload.customerEmail
+
+    toss_order_store.record_checkout(
+        order_id=order_id,
+        plan_tier=payload.planTier,
+        amount=amount,
+        currency=currency,
+        order_name=order_name,
+        user_id=user.id,
+        org_id=str(state.org_id) if state.org_id else None,
+        metadata=metadata,
+    )
+    order_context_store.record_order_context(
+        order_id=order_id,
+        org_id=str(state.org_id) if state.org_id else None,
+        plan_slug=payload.planTier,
+        user_id=user.id,
+    )
+
+    return TossCheckoutCreateResponse(
+        orderId=order_id,
+        planTier=payload.planTier,
+        amount=amount,
+        currency=currency,
+        orderName=order_name,
+        successPath=success_path,
+        failPath=fail_path,
+        status=toss_order_store.ORDER_STATUS_PENDING,
+        createdAt=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+@router.get(
+    "/toss/orders/{order_id}",
+    response_model=TossOrderStatusResponse,
+    summary="토스 결제 주문 상태를 조회합니다.",
+)
+async def read_toss_order(order_id: str, request: Request) -> TossOrderStatusResponse:
+    _require_authenticated_user(request)
+    record = toss_order_store.get_order(order_id)
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "payments.order_not_found", "message": "해당 주문을 찾을 수 없습니다."},
+        )
+    return TossOrderStatusResponse(
+        orderId=record.order_id,
+        planTier=record.plan_tier,  # type: ignore[arg-type]
+        amount=record.amount,
+        currency=record.currency,
+        orderName=record.order_name,
+        status=record.status,
+        createdAt=record.created_at,
+        updatedAt=record.updated_at,
+        metadata=record.metadata,
+    )
 
 
 @router.post(
@@ -96,6 +289,24 @@ async def confirm_toss_payment(
         org_id=str(state.org_id) if state.org_id else None,
         plan_slug=normalized_tier,
         user_id=str(state.user_id) if state.user_id else None,
+    )
+
+    fallback_tier = normalized_tier or payload.planTier
+    defaults = None
+    if fallback_tier:
+        defaults = {
+            "plan_tier": fallback_tier,
+            "amount": payload.amount,
+            "currency": _DEFAULT_CURRENCY,
+            "order_name": _default_order_name(fallback_tier),
+            "user_id": str(state.user_id) if state.user_id else None,
+            "org_id": str(state.org_id) if state.org_id else None,
+        }
+    toss_order_store.update_order_status(
+        payload.orderId,
+        toss_order_store.ORDER_STATUS_CONFIRMED,
+        metadata={"paymentKey": payload.paymentKey},
+        defaults=defaults,
     )
 
     return TossPaymentsConfirmResponse(
@@ -174,6 +385,7 @@ async def handle_toss_webhook(request: Request) -> Dict[str, str]:
     status_value = resolve_payment_status(event)
     order_id = resolve_order_id(event)
     dedupe_key = build_webhook_dedupe_key(transmission_id, order_id, status_value)
+    amount_from_event = _extract_amount_from_event(event)
 
     log_context = {
         **base_log_context,
@@ -222,6 +434,18 @@ async def handle_toss_webhook(request: Request) -> Dict[str, str]:
                 "Toss webhook applied plan upgrade.",
                 extra={"webhook": {**log_context, "tier": tier}},
             )
+            if order_id:
+                toss_order_store.update_order_status(
+                    order_id,
+                    toss_order_store.ORDER_STATUS_PAID,
+                    metadata={"status": status_value, "eventType": event_type},
+                    defaults={
+                        "plan_tier": tier,
+                        "amount": amount_from_event or _PLAN_AMOUNT_FALLBACKS.get(tier, 0),
+                        "currency": _DEFAULT_CURRENCY,
+                        "order_name": _default_order_name(tier),
+                    },
+                )
             synced_org = _sync_entitlement_subscription(
                 plan_slug=tier,
                 status=status_value,
@@ -282,6 +506,20 @@ async def handle_toss_webhook(request: Request) -> Dict[str, str]:
                 context=log_context,
                 payload=event,
             )
+        if order_id:
+            effective_tier = cast(PlanTier, tier or fallback_plan or "free")
+            fallback_amount = amount_from_event or _PLAN_AMOUNT_FALLBACKS.get(effective_tier, 0)
+            toss_order_store.update_order_status(
+                order_id,
+                toss_order_store.ORDER_STATUS_CANCELED,
+                metadata={"status": status_value, "eventType": event_type},
+                defaults={
+                    "plan_tier": effective_tier,
+                    "amount": fallback_amount,
+                    "currency": _DEFAULT_CURRENCY,
+                    "order_name": _default_order_name(effective_tier),
+                },
+            )
         synced_org = None
         if tier:
             context_metadata = (
@@ -306,6 +544,36 @@ async def handle_toss_webhook(request: Request) -> Dict[str, str]:
         audit_billing_event(
             action="billing.webhook_status_change",
             org_id=synced_org,
+            target_id=order_id,
+            extra={"status": status_value, "tier": tier, "transmission_id": transmission_id},
+        )
+    elif status_value == "FAILED":
+        if order_id:
+            effective_tier = cast(PlanTier, tier or fallback_plan or "free")
+            fallback_amount = amount_from_event or _PLAN_AMOUNT_FALLBACKS.get(effective_tier, 0)
+            toss_order_store.update_order_status(
+                order_id,
+                toss_order_store.ORDER_STATUS_FAILED,
+                metadata={"status": status_value, "eventType": event_type},
+                defaults={
+                    "plan_tier": effective_tier,
+                    "amount": fallback_amount,
+                    "currency": _DEFAULT_CURRENCY,
+                    "order_name": _default_order_name(effective_tier),
+                },
+            )
+        logger.info(
+            "Toss payment failed status received.",
+            extra={"webhook": log_context},
+        )
+        append_webhook_audit_entry(
+            result="status_failed",
+            context=log_context,
+            payload=event,
+        )
+        audit_billing_event(
+            action="billing.webhook_status_change",
+            org_id=None,
             target_id=order_id,
             extra={"status": status_value, "tier": tier, "transmission_id": transmission_id},
         )

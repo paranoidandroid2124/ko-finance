@@ -30,13 +30,24 @@ from schemas.api.rag import (
     RAGTelemetryResponse,
     SelfCheckResult,
 )
+from schemas.api.rag_v2 import (
+    RagGridJobResponse,
+    RagGridRequest,
+    RagGridResponse,
+    RagQueryFiltersSchema,
+    RagQueryRequest as RagQueryV2Request,
+    RagQueryResponse as RagQueryV2Response,
+    RagWarningSchema,
+)
 from services import (
     chat_service,
     date_range_parser,
     hybrid_search,
-    vector_service,
     lightmem_gate,
     deeplink_service,
+    rag_grid,
+    rag_pipeline,
+    vector_service,
 )
 from services.audit_log import audit_rag_event
 from services.user_settings_service import UserLightMemSettings
@@ -456,6 +467,7 @@ def _enqueue_evidence_snapshot(
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/rag", tags=["RAG"])
+_GRID_CELL_LIMIT = 25
 
 NO_CONTEXT_ANSWER = "관련 근거 문서를 찾지 못했습니다. 다른 질문을 시도해 주세요."
 INTENT_GENERAL_MESSAGE = "저는 공시·금융 뉴스 정보를 기반으로 답변하는 서비스입니다. 관련된 질문을 입력해 주세요."
@@ -585,6 +597,15 @@ def record_rag_telemetry(
 
 def _enforce_chat_quota(plan: PlanContext, user_id: Optional[uuid.UUID]) -> None:
     enforce_quota("rag.chat", plan=plan, user_id=user_id, org_id=None)
+
+
+def _stringify_ms(value: Optional[int]) -> Optional[str]:
+    if value is None:
+        return None
+    try:
+        return str(int(value))
+    except (TypeError, ValueError):
+        return None
 
 def _coerce_uuid(value, *, default=None):
     """Convert an arbitrary identifier to a UUID."""
@@ -1642,57 +1663,59 @@ def query_rag_stream(
         judge_decision = (judge_result.get("decision") or "unknown") if judge_result else "unknown"
         rag_mode = (judge_result.get("rag_mode") or "vector") if judge_result else "vector"
 
-        should_retrieve = rag_mode != "none" and judge_decision in {"pass", "unknown"}
-        retrieval: Optional[vector_service.VectorSearchResult] = None
-        context_chunks: List[Dict[str, Any]] = []
-        related_filings: List[RelatedFiling] = []
-        active_filing_id = filing_id
+        filters_v2 = RagQueryFiltersSchema(
+            dateGte=request.filters.min_published_at,
+            dateLte=request.filters.max_published_at,
+            tickers=[request.filters.ticker] if request.filters.ticker else [],
+            sectors=[request.filters.sector] if request.filters.sector else [],
+        )
+        pipeline_request = RagQueryV2Request(
+            query=question,
+            filingId=filing_id,
+            tickers=list(filters_v2.tickers),
+            topK=request.top_k or 6,
+            maxFilings=max_filings,
+            filters=filters_v2,
+        )
+        pipeline_result = rag_pipeline.run_rag_query(db, pipeline_request)
+        context_chunks = pipeline_result.raw_chunks
+        related_filings = _build_related_filings(pipeline_result.related_documents)
+        active_filing_id = pipeline_result.trace.get("selectedFilingId") or filing_id
 
-        if should_retrieve:
-            retrieval = _vector_search(
-                question,
-                filing_id=filing_id,
-                top_k=request.top_k,
-                max_filings=max_filings,
-                filters=filter_payload,
-                db=db,
+        if rag_mode == "vector" and not context_chunks:
+            response, needs_summary = build_empty_response(
+                db,
+                question=question,
+                filing_id=active_filing_id,
+                trace_id=trace_id,
+                session=session,
+                turn_id=turn_id,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                conversation_memory=conversation_memory,
+                related_filings=related_filings,
+                judge_result=judge_result,
+                rag_mode=rag_mode,
             )
-            context_chunks = retrieval.chunks
-            related_filings = _build_related_filings(retrieval.related_filings)
-            active_filing_id = _resolve_selected_filing_id(retrieval, filing_id, related_filings)
+            db.commit()
+            if needs_summary:
+                chat_service.enqueue_session_summary(session.id)
 
-            if rag_mode == "vector" and not context_chunks:
-                response, needs_summary = build_empty_response(
-                    db,
-                    question=question,
-                    filing_id=active_filing_id,
-                    trace_id=trace_id,
-                    session=session,
-                    turn_id=turn_id,
-                    user_message=user_message,
-                    assistant_message=assistant_message,
-                    conversation_memory=conversation_memory,
-                    related_filings=related_filings,
-                    judge_result=judge_result,
-                    rag_mode=rag_mode,
-                )
-                db.commit()
-                if needs_summary:
-                    chat_service.enqueue_session_summary(session.id)
+            payload = response.model_dump(mode="json")
+            payload["evidence"] = []
+            payload["warnings"] = [warning.message for warning in pipeline_result.warnings]
 
-                payload = response.model_dump(mode="json")
+            def no_context_stream():
+                yield json.dumps(
+                    {
+                        "event": "done",
+                        "id": str(assistant_message.id),
+                        "turn_id": str(turn_id),
+                        "payload": payload,
+                    }
+                ) + "\n"
 
-                def no_context_stream():
-                    yield json.dumps(
-                        {
-                            "event": "done",
-                            "id": str(assistant_message.id),
-                            "turn_id": str(turn_id),
-                            "payload": payload,
-                        }
-                    ) + "\n"
-
-                return StreamingResponse(no_context_stream(), media_type="text/event-stream")
+            return StreamingResponse(no_context_stream(), media_type="text/event-stream")
 
         memory_summary = conversation_memory.get("summary") if conversation_memory else None
         memory_turn_count = len(conversation_memory.get("recent_turns") or []) if conversation_memory else 0
@@ -1761,7 +1784,12 @@ def query_rag_stream(
                 snapshot_payload = deepcopy(context)
                 context, diff_meta = _attach_evidence_diff(context, db=db)
                 citations: Dict[str, List[Any]] = dict(final_payload.get("citations") or {})
-                warnings: List[str] = list(final_payload.get("warnings") or [])
+                llm_warnings_raw = list(final_payload.get("warnings") or [])
+                llm_warning_messages = [
+                    warning
+                    for warning in llm_warnings_raw
+                    if isinstance(warning, str) and warning.strip()
+                ]
                 highlights: List[Dict[str, object]] = list(final_payload.get("highlights") or [])
                 error = final_payload.get("error")
 
@@ -1799,6 +1827,11 @@ def query_rag_stream(
                     meta_payload["prompt"] = prompt_metadata
                 meta_payload["evidence_version"] = "v2"
                 meta_payload["evidence_diff"] = diff_meta
+                pipeline_warning_messages = [warning.message for warning in pipeline_result.warnings]
+                warnings = pipeline_warning_messages + llm_warning_messages
+                evidence_payload = [
+                    item.model_dump(mode="json", exclude_none=True) for item in pipeline_result.evidence
+                ]
                 summary_captured = store_lightmem_summary(
                     question=question,
                     answer=answer_text,
@@ -1850,6 +1883,16 @@ def query_rag_stream(
                     related_filings=related_filings,
                     rag_mode=payload_rag_mode,
                 )
+                payload_json = response.model_dump(mode="json")
+                payload_json["evidence"] = evidence_payload
+                payload_json["warnings"] = warnings
+                payload_json["sessionId"] = str(session.id)
+                payload_json["turnId"] = str(turn_id)
+                payload_json["userMessageId"] = str(user_message.id)
+                payload_json["assistantMessageId"] = str(assistant_message.id)
+                payload_json["traceId"] = trace_id
+                payload_json["ragMode"] = payload_rag_mode
+                payload_json["state"] = state_value
 
                 if request.run_self_check:
                     try:
@@ -1888,7 +1931,7 @@ def query_rag_stream(
                         "event": "done",
                         "id": str(assistant_message.id),
                         "turn_id": str(turn_id),
-                        "payload": response.model_dump(mode="json"),
+                        "payload": payload_json,
                     }
                 ) + "\n"
             except Exception as exc:  # pragma: no cover - streaming failure
@@ -1918,6 +1961,329 @@ def query_rag_stream(
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post(
+    "/query/v2",
+    response_model=RagQueryV2Response,
+    summary="근거 지향 RAG 질의 (Evidence-first, Beta)",
+)
+def query_rag_v2(
+    payload: RagQueryV2Request,
+    x_user_id: Optional[str] = Header(default=None),
+    x_org_id: Optional[str] = Header(default=None),
+    plan: PlanContext = Depends(require_plan_feature("rag.core")),
+    db: Session = Depends(get_db),
+) -> RagQueryV2Response:
+    question = payload.query.strip()
+    if not question:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="question_required")
+
+    trace_id = str(uuid.uuid4())
+    user_id = _resolve_lightmem_user_id(x_user_id)
+    org_id = _parse_uuid(x_org_id)
+    turn_id = _coerce_uuid(payload.turnId)
+    user_message_id = _parse_uuid(payload.userMessageId)
+    assistant_message_id = _parse_uuid(payload.assistantMessageId)
+    retry_of_message_id = _parse_uuid(payload.retryOfMessageId)
+    session_uuid = _parse_uuid(payload.sessionId)
+
+    _enforce_chat_quota(plan, user_id)
+
+    user_meta = dict(payload.meta or {})
+    user_settings = _load_user_lightmem_settings(user_id)
+    plan_memory_enabled = _plan_memory_enabled(plan, user_settings=user_settings)
+
+    try:
+        session = _resolve_session(
+            db,
+            session_id=session_uuid,
+            user_id=user_id,
+            org_id=org_id,
+            filing_id=payload.filingId,
+        )
+        user_message = _ensure_user_message(
+            db,
+            session=session,
+            user_message_id=user_message_id,
+            question=question,
+            turn_id=turn_id,
+            idempotency_key=payload.idempotencyKey,
+            meta=user_meta,
+        )
+        assistant_message = _ensure_assistant_message(
+            db,
+            session=session,
+            assistant_message_id=assistant_message_id,
+            turn_id=turn_id,
+            idempotency_key=None,
+            retry_of_message_id=retry_of_message_id,
+            initial_state="pending",
+        )
+
+        conversation_memory = chat_service.build_conversation_memory(db, session)
+        memory_session_key = f"chat:{session.id}"
+        tenant_id_value, user_id_value = _memory_subject_ids(session, user_id, org_id)
+        conversation_memory, memory_info = merge_lightmem_context(
+            question,
+            conversation_memory,
+            session_key=memory_session_key,
+            tenant_id=tenant_id_value,
+            user_id=user_id_value,
+            plan_memory_enabled=plan_memory_enabled,
+        )
+
+        judge_result = llm_service.assess_query_risk(question)
+        rag_mode_hint = judge_result.get("rag_mode") if judge_result else None
+
+        filters_for_prompt: Dict[str, Any] = {}
+        primary_ticker = next((ticker for ticker in (payload.filters.tickers or payload.tickers) if ticker), None)
+        if primary_ticker:
+            filters_for_prompt["ticker"] = primary_ticker
+        if payload.filters.dateGte:
+            try:
+                filters_for_prompt["min_published_at_ts"] = datetime.fromisoformat(
+                    payload.filters.dateGte.replace("Z", "+00:00")
+                ).timestamp()
+            except ValueError:
+                pass
+        if payload.filters.dateLte:
+            try:
+                filters_for_prompt["max_published_at_ts"] = datetime.fromisoformat(
+                    payload.filters.dateLte.replace("Z", "+00:00")
+                ).timestamp()
+            except ValueError:
+                pass
+
+        filters_for_prompt, relative_range = _apply_relative_date_filters(
+            question,
+            filters_for_prompt,
+        )
+        prompt_metadata = _build_prompt_metadata(relative_range)
+
+        try:
+            pipeline_result = rag_pipeline.run_rag_query(db, payload)
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "rag.pipeline_unavailable", "message": "검색 파이프라인을 사용할 수 없습니다."},
+            ) from exc
+
+        llm_payload = llm_service.generate_rag_answer(
+            question,
+            pipeline_result.raw_chunks,
+            judge_result=judge_result,
+            prompt_metadata=prompt_metadata,
+        )
+        payload_rag_mode = llm_payload.get("rag_mode") or rag_mode_hint or "vector"
+
+        context_chunks = pipeline_result.raw_chunks
+        legacy_context = _build_evidence_payload(context_chunks)
+        snapshot_payload = deepcopy(legacy_context)
+        legacy_context, diff_meta = _attach_evidence_diff(legacy_context, db=db)
+
+        warning_messages: List[str] = []
+        response_warnings: List[RagWarningSchema] = []
+        for warning in pipeline_result.warnings:
+            warning_messages.append(warning.message)
+            response_warnings.append(warning)
+        for warning_text in llm_payload.get("warnings") or []:
+            if isinstance(warning_text, str) and warning_text.strip():
+                warning_messages.append(warning_text.strip())
+                response_warnings.append(RagWarningSchema(code="llm.warning", message=warning_text.strip()))
+
+        related_filings = _build_related_filings(pipeline_result.related_documents)
+        selected_filing_id = pipeline_result.trace.get("selectedFilingId")
+
+        meta_payload = dict(llm_payload.get("meta", {}))
+        retrieval_meta = dict(meta_payload.get("retrieval") or {})
+        retrieval_meta.setdefault("filing_id", selected_filing_id)
+        retrieval_meta.setdefault("doc_ids", [doc.get("filing_id") for doc in pipeline_result.related_documents])
+        retrieval_meta["rag_mode"] = payload_rag_mode
+        meta_payload["retrieval"] = retrieval_meta
+        meta_payload.setdefault("selected_filing_id", selected_filing_id)
+        meta_payload.setdefault("related_filings", _related_filings_meta(related_filings))
+
+        guard_meta = dict(meta_payload.get("guardrail") or {})
+        guard_meta.setdefault("decision", llm_payload.get("judge_decision"))
+        guard_meta.setdefault("reason", llm_payload.get("judge_reason"))
+        guard_meta["rag_mode"] = payload_rag_mode
+        meta_payload["guardrail"] = guard_meta
+        if prompt_metadata:
+            meta_payload.setdefault("prompt", prompt_metadata)
+        meta_payload["evidence_version"] = "v2"
+        meta_payload["evidence_diff"] = diff_meta
+
+        citation_stats = _build_citation_stats(llm_payload.get("citations") or {})
+        meta_payload.setdefault("citation_stats", citation_stats)
+
+        answer_text = llm_payload.get("answer") or ""
+        state_value = llm_payload.get("state", "ready")
+
+        chat_service.update_message_state(
+            db,
+            message_id=assistant_message.id,
+            state=state_value,
+            error_code=llm_payload.get("error"),
+            error_message=llm_payload.get("error"),
+            content=answer_text,
+            context=legacy_context,
+            meta=meta_payload,
+        )
+        needs_summary = chat_service.should_trigger_summary(db, session)
+
+        if payload.runSelfCheck:
+            try:
+                run_rag_self_check.delay(
+                    {
+                        "question": question,
+                        "filing_id": selected_filing_id,
+                        "answer": {
+                            "answer": answer_text,
+                            "citations": llm_payload.get("citations"),
+                            "warnings": warning_messages,
+                        },
+                        "context": context_chunks,
+                        "trace_id": trace_id,
+                    }
+                )
+            except Exception as exc:  # pragma: no cover
+                logger.warning("Failed to enqueue RAG self-check (trace_id=%s): %s", trace_id, exc, exc_info=True)
+
+        if snapshot_payload:
+            _enqueue_evidence_snapshot(
+                snapshot_payload,
+                author=str(user_id or session.user_id or "system"),
+                trace_id=trace_id,
+            )
+
+        db.commit()
+        if needs_summary:
+            chat_service.enqueue_session_summary(session.id)
+
+        evidence_payload = [item.model_dump(mode="json", exclude_none=True) for item in pipeline_result.evidence]
+        citations_payload: Dict[str, List[Any]] = {}
+        citations_raw = llm_payload.get("citations")
+        if isinstance(citations_raw, dict):
+            for key, value in citations_raw.items():
+                if isinstance(key, str) and isinstance(value, list):
+                    citations_payload[key] = value
+        meta_response = {
+            "traceId": trace_id,
+            "retrievalMs": _stringify_ms(pipeline_result.timings_ms.get("retrievalMs")),
+            "totalMs": _stringify_ms(pipeline_result.timings_ms.get("totalMs")),
+            "relatedCount": str(len(pipeline_result.related_documents)),
+            "modelUsed": llm_payload.get("model_used"),
+        }
+
+        return RagQueryV2Response(
+            answer=answer_text,
+            evidence=evidence_payload,
+            warnings=response_warnings,
+            citations=citations_payload,
+            sessionId=str(session.id),
+            turnId=str(turn_id),
+            userMessageId=str(user_message.id),
+            assistantMessageId=str(assistant_message.id),
+            traceId=trace_id,
+            state=state_value,
+            ragMode=payload_rag_mode,
+            meta=meta_response,
+        )
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post(
+    "/query/grid",
+    response_model=RagGridResponse,
+    summary="멀티 문서 QA Grid (Beta)",
+)
+def query_rag_grid(
+    payload: RagGridRequest,
+    x_user_id: Optional[str] = Header(default=None),
+    x_org_id: Optional[str] = Header(default=None),
+    plan: PlanContext = Depends(require_plan_feature("rag.core")),
+    db: Session = Depends(get_db),
+) -> RagGridResponse:
+    cell_count = len(payload.tickers) * len(payload.questions)
+    if cell_count > _GRID_CELL_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "rag.grid_too_large",
+                "message": f"요청 가능한 최대 셀 수는 {_GRID_CELL_LIMIT}개 입니다.",
+            },
+        )
+
+    user_id = _parse_uuid(x_user_id)
+    _enforce_chat_quota(plan, user_id)
+
+    try:
+        return rag_grid.run_grid(db, payload)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "rag.grid_unavailable", "message": "Grid 실행 중 오류가 발생했습니다."},
+        ) from exc
+
+
+@router.post(
+    "/grid",
+    response_model=RagGridJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="QA Grid 비동기 잡 생성",
+)
+def create_rag_grid_job(
+    payload: RagGridRequest,
+    x_user_id: Optional[str] = Header(default=None),
+    x_org_id: Optional[str] = Header(default=None),
+    plan: PlanContext = Depends(require_plan_feature("rag.core")),
+    db: Session = Depends(get_db),
+) -> RagGridJobResponse:
+    cell_count = len(payload.tickers) * len(payload.questions)
+    if cell_count > _GRID_CELL_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "rag.grid_too_large",
+                "message": f"요청 가능한 최대 셀 수는 {_GRID_CELL_LIMIT}개 입니다.",
+            },
+        )
+
+    user_id = _parse_uuid(x_user_id)
+    _enforce_chat_quota(plan, user_id)
+
+    try:
+        job = rag_grid.create_grid_job(db, payload, requested_by=user_id)
+        rag_grid.enqueue_grid_job(job.id)
+        return rag_grid.serialize_job(job, include_cells=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get(
+    "/grid/{job_id}",
+    response_model=RagGridJobResponse,
+    summary="QA Grid 잡 상태 조회",
+)
+def read_rag_grid_job(
+    job_id: uuid.UUID,
+    _user_id: Optional[str] = Header(default=None),
+    plan: PlanContext = Depends(require_plan_feature("rag.core")),
+    db: Session = Depends(get_db),
+) -> RagGridJobResponse:
+    del _user_id  # reserved for future per-user scoping
+    try:
+        job = rag_grid.get_grid_job(db, job_id, include_cells=True)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="grid_job_not_found") from None
+    return rag_grid.serialize_job(job, include_cells=True)
+
 __all__ = ["router"]
 
 

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Sequence, Set
+from typing import Any, Dict, Mapping, Optional, Sequence, Set
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,7 @@ from database import get_db
 from models.company import CorpMetric
 from models.filing import Filing
 from models.news import NewsSignal, NewsWindowAggregate
+from services import watchlist_service
 from schemas.api.search import (
     SearchEvidenceCounts,
     SearchResponse,
@@ -23,6 +24,7 @@ from schemas.api.search import (
 )
 from services.plan_service import PlanContext
 from web.deps import get_plan_context
+from web.deps_rbac import RbacState, get_rbac_state
 
 router = APIRouter(prefix="/search", tags=["Search"])
 
@@ -67,14 +69,55 @@ def aggregated_search(
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=50, description="타입별 최대 결과 수"),
     offset: int = Query(0, ge=0, description="타입별 페이지 오프셋"),
     types: list[str] | None = Query(None, description="요청할 결과 타입 (filing, news, table, chart)"),
+    date_from: str | None = Query(None, description="ISO8601 시작일"),
+    date_to: str | None = Query(None, description="ISO8601 종료일"),
+    sector: list[str] | None = Query(None, description="섹터 슬러그 목록"),
+    watchlist_only: bool = Query(False, description="내 워치리스트 내에서만 검색"),
     db: Session = Depends(get_db),
     plan: PlanContext = Depends(get_plan_context),
+    state: RbacState = Depends(get_rbac_state),
 ) -> SearchResponse:
     keyword = (q or "").strip()
     requested_types = _normalize_types(types)
+    parsed_date_from = _parse_iso_datetime(date_from)
+    parsed_date_to = _parse_iso_datetime(date_to)
 
-    filings, filing_total = _fetch_filings(db, keyword, limit=limit, offset=offset, include_results="filing" in requested_types)
-    news_items, news_total = _fetch_news(db, keyword, limit=limit, offset=offset, include_results="news" in requested_types)
+    if parsed_date_from and parsed_date_to and parsed_date_from > parsed_date_to:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "search.invalid_range", "message": "date_from은 date_to보다 이후일 수 없습니다."},
+        )
+
+    normalized_sectors = _normalize_list(sector)
+    watchlist_tickers: Optional[Set[str]] = None
+    if watchlist_only:
+        watchlist_tickers = _resolve_watchlist_tickers(db, state)
+        if not watchlist_tickers:
+            return SearchResponse(
+                query=keyword,
+                total=0,
+                totals=SearchTotals(filing=0, news=0, table=0, chart=0),
+                results=[],
+            )
+
+    filings, filing_total = _fetch_filings(
+        db,
+        keyword,
+        limit=limit,
+        offset=offset,
+        include_results="filing" in requested_types,
+        date_from=parsed_date_from,
+        date_to=parsed_date_to,
+    )
+    news_items, news_total = _fetch_news(
+        db,
+        keyword,
+        limit=limit,
+        offset=offset,
+        include_results="news" in requested_types,
+        date_from=parsed_date_from,
+        date_to=parsed_date_to,
+    )
     tables, table_total = _fetch_tables(db, keyword, limit=limit, offset=offset, include_results="table" in requested_types)
     charts, chart_total = _fetch_charts(db, keyword, limit=limit, offset=offset, include_results="chart" in requested_types)
 
@@ -86,7 +129,9 @@ def aggregated_search(
         tables if "table" in requested_types else [],
         charts if "chart" in requested_types else [],
         context,
-        plan,
+        plan=plan,
+        sectors=normalized_sectors,
+        watchlist_tickers=watchlist_tickers,
     )
 
     totals = SearchTotals(
@@ -109,6 +154,68 @@ def _normalize_types(types: list[str] | None) -> Set[str]:
     return filtered
 
 
+def _normalize_list(values: Optional[list[str]]) -> Set[str]:
+    normalized: Set[str] = set()
+    if not values:
+        return normalized
+    for value in values:
+        text = str(value or "").strip().lower()
+        if text:
+            normalized.add(text)
+    return normalized
+
+
+def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "search.invalid_datetime", "message": f"잘못된 날짜 형식입니다: {value}"},
+        ) from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _resolve_watchlist_tickers(db: Session, state: RbacState) -> Set[str]:
+    if state.user_id is None and state.org_id is None:
+        return set()
+    filters: Dict[str, Optional[Any]] = {}
+    if state.user_id:
+        filters["user_id"] = state.user_id
+    if state.org_id:
+        filters["org_id"] = state.org_id
+    try:
+        payload = watchlist_service.collect_watchlist_alerts(
+            db,
+            window_minutes=1440,
+            limit=200,
+            owner_filters=filters,
+        )
+    except Exception:
+        return set()
+    items = payload.get("items") or []
+    tickers: Set[str] = set()
+    for item in items:
+        ticker = str(item.get("ticker") or "").strip().upper()
+        if ticker:
+            tickers.add(ticker)
+        rule_tickers = item.get("ruleTickers") or []
+        if isinstance(rule_tickers, list):
+            for value in rule_tickers:
+                normalized = str(value or "").strip().upper()
+                if normalized:
+                    tickers.add(normalized)
+    return tickers
+
+
 def _fetch_filings(
     db: Session,
     keyword: str,
@@ -116,6 +223,8 @@ def _fetch_filings(
     limit: int,
     offset: int,
     include_results: bool,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
 ) -> tuple[list[Filing], int]:
     query = db.query(Filing)
     if keyword:
@@ -129,6 +238,10 @@ def _fetch_filings(
                 Filing.receipt_no.ilike(pattern),
             )
         )
+    if date_from:
+        query = query.filter(Filing.filed_at >= date_from)
+    if date_to:
+        query = query.filter(Filing.filed_at <= date_to)
     total = query.order_by(None).count()
     if not include_results:
         return [], total
@@ -145,6 +258,8 @@ def _fetch_news(
     limit: int,
     offset: int,
     include_results: bool,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
 ) -> tuple[list[NewsSignal], int]:
     query = db.query(NewsSignal)
     if keyword:
@@ -157,6 +272,10 @@ def _fetch_news(
                 NewsSignal.ticker.ilike(pattern),
             )
         )
+    if date_from:
+        query = query.filter(NewsSignal.published_at >= date_from)
+    if date_to:
+        query = query.filter(NewsSignal.published_at <= date_to)
     total = query.order_by(None).count()
     if not include_results:
         return [], total
@@ -397,9 +516,25 @@ def _build_results(
     tables: Sequence[TableSummary],
     charts: Sequence[ChartSummary],
     context: CountContext,
+    *,
     plan: PlanContext,
+    sectors: Optional[Set[str]] = None,
+    watchlist_tickers: Optional[Set[str]] = None,
 ) -> list[SearchResult]:
     ranked: list[tuple[datetime, SearchResult]] = []
+    normalized_sectors = sectors or set()
+    watchlist_lookup = {ticker.upper() for ticker in (watchlist_tickers or set()) if ticker}
+
+    def _passes_filters(ticker: Optional[str], category: Optional[str]) -> bool:
+        if watchlist_lookup:
+            normalized_ticker = (ticker or "").upper()
+            if not normalized_ticker or normalized_ticker not in watchlist_lookup:
+                return False
+        if normalized_sectors:
+            normalized_category = (category or "").lower()
+            if not any(sector in normalized_category for sector in normalized_sectors):
+                return False
+        return True
 
     for filing in filings:
         timestamp = filing.updated_at or filing.filed_at or filing.created_at
@@ -407,11 +542,14 @@ def _build_results(
             filings=_lookup_count(filing.corp_code, context.filing_by_corp) or _lookup_count(filing.ticker, context.filing_by_ticker),
             news=_lookup_count(filing.ticker, context.news_by_ticker),
         )
+        category = _normalize_category(filing.category, filing.market)
+        if not _passes_filters(filing.ticker, category):
+            continue
         result = SearchResult(
             id=str(filing.id),
             type="filing",
             title=_build_filing_title(filing),
-            category=_normalize_category(filing.category, filing.market),
+            category=category,
             filedAt=_format_date(filing.filed_at),
             latestIngestedAt=_format_relative_time(timestamp),
             sourceReliability=_lookup_reliability(filing.ticker, context.reliability_by_ticker),
@@ -426,34 +564,37 @@ def _build_results(
             news=_lookup_count(article.ticker, context.news_by_ticker),
             filings=_lookup_count(article.ticker, context.filing_by_ticker),
         )
+        category = article.source or FALLBACK_CATEGORY
+        if not _passes_filters(article.ticker, category):
+            continue
         result = SearchResult(
             id=str(article.id),
             type="news",
             title=article.headline,
-            category=article.source or FALLBACK_CATEGORY,
+            category=category,
             filedAt=_format_date(article.published_at),
             latestIngestedAt=_format_relative_time(timestamp),
-            sourceReliability=article.source_reliability
-            if isinstance(article.source_reliability, (int, float))
-            else _lookup_reliability(article.ticker, context.reliability_by_ticker),
+            sourceReliability=_lookup_reliability(article.ticker, context.reliability_by_ticker),
             evidenceCounts=counts,
             actions=_plan_actions("news", plan),
         )
         ranked.append((_normalize_timestamp(timestamp), result))
 
     for table in tables:
-        timestamp = table.latest_observed_at
+        timestamp = table.latest_observed_at or datetime.min.replace(tzinfo=timezone.utc)
         counts = _build_evidence_counts(
-            tables=table.metric_count,
             filings=_lookup_count(table.corp_code, context.filing_by_corp) or _lookup_count(table.ticker, context.filing_by_ticker),
-            news=_lookup_count(table.ticker, context.news_by_ticker),
+            tables=table.metric_count,
         )
-        title = f"{table.corp_name or table.ticker or '데이터'} 재무 테이블"
+        category = "재무 요약"
+        if not _passes_filters(table.ticker, category):
+            continue
+        label = table.corp_name or table.ticker or "재무 데이터"
         result = SearchResult(
             id=table.id,
             type="table",
-            title=title,
-            category="재무 데이터",
+            title=f"{label} · 재무 요약",
+            category=category,
             latestIngestedAt=_format_relative_time(timestamp),
             evidenceCounts=counts,
             actions=_plan_actions("table", plan),
@@ -467,12 +608,15 @@ def _build_results(
             news=_lookup_count(chart.ticker, context.news_by_ticker),
             filings=_lookup_count(chart.corp_code, context.filing_by_corp) or _lookup_count(chart.ticker, context.filing_by_ticker),
         )
+        category = "뉴스 감성" if (chart.scope or "").lower() == "ticker" else (chart.scope or "차트")
+        if not _passes_filters(chart.ticker, category):
+            continue
         label = chart.corp_name or chart.ticker or chart.scope or "차트"
         result = SearchResult(
             id=chart.id,
             type="chart",
             title=f"{label} 신호 추세",
-            category="뉴스 감성" if (chart.scope or "") == "ticker" else (chart.scope or "차트"),
+            category=category,
             latestIngestedAt=_format_relative_time(timestamp),
             sourceReliability=chart.source_reliability,
             evidenceCounts=counts,
@@ -482,6 +626,7 @@ def _build_results(
 
     ranked.sort(key=lambda item: item[0], reverse=True)
     return [entry for _, entry in ranked]
+
 
 
 def _lookup_count(key: str | None, mapping: dict[str, int]) -> int | None:

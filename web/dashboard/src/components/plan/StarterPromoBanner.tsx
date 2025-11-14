@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 
 import { usePlanTier, usePlanTrial } from "@/store/planStore";
 import { usePlanUpgrade } from "@/hooks/usePlanUpgrade";
-import { logEvent } from "@/lib/telemetry";
 import { FEATURE_STARTER_ENABLED } from "@/config/features";
 import { useCampaignSettings } from "@/hooks/useCampaignSettings";
 import { recordKpiEvent } from "@/lib/kpi";
@@ -18,10 +17,6 @@ const FALLBACK_COPY = {
 };
 
 export function StarterPromoBanner() {
-  if (!FEATURE_STARTER_ENABLED) {
-    return null;
-  }
-
   const planTier = usePlanTier();
   const trial = usePlanTrial();
   const { requestUpgrade, isPreparing } = usePlanUpgrade();
@@ -34,7 +29,8 @@ export function StarterPromoBanner() {
     return window.localStorage.getItem(STORAGE_KEY) === "1";
   });
 
-  const campaignEnabled = FEATURE_STARTER_ENABLED && (starterCampaign?.enabled ?? true);
+  const featureEnabled = FEATURE_STARTER_ENABLED;
+  const campaignEnabled = featureEnabled && (starterCampaign?.enabled ?? true);
   const copy = starterCampaign?.banner ?? FALLBACK_COPY;
 
   useEffect(() => {

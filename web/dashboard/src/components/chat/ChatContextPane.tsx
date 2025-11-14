@@ -6,7 +6,7 @@ import { FilingXmlViewer } from "@/components/chat/FilingXmlViewer";
 import { PdfHighlightMock } from "@/components/chat/PdfHighlightMock";
 import { selectActiveSession, selectContextPanelData, selectHighlightDisplay, useChatStore } from "@/store/chatStore";
 
-export function ChatContextPanel() {
+export function ChatContextPane() {
   const activeSession = useChatStore(selectActiveSession);
   const { evidence, guardrail, metrics } = useChatStore(selectContextPanelData);
   const highlight = useChatStore(selectHighlightDisplay);

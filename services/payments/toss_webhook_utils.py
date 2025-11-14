@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, cast
 
-from services.plan_service import PlanTier, SUPPORTED_PLAN_TIERS
+from core.plan_constants import PlanTier, SUPPORTED_PLAN_TIERS
 
 
 def resolve_payment_status(event: Dict[str, Any]) -> Optional[str]:

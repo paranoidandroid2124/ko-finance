@@ -18,10 +18,11 @@ import httpx
 from bs4 import BeautifulSoup
 from lxml import etree, html as lxml_html
 
-from core.env import env_bool
+from core.env import env_bool, env_str
 from ingest.legal_guard import evaluate_viewer_access
 from services.audit_log import audit_ingest_event
 from services.ingest_policy_service import viewer_fallback_state
+from services.notification_service import dispatch_notification
 
 if TYPE_CHECKING:  # pragma: no cover - typing aid only
     from sqlalchemy.orm import Session
@@ -43,6 +44,44 @@ FILE_URL_RE = re.compile(r"https?://[^\s\"'>')\]]+?(?:pdf|zip)[^\s\"'>')\]]*", r
 RECEIPT_QUERY_KEYS = ("rcpNo", "rcp_no", "rcpno", "rceptNo", "rcept_no")
 DOC_QUERY_KEYS = ("dcmNo", "dcm_no", "dcmno")
 FILENAME_QUERY_KEYS = ("fl_nm", "filename")
+
+VIEWER_FALLBACK_ALERT_ENABLED = env_bool("VIEWER_FALLBACK_ALERT_ENABLED", False)
+VIEWER_FALLBACK_ALERT_CHANNEL = env_str("VIEWER_FALLBACK_ALERT_CHANNEL", "slack")
+_VIEWER_FALLBACK_ALERT_TARGETS = [
+    target.strip()
+    for target in (env_str("VIEWER_FALLBACK_ALERT_TARGETS", "") or "").split(",")
+    if target.strip()
+]
+
+
+def _emit_viewer_alert(status: str, context: Dict[str, object]) -> None:
+    if not VIEWER_FALLBACK_ALERT_ENABLED:
+        return
+    corp = context.get("corp_name") or context.get("corp_code") or "unknown issuer"
+    receipt = context.get("receipt_no") or context.get("viewer_url") or "unknown"
+    reason = context.get("block_reason") or context.get("error") or "unknown reason"
+    message = f":warning: Viewer fallback {status} for {corp}"
+    markdown = (
+        f"*Viewer fallback {status}*\n"
+        f"- Receipt: `{receipt}`\n"
+        f"- Corp: {corp}\n"
+        f"- Reason: {reason}\n"
+        f"- Viewer: {context.get('viewer_url')}"
+    )
+    metadata = {
+        "subject": f"[Ingest] Viewer fallback {status}",
+        "markdown": markdown,
+        "context": context,
+    }
+    try:
+        dispatch_notification(
+            VIEWER_FALLBACK_ALERT_CHANNEL or "slack",
+            message,
+            targets=_VIEWER_FALLBACK_ALERT_TARGETS or None,
+            metadata=metadata,
+        )
+    except Exception as exc:  # pragma: no cover - best-effort alerting
+        logger.warning("Failed to dispatch viewer fallback alert: %s", exc, exc_info=True)
 
 
 def _guess_content_type(data: bytes, header_value: Optional[str]) -> str:
@@ -560,28 +599,40 @@ def attempt_viewer_fallback(
             "fallback_allowed": flag_allowed,
             "global_fallback_enabled": fallback_enabled,
             "feature_flags_snapshot": feature_flags,
+            "viewer_url": viewer_url,
+            "receipt_no": receipt_no,
         }
     )
 
-    def _audit(action: str, *, blocked: bool, extra: Optional[Dict[str, object]] = None) -> None:
-        if not _legal_logging_enabled():
-            return
+    def _record_viewer_event(
+        status: str,
+        *,
+        blocked: bool,
+        extra: Optional[Dict[str, object]] = None,
+        alert: bool = False,
+    ) -> None:
         payload = dict(legal_meta)
         if extra:
             payload.update(extra)
         payload["blocked"] = blocked
-        audit_logger(
-            action=action,
-            target_id=receipt_no,
-            extra=payload,
-            feature_flags=feature_flags,
-        )
-
-    def _audit_block(block_reason: str) -> None:
-        _audit("ingest.viewer_fallback", blocked=True, extra={"block_reason": block_reason})
+        payload["status"] = status
+        if _legal_logging_enabled():
+            audit_logger(
+                action="ingest.viewer_fallback",
+                target_id=receipt_no,
+                extra=payload,
+                feature_flags=feature_flags,
+            )
+        if alert:
+            _emit_viewer_alert(status, payload)
 
     if not fallback_enabled:
-        _audit_block("env_disabled")
+        _record_viewer_event(
+            "fallback_disabled",
+            blocked=True,
+            extra={"block_reason": "env_disabled"},
+            alert=True,
+        )
         return ViewerFallbackResult(
             package=None,
             status="fallback_disabled",
@@ -592,7 +643,12 @@ def attempt_viewer_fallback(
 
     if not flag_allowed:
         block_reason = flag_reason or "issuer_disabled"
-        _audit_block(block_reason)
+        _record_viewer_event(
+            "fallback_blocked",
+            blocked=True,
+            extra={"block_reason": block_reason},
+            alert=True,
+        )
         return ViewerFallbackResult(
             package=None,
             status="fallback_blocked",
@@ -601,7 +657,7 @@ def attempt_viewer_fallback(
             metadata=dict(legal_meta),
         )
 
-    _audit("ingest.viewer_fallback", blocked=False)
+    _record_viewer_event("fallback_started", blocked=False)
 
     package: Optional[FilingPackage]
     error_payload: Optional[Dict[str, object]] = None
@@ -615,7 +671,12 @@ def attempt_viewer_fallback(
     if not package:
         if error_payload is None:
             error_payload = {"error": "NoPackage"}
-        _audit("ingest.viewer_fallback_failed", blocked=False, extra=error_payload)
+        _record_viewer_event(
+            "fallback_failure",
+            blocked=False,
+            extra=error_payload,
+            alert=True,
+        )
         return ViewerFallbackResult(
             package=None,
             status="fallback_failure",
@@ -624,6 +685,11 @@ def attempt_viewer_fallback(
             metadata=dict(legal_meta),
         )
 
+    _record_viewer_event(
+        "fallback_success",
+        blocked=False,
+        extra={"attachments": len(package.get("attachments", [])) if isinstance(package, dict) else None},
+    )
     return ViewerFallbackResult(
         package=package,
         status="fallback_success",

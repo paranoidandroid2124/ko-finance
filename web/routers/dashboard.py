@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func
@@ -9,6 +10,13 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.filing import Filing
 from models.news import NewsSignal
+from services.watchlist_aggregator import (
+    build_quick_link_payload,
+    collect_watchlist_items,
+    convert_items_to_alert_payload,
+    summarise_watchlist_rules,
+)
+from core.logging import get_logger
 from schemas.api.dashboard import (
     DashboardAlert,
     DashboardMetric,
@@ -16,11 +24,24 @@ from schemas.api.dashboard import (
     DashboardOverviewResponse,
     FilingTrendPoint,
     FilingTrendResponse,
+    DashboardEventItem,
+    DashboardQuickLink,
+    DashboardWatchlistSummary,
 )
+from web.deps_rbac import RbacState, get_rbac_state
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+logger = get_logger(__name__)
 
 DashboardTrend = str
+
+EVENT_SEVERITY = {
+    "capital_increase": "warning",
+    "stock_buyback": "info",
+    "large_contract": "info",
+    "correction": "warning",
+    "default": "info",
+}
 
 
 def compute_trend(current: float, previous: float | None) -> DashboardTrend:
@@ -316,11 +337,118 @@ def generate_filing_trend(
 
 
 @router.get("/overview", response_model=DashboardOverviewResponse)
-def read_dashboard_overview(db: Session = Depends(get_db)) -> DashboardOverviewResponse:
+def _parse_iso_timestamp(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _build_watchlist_summary(
+    db: Session,
+    state: RbacState,
+) -> Tuple[List[DashboardWatchlistSummary], List[DashboardAlert], List[DashboardQuickLink]]:
+    items, summary_payload = collect_watchlist_items(
+        db,
+        user_id=state.user_id,
+        org_id=state.org_id,
+        limit=80,
+    )
+    if not items:
+        return [], [], [{"label": "통합 검색 열기", "href": "/search", "type": "search"}]
+
+    summaries = summarise_watchlist_rules(items)[:3]
+    watchlists = [
+        DashboardWatchlistSummary(
+            ruleId=summary.rule_id,
+            name=summary.name,
+            eventCount=summary.event_count,
+            tickers=sorted(summary.tickers),
+            channels=sorted(summary.channels),
+            lastTriggeredAt=summary.last_triggered_at.isoformat() if summary.last_triggered_at else None,
+            lastHeadline=summary.last_headline,
+            detailUrl=f"/watchlist?ruleId={summary.rule_id}",
+        )
+        for summary in summaries
+    ]
+
+    alert_payloads = convert_items_to_alert_payload(items[:8])
+    alerts = [
+        DashboardAlert(
+            id=payload["id"],
+            title=payload["title"],
+            body=payload["body"],
+            timestamp=format_timespan(payload["timestamp"]),
+            tone=map_sentiment(payload.get("sentiment")),
+            targetUrl=payload.get("targetUrl") or (f"/company/{payload['ticker']}" if payload.get("ticker") else None),
+        )
+        for payload in alert_payloads
+    ]
+
+    quick_links_payload = build_quick_link_payload(summary_payload, items)
+    quick_links = [
+        DashboardQuickLink(label=entry["label"], href=entry["href"], type=entry["type"])
+        for entry in quick_links_payload
+    ]
+
+    return watchlists, alerts, quick_links
+
+
+def build_today_events(db: Session) -> List[DashboardEventItem]:
+    now = datetime.now(timezone.utc)
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    filings = (
+        db.query(Filing)
+        .filter(Filing.filed_at.isnot(None))
+        .filter(Filing.filed_at >= start_of_day)
+        .order_by(Filing.filed_at.desc())
+        .limit(12)
+        .all()
+    )
+
+    events: List[DashboardEventItem] = []
+    for filing in filings:
+        category = (filing.category or "filing").lower()
+        severity = EVENT_SEVERITY.get(category, EVENT_SEVERITY["default"])
+        title = filing.report_name or filing.title or filing.category or "신규 공시"
+        events.append(
+            DashboardEventItem(
+                id=str(filing.id),
+                ticker=filing.ticker,
+                corpName=filing.corp_name,
+                title=title,
+                eventType=category or "filing",
+                filedAt=filing.filed_at.isoformat() if filing.filed_at else None,
+                severity=severity if severity in {"info", "warning", "critical"} else "info",
+                targetUrl=f"/filings?filingId={filing.id}",
+            )
+        )
+    return events[:6]
+
+
+def read_dashboard_overview(
+    db: Session = Depends(get_db),
+    state: RbacState = Depends(get_rbac_state),
+) -> DashboardOverviewResponse:
     metrics = build_metrics(db)
-    alerts = build_alerts(db)
+    watchlists, watchlist_alerts, quick_links = _build_watchlist_summary(db, state)
+    alerts = watchlist_alerts or build_alerts(db)
     news_items = build_news_items(db)
-    return DashboardOverviewResponse(metrics=metrics, alerts=alerts, news=news_items)
+    events = build_today_events(db)
+
+    return DashboardOverviewResponse(
+        metrics=metrics,
+        alerts=alerts,
+        news=news_items,
+        watchlists=watchlists,
+        events=events,
+        quickLinks=quick_links or [DashboardQuickLink(label="통합 검색 열기", href="/search", type="search")],
+    )
 
 
 @router.get("/filing-trend", response_model=FilingTrendResponse)

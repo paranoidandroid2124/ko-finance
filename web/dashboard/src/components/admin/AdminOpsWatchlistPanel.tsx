@@ -6,8 +6,9 @@ import { AlertTriangle, CalendarClock, RefreshCw } from "lucide-react";
 import { KpiCard, type KpiCardProps } from "@/components/ui/KpiCard";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { FilterChip } from "@/components/ui/FilterChip";
-import { useWatchlistRadar } from "@/hooks/useAlerts";
-import type { WatchlistRadarItem } from "@/lib/alertsApi";
+import { EventMatchList } from "@/components/watchlist/EventMatchList";
+import { useWatchlistRadar, useAlertEventMatches } from "@/hooks/useAlerts";
+import type { AlertEventMatch, WatchlistRadarItem } from "@/lib/alertsApi";
 import { formatKoreanDateTime } from "@/lib/datetime";
 import type { ToastInput } from "@/store/toastStore";
 
@@ -60,10 +61,12 @@ export function AdminOpsWatchlistPanel({ adminActor: _adminActor, toast }: Admin
   );
 
   const { data, isLoading, isFetching, error, refetch } = useWatchlistRadar(watchlistRequest);
+  const { data: eventMatchesData, isLoading: isEventMatchLoading } = useAlertEventMatches({ limit: 10 });
   const summary = data?.summary;
   const items = data?.items ?? EMPTY_ITEMS;
   const generatedAtLabel =
     formatKoreanDateTime(data?.generatedAt ?? null, { includeSeconds: true }) ?? "생성 시각 미상";
+  const eventMatches = eventMatchesData?.matches ?? [];
 
   const numberFormatter = useMemo(() => new Intl.NumberFormat("ko-KR"), []);
   const topTickerLabel = (summary?.topTickers ?? []).slice(0, 3).join(", ");
@@ -268,6 +271,8 @@ export function AdminOpsWatchlistPanel({ adminActor: _adminActor, toast }: Admin
         </div>
       </section>
 
+      <AdminEventMatchPanel matches={eventMatches} loading={isEventMatchLoading} />
+
       <div className="rounded-xl border border-border-light bg-background-base p-4 text-sm text-text-secondaryLight shadow-card dark:border-border-dark dark:bg-background-cardDark dark:text-text-secondaryDark">
         <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">전체 로그 보기</p>
         <p className="mt-1 text-xs leading-relaxed">
@@ -282,3 +287,23 @@ export function AdminOpsWatchlistPanel({ adminActor: _adminActor, toast }: Admin
     </section>
   );
 }
+
+type AdminEventMatchPanelProps = {
+  matches: AlertEventMatch[];
+  loading: boolean;
+};
+
+const AdminEventMatchPanel = ({ matches, loading }: AdminEventMatchPanelProps) => (
+  <div className="space-y-2 rounded-xl border border-border-light bg-background-base p-4 dark:border-border-dark dark:bg-background-baseDark">
+    <div className="flex items-center justify-between">
+      <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">최근 이벤트 매칭</p>
+      <span className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">최근 {matches.length}건</span>
+    </div>
+    <EventMatchList
+      matches={matches}
+      loading={loading}
+      limit={8}
+      emptyMessage="최근 매칭된 이벤트가 없습니다. 공시 이벤트가 감지되면 이곳에 로그가 쌓입니다."
+    />
+  </div>
+);

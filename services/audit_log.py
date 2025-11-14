@@ -9,9 +9,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from sqlalchemy.dialects.postgresql import JSONB
 
 from core.env import env_str
 
@@ -104,15 +105,17 @@ def record_audit_event(
 
     try:
         _ensure_partition(session, ts)
-        session.execute(
+        insert_stmt = (
             text(
                 """
                 INSERT INTO audit_logs (ts, user_id, org_id, action, target_id, source, ua, ip_hash, feature_flags, extra)
-                VALUES (:ts, :user_id, :org_id, :action, :target_id, :source, :ua, :ip_hash, :feature_flags::jsonb, :extra::jsonb)
+                VALUES (:ts, :user_id, :org_id, :action, :target_id, :source, :ua, :ip_hash, :feature_flags, :extra)
                 """
-            ),
-            payload,
+            )
+            .bindparams(bindparam("feature_flags", type_=JSONB))
+            .bindparams(bindparam("extra", type_=JSONB))
         )
+        session.execute(insert_stmt, payload)
         session.commit()
     except SQLAlchemyError:
         session.rollback()

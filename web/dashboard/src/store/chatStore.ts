@@ -54,6 +54,9 @@ export type ChatMessageMeta = {
   retryable?: boolean;
   question?: string;
   userMessageId?: string;
+  assistantMessageId?: string;
+  sessionId?: string;
+  turnId?: string;
   judgeDecision?: string | null;
   judgeReason?: string | null;
   traceId?: string | null;
@@ -88,8 +91,24 @@ export type RagEvidenceItem = {
   sourceUrl?: string;
   page?: number;
   score?: number;
+  summary?: string;
+  sourceType?: string;
+  ticker?: string;
+  sector?: string;
+  sentiments?: string[];
   highlightRange?: EvidenceHighlight;
   chunkType?: string;
+  diff?: {
+    type?: string;
+    previousReference?: string;
+    deltaText?: string;
+    changedFields?: string[];
+  };
+  selfCheck?: {
+    verdict?: string;
+    rationale?: string;
+    hallucinationRisk?: number;
+  };
   metadata?: Record<string, unknown>;
 };
 

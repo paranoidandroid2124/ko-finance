@@ -6,13 +6,8 @@ import { signOut, useSession } from "next-auth/react";
 import { ChevronDown, CreditCard, HelpCircle, LogOut, Settings2 } from "lucide-react";
 import clsx from "clsx";
 import { SettingsOverlay } from "@/components/settings/SettingsOverlay";
-
-const PLAN_LABEL: Record<string, string> = {
-  free: "Free",
-  starter: "Starter",
-  pro: "Pro",
-  enterprise: "Enterprise",
-};
+import { getPlanLabel } from "@/lib/planTier";
+import type { PlanTier } from "@/store/planStore";
 
 export function UserMenu() {
   const { data: session, status } = useSession();
@@ -45,7 +40,7 @@ export function UserMenu() {
 
   const planLabel = useMemo(() => {
     const plan = session?.user ? (session.user as { plan?: string }).plan : undefined;
-    return PLAN_LABEL[plan ?? ""] ?? PLAN_LABEL.free;
+    return getPlanLabel((plan as PlanTier) ?? "free");
   }, [session]);
 
   const initials = useMemo(() => {

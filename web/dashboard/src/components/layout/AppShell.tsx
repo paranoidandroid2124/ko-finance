@@ -4,6 +4,7 @@ import { TopBar } from "./TopBar";
 import { ToastContainer } from "../ui/ToastContainer";
 import { StarterPromoBanner } from "../plan/StarterPromoBanner";
 import { FEATURE_STARTER_ENABLED } from "@/config/features";
+import { OnboardingModal } from "../onboarding/OnboardingModal";
 
 type AppShellProps = {
   children: React.ReactNode;
@@ -14,6 +15,7 @@ export function AppShell({ children }: AppShellProps) {
     <PlanProvider>
       <div className="flex min-h-screen bg-background-light text-text-primaryLight transition-colors dark:bg-background-dark dark:text-text-primaryDark">
         <ToastContainer />
+        <OnboardingModal />
         <SideNav />
         <div className="flex min-h-screen flex-1 flex-col">
           <TopBar />

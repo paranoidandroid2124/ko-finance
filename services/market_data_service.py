@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from core.env import env_str
 from models.event_study import Price
+from services.ingest_errors import FatalIngestError, TransientIngestError
 
 logger = logging.getLogger(__name__)
 
@@ -82,22 +83,25 @@ def ingest_etf_prices(
 
 def _fetch_api(endpoint: str, params: Dict[str, str]) -> Dict[str, any]:
     if not DATA_API_KEY:
-        raise MarketDataError("DATA_GO_API_KEY is not configured.")
+        raise FatalIngestError("DATA_GO_API_KEY is not configured.")
 
     merged = {
         "serviceKey": DATA_API_KEY,
         "resultType": "json",
     }
     merged.update(params)
-    response = requests.get(endpoint, params=merged, timeout=30)
-    response.raise_for_status()
+    try:
+        response = requests.get(endpoint, params=merged, timeout=30)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise TransientIngestError(f"Failed to call {endpoint}") from exc
     data = response.json()
     result = data.get("response", {}).get("body", {})
     if result.get("totalCount") == 0:
         return {"items": []}
     items = result.get("items", {}).get("item")
     if items is None:
-        raise MarketDataError(f"Unexpected payload from {endpoint}: {data}")
+        raise FatalIngestError(f"Unexpected payload from {endpoint}: {data}")
     if not isinstance(items, list):
         items = [items]
     return {"items": items}

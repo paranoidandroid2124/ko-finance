@@ -9,12 +9,13 @@ import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from dataclasses import dataclass, field
 
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, or_, case
 from sqlalchemy.orm import Session
 
 from alerts.rule_compiler import CompiledRulePlan, compile_trigger, plan_signature, snapshot_digest
-from core.env import env_bool
+from core.env import env_bool, env_int
 from models.alert import AlertDelivery, AlertRule
+from models.event_study import EventAlertMatch, EventRecord
 from models.filing import Filing
 from models.news import NewsSignal
 from services import alert_metrics, quota_guard
@@ -25,9 +26,11 @@ logger = logging.getLogger(__name__)
 
 ALERTS_ENABLE_MODEL = env_bool("ALERTS_ENABLE_MODEL", True)
 ALERTS_ENFORCE_RL = env_bool("ALERTS_ENFORCE_RL", False)
+ALERT_CHANNEL_FAILURE_COOLDOWN_MINUTES = env_int("ALERTS_CHANNEL_FAILURE_COOLDOWN_MINUTES", 15, minimum=1)
 ENTITLEMENT_ACTION_RULE_WRITE = "alerts.rules.max"
 
 ERROR_BACKOFF_SEQUENCE = (5, 15, 60)
+_VALID_TRIGGER_TYPES = {"filing", "news", "event"}
 PLAN_CONSTRAINTS: Dict[str, Dict[str, Any]] = {
     "free": {
         "max_alerts": 3,
@@ -104,6 +107,80 @@ def _normalize_plan_tier(plan_tier: str) -> str:
     if plan_tier in PLAN_CONSTRAINTS:
         return plan_tier
     return DEFAULT_PLAN_KEY
+
+
+def _normalize_trigger_type(value: Any) -> str:
+    if isinstance(value, str):
+        candidate = value.strip().lower()
+    else:
+        candidate = ""
+    return candidate if candidate in _VALID_TRIGGER_TYPES else "filing"
+
+
+def _normalize_filters(trigger_payload: Mapping[str, Any]) -> Dict[str, Any]:
+    if not isinstance(trigger_payload, Mapping):
+        return {}
+
+    def _clean_list(raw: Any) -> List[str]:
+        if raw is None:
+            return []
+        if isinstance(raw, str):
+            raw_values = [raw]
+        else:
+            raw_values = list(raw) if isinstance(raw, (list, tuple, set)) else []
+        cleaned: List[str] = []
+        for item in raw_values:
+            if not isinstance(item, str):
+                continue
+            text = item.strip()
+            if text and text not in cleaned:
+                cleaned.append(text)
+        return cleaned
+
+    filters: Dict[str, Any] = {}
+    for key in ("tickers", "categories", "sectors", "keywords", "entities"):
+        values = _clean_list(trigger_payload.get(key))
+        if values:
+            filters[key] = values
+    sentiment = trigger_payload.get("minSentiment")
+    if isinstance(sentiment, (int, float)):
+        filters["minSentiment"] = float(sentiment)
+    dsl = trigger_payload.get("dsl")
+    if isinstance(dsl, str) and dsl.strip():
+        filters["dsl"] = dsl.strip()
+    return filters
+
+
+def _refresh_rule_filters(rule: AlertRule) -> None:
+    trigger_payload = rule.trigger if isinstance(rule.trigger, Mapping) else {}
+    rule.trigger_type = _normalize_trigger_type(trigger_payload.get("type"))
+    rule.filters = _normalize_filters(trigger_payload)
+
+
+def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _channel_cooldown_until(state: Mapping[str, Any], channel_type: str, now: datetime) -> Optional[datetime]:
+    entry = state.get(channel_type)
+    if not isinstance(entry, Mapping):
+        return None
+    retry_at = _parse_iso_datetime(entry.get("retryAfter"))
+    if retry_at and retry_at > now:
+        return retry_at
+    return None
 
 
 def _normalize_uuid(value: Any) -> Optional[uuid.UUID]:
@@ -268,11 +345,14 @@ def create_alert_rule(
     normalized_channels = validate_channels(plan_tier, channels)
     normalized_frequency = _apply_plan_frequency(plan_tier, frequency)
 
+    trigger_payload = dict(trigger or {})
     rule = AlertRule(
         plan_tier=plan_tier,
         name=name.strip(),
         description=description.strip() if description else None,
-        trigger=dict(trigger or {}),
+        trigger=trigger_payload,
+        trigger_type=_normalize_trigger_type(trigger_payload.get("type")),
+        filters=_normalize_filters(trigger_payload),
         channels=normalized_channels,
         message_template=message_template.strip() if message_template else None,
         frequency=normalized_frequency,
@@ -291,6 +371,7 @@ def update_alert_rule(
     changes: Dict[str, Any],
 ) -> AlertRule:
     plan_tier = _normalize_plan_tier(plan_tier)
+    trigger_updated = False
     if "name" in changes and changes["name"]:
         rule.name = str(changes["name"]).strip()
     if "description" in changes:
@@ -298,8 +379,10 @@ def update_alert_rule(
         rule.description = description.strip() if description else None
     if "trigger" in changes and changes["trigger"]:
         rule.condition = dict(changes["trigger"] or {})
+        trigger_updated = True
     elif "condition" in changes and changes["condition"]:
         rule.condition = dict(changes["condition"] or {})
+        trigger_updated = True
     if "channels" in changes and changes["channels"] is not None:
         rule.channels = validate_channels(plan_tier, changes["channels"])
     if "message_template" in changes:
@@ -321,6 +404,8 @@ def update_alert_rule(
         rule.frequency = _apply_plan_frequency(plan_tier, frequency_payload)
     if "extras" in changes and isinstance(changes["extras"], dict):
         rule.extras = {**rule.extras, **changes["extras"]}
+    if trigger_updated:
+        _refresh_rule_filters(rule)
     return rule
 
 
@@ -513,6 +598,8 @@ def _record_delivery(
     events: Sequence[Dict[str, Any]],
     error_message: Optional[str],
     delivery: NotificationResult,
+    event_ref: Optional[Mapping[str, Any]] = None,
+    trigger_hash: Optional[str] = None,
 ) -> AlertDelivery:
     record = AlertDelivery(
         alert_id=rule.id,
@@ -530,6 +617,8 @@ def _record_delivery(
             },
         },
         error_message=error_message,
+        event_ref=dict(event_ref) if isinstance(event_ref, Mapping) else None,
+        trigger_hash=trigger_hash,
     )
     db.add(record)
     return record
@@ -581,6 +670,7 @@ class _PlanEvaluationStats:
     skipped: int = 0
     errors: int = 0
     duplicates: int = 0
+    channel_failures: int = 0
 
 
 @dataclass
@@ -591,6 +681,7 @@ class _EvaluationAccumulator:
     errors: int = 0
     duplicates: int = 0
     by_plan: Dict[str, _PlanEvaluationStats] = field(default_factory=dict)
+    channel_failures: List[Dict[str, Any]] = field(default_factory=list)
 
     def _plan(self, plan_tier: str) -> _PlanEvaluationStats:
         if plan_tier not in self.by_plan:
@@ -617,6 +708,22 @@ class _EvaluationAccumulator:
         self.duplicates += 1
         self._plan(plan_tier).duplicates += 1
 
+    def record_channel_failure(self, rule: AlertRule, failures: Sequence[Mapping[str, Any]]) -> None:
+        if not failures:
+            return
+        plan_stats = self._plan(rule.plan_tier)
+        plan_stats.channel_failures += len(failures)
+        self.channel_failures.append(
+            {
+                "ruleId": str(rule.id),
+                "ruleName": rule.name,
+                "planTier": rule.plan_tier,
+                "orgId": str(rule.org_id) if rule.org_id else None,
+                "userId": str(rule.user_id) if rule.user_id else None,
+                "channels": [dict(entry) for entry in failures],
+            }
+        )
+
     def as_dict(self) -> Dict[str, Any]:
         return {
             "evaluated": self.evaluated,
@@ -625,6 +732,7 @@ class _EvaluationAccumulator:
             "errors": self.errors,
             "duplicates": self.duplicates,
             "by_plan": {plan: vars(stats).copy() for plan, stats in self.by_plan.items()},
+            "channelFailures": [dict(entry) for entry in self.channel_failures],
         }
 
 
@@ -641,6 +749,7 @@ def _persist_worker_state(rule: AlertRule, snapshot: _RuleSnapshot, *, duplicate
     payload["duplicateBlocked"] = bool(duplicate)
     extras[_EVAL_STATE_KEY] = payload
     rule.extras = extras
+    rule.state = payload
 
 
 def _is_duplicate_snapshot(state: Mapping[str, Any], snapshot: _RuleSnapshot) -> bool:
@@ -785,9 +894,18 @@ def _process_rule(
         if cooldown:
             rule.cooled_until = now + timedelta(minutes=cooldown)
 
-        channel_failures = _dispatch_rule_notifications(db, rule, evaluation.message, evaluation.events_json)
+        first_event = evaluation.events_json[0] if evaluation.events_json else None
+        channel_failures, failure_details = _dispatch_rule_notifications(
+            db,
+            rule,
+            evaluation.message,
+            evaluation.events_json,
+            trigger_signature=snapshot.plan_signature,
+            event_reference=first_event,
+        )
         if channel_failures:
             rule.error_count = min(int(rule.error_count or 0) + channel_failures, 1000)
+            stats.record_channel_failure(rule, failure_details)
             logger.warning(
                 "Alert delivery failures (rule=%s failed_channels=%s task=%s)",
                 rule.id,
@@ -809,9 +927,50 @@ def _dispatch_rule_notifications(
     rule: AlertRule,
     message: str,
     events_json: List[Dict[str, Any]],
-) -> int:
+    *,
+    trigger_signature: Optional[str] = None,
+    event_reference: Optional[Mapping[str, Any]] = None,
+) -> Tuple[int, List[Dict[str, Any]]]:
     channel_failures = 0
+    failure_state = dict(rule.channel_failures or {})
+    state_changed = False
+    now = _now_utc()
+    for channel_type in list(failure_state.keys()):
+        entry = failure_state[channel_type]
+        retry_at = _parse_iso_datetime(entry.get("retryAfter") if isinstance(entry, Mapping) else None)
+        if retry_at and retry_at > now:
+            continue
+        failure_state.pop(channel_type, None)
+        state_changed = True
+    reference_event = event_reference if isinstance(event_reference, Mapping) else (events_json[0] if events_json else None)
+    failure_details: List[Dict[str, Any]] = []
     for channel in rule.channels:
+        channel_type = str(channel.get("type", "")).lower().strip()
+        cooldown_until = _channel_cooldown_until(failure_state, channel_type, now)
+        if cooldown_until:
+            reason = f"채널 {channel_type} 재시도 대기중 ({cooldown_until.isoformat()} 이후 가능)"
+            throttled_result = NotificationResult(
+                status="throttled",
+                error=reason,
+                delivered=0,
+                failed=0,
+                metadata={"retryAfter": cooldown_until.isoformat()},
+            )
+            _record_delivery(
+                db,
+                rule=rule,
+                channel=channel,
+                status="throttled",
+                message=message,
+                events=events_json,
+                error_message=reason,
+                delivery=throttled_result,
+                event_ref=reference_event,
+                trigger_hash=trigger_signature,
+            )
+            channel_failures += 1
+            continue
+
         result = _send_via_channel(channel, message)
         _record_delivery(
             db,
@@ -822,10 +981,36 @@ def _dispatch_rule_notifications(
             events=events_json,
             error_message=result.error,
             delivery=result,
+            event_ref=reference_event,
+            trigger_hash=trigger_signature,
         )
         if result.status != "delivered":
             channel_failures += 1
-    return channel_failures
+            retry_after = (now + timedelta(minutes=ALERT_CHANNEL_FAILURE_COOLDOWN_MINUTES)).isoformat()
+            failure_state[channel_type] = {
+                "status": result.status,
+                "error": result.error,
+                "updatedAt": now.isoformat(),
+                "retryAfter": retry_after,
+                "cooldownMinutes": ALERT_CHANNEL_FAILURE_COOLDOWN_MINUTES,
+            }
+            failure_details.append(
+                {
+                    "channel": channel_type,
+                    "status": result.status,
+                    "error": result.error,
+                    "retryAfter": retry_after,
+                    "target": channel.get("target"),
+                    "targets": channel.get("targets"),
+                }
+            )
+            state_changed = True
+        elif channel_type in failure_state:
+            failure_state.pop(channel_type, None)
+            state_changed = True
+    if state_changed:
+        rule.channel_failures = failure_state
+    return channel_failures, failure_details
 
 
 def _rule_is_throttled(rule: AlertRule, now: datetime) -> bool:
@@ -929,6 +1114,10 @@ def serialize_alert(rule: AlertRule) -> Dict[str, Any]:
         "status": rule.status,
         "trigger": rule.trigger,
         "condition": rule.trigger,
+        "triggerType": rule.trigger_type,
+        "filters": rule.filters or {},
+        "state": rule.state or {},
+        "channelFailures": rule.channel_failures or {},
         "channels": rule.channels,
         "frequency": frequency_payload,
         "messageTemplate": rule.message_template,
@@ -945,6 +1134,108 @@ def serialize_alert(rule: AlertRule) -> Dict[str, Any]:
         "createdAt": rule.created_at.isoformat() if rule.created_at else None,
         "updatedAt": rule.updated_at.isoformat() if rule.updated_at else None,
     }
+
+
+def rule_delivery_stats(
+    db: Session,
+    rule_id: uuid.UUID,
+    *,
+    window_minutes: Optional[int] = None,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Aggregate delivery stats for a rule."""
+    now = now or _now_utc()
+    query = db.query(AlertDelivery).filter(AlertDelivery.alert_id == rule_id)
+    window_start: Optional[datetime] = None
+    if window_minutes and window_minutes > 0:
+        window_start = now - timedelta(minutes=window_minutes)
+        query = query.filter(AlertDelivery.created_at >= window_start)
+
+    aggregates = (
+        db.query(
+            func.count(AlertDelivery.id).label("total"),
+            func.coalesce(func.sum(case((AlertDelivery.status == "delivered", 1), else_=0)), 0).label("delivered"),
+            func.coalesce(func.sum(case((AlertDelivery.status == "failed", 1), else_=0)), 0).label("failed"),
+            func.coalesce(func.sum(case((AlertDelivery.status == "throttled", 1), else_=0)), 0).label("throttled"),
+        )
+        .filter(AlertDelivery.alert_id == rule_id)
+    )
+    if window_start:
+        aggregates = aggregates.filter(AlertDelivery.created_at >= window_start)
+    agg_row = aggregates.one()
+
+    last_delivery = (
+        db.query(AlertDelivery)
+        .filter(AlertDelivery.alert_id == rule_id)
+        .order_by(AlertDelivery.created_at.desc())
+        .first()
+    )
+
+    return {
+        "ruleId": str(rule_id),
+        "windowMinutes": window_minutes,
+        "total": int(agg_row.total or 0),
+        "delivered": int(agg_row.delivered or 0),
+        "failed": int(agg_row.failed or 0),
+        "throttled": int(agg_row.throttled or 0),
+        "lastDelivery": {
+            "id": str(last_delivery.id),
+            "status": last_delivery.status,
+            "channel": last_delivery.channel,
+            "error": last_delivery.error_message,
+            "createdAt": last_delivery.created_at.isoformat() if last_delivery.created_at else None,
+        }
+        if last_delivery
+        else None,
+    }
+
+
+def list_event_alert_matches(
+    db: Session,
+    *,
+    owner_filters: Mapping[str, Optional[Any]],
+    limit: int,
+    since: Optional[datetime] = None,
+) -> List[Dict[str, Any]]:
+    query = (
+        db.query(EventAlertMatch, EventRecord, AlertRule)
+        .join(AlertRule, EventAlertMatch.alert_id == AlertRule.id)
+        .join(EventRecord, EventAlertMatch.event_id == EventRecord.rcept_no)
+    )
+    for column, value in owner_filters.items():
+        if value is None:
+            query = query.filter(getattr(AlertRule, column).is_(None))
+        else:
+            query = query.filter(getattr(AlertRule, column) == value)
+
+    if since:
+        query = query.filter(EventAlertMatch.matched_at >= since)
+
+    rows = (
+        query.order_by(EventAlertMatch.matched_at.desc())
+        .limit(max(1, min(limit, 200)))
+        .all()
+    )
+
+    matches: List[Dict[str, Any]] = []
+    for match_row, event_row, rule_row in rows:
+        matches.append(
+            {
+                "eventId": match_row.event_id,
+                "alertId": str(match_row.alert_id),
+                "ruleName": rule_row.name,
+                "eventType": event_row.event_type,
+                "ticker": event_row.ticker,
+                "corpName": event_row.corp_name,
+                "eventDate": event_row.event_date.isoformat() if event_row.event_date else None,
+                "matchScore": float(match_row.match_score) if match_row.match_score is not None else None,
+                "matchedAt": match_row.matched_at.isoformat() if match_row.matched_at else None,
+                "domain": event_row.domain,
+                "subtype": event_row.subtype,
+                "metadata": match_row.metadata or {},
+            }
+        )
+    return matches
 
 
 def serialize_plan_capabilities(

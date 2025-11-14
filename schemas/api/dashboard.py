@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -37,6 +37,39 @@ class DashboardOverviewResponse(BaseModel):
     metrics: list[DashboardMetric]
     alerts: list[DashboardAlert]
     news: list[DashboardNewsItem]
+    watchlists: list["DashboardWatchlistSummary"] = []
+    events: list["DashboardEventItem"] = []
+    quickLinks: list["DashboardQuickLink"] = []
+    sectorHeatmapAsOf: Optional[str] = None
+    sectorHeatmapWindow: Optional[int] = None
+
+
+class DashboardWatchlistSummary(BaseModel):
+    ruleId: str
+    name: str
+    eventCount: int
+    tickers: list[str] = []
+    channels: list[str] = []
+    lastTriggeredAt: Optional[str] = None
+    lastHeadline: Optional[str] = None
+    detailUrl: Optional[str] = None
+
+
+class DashboardEventItem(BaseModel):
+    id: str
+    ticker: Optional[str] = None
+    corpName: Optional[str] = None
+    title: str
+    eventType: Optional[str] = None
+    filedAt: Optional[str] = None
+    severity: Literal["info", "warning", "critical", "neutral"] = "info"
+    targetUrl: Optional[str] = None
+
+
+class DashboardQuickLink(BaseModel):
+    label: str
+    href: str
+    type: Literal["search", "company", "board"]
 
 
 class FilingTrendPoint(BaseModel):

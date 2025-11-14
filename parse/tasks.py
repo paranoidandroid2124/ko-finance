@@ -61,7 +61,9 @@ from services import (
     security_metadata_service,
     ingest_dlq_service,
     table_extraction_service,
+    rag_grid,
 )
+from services.ingest_errors import FatalIngestError, TransientIngestError
 import services.lightmem_gate as lightmem_gate
 from services.lightmem_config import DIGEST_RATE_LIMIT_PER_MINUTE
 from services.aggregation.sector_classifier import assign_article_to_sector
@@ -80,6 +82,24 @@ from services.daily_brief_service import (
     has_brief_been_generated,
     record_brief_generation,
     render_daily_brief_document,
+)
+
+
+def _parse_recipients(value: Optional[str]) -> List[str]:
+    if not value:
+        return []
+    recipients: List[str] = []
+    for entry in value.split(","):
+        trimmed = entry.strip()
+        if trimmed:
+            recipients.append(trimmed)
+    return recipients
+
+
+ALERT_FAILURE_SLACK_TARGETS = _parse_recipients(env_str("ALERTS_FAILURE_SLACK_TARGETS"))
+ALERT_FAILURE_EMAIL_TARGETS = _parse_recipients(env_str("ALERTS_FAILURE_EMAIL_TARGETS"))
+ALERT_FAILURE_EMAIL_SUBJECT = (
+    env_str("ALERTS_FAILURE_EMAIL_SUBJECT") or "[K-Finance] Alert 채널 오류 감지"
 )
 from services.news_text import sanitize_news_summary
 from services.news_ticker_resolver import resolve_news_ticker
@@ -247,44 +267,79 @@ def _retry_or_dead_letter(
     receipt_no = getattr(filing, "receipt_no", None)
     corp_code = getattr(filing, "corp_code", None)
     ticker = getattr(filing, "ticker", None)
-    retries = getattr(task.request, "retries", 0)
 
-    if retries >= INGEST_TASK_MAX_RETRIES:
+    def _notify(letter) -> None:
         try:
-            letter = ingest_dlq_service.record_dead_letter(
-                db,
-                task_name=getattr(task, "name", "m1.process_filing"),
-                payload={"filing_id": filing_id},
-                error=str(exc),
-                retries=retries,
-                receipt_no=receipt_no or filing_id,
-                corp_code=corp_code,
-                ticker=ticker,
-            )
-            _refresh_dlq_metrics(db)
             audit_ingest_event(
                 action="ingest.dlq",
                 target_id=receipt_no or filing_id,
                 extra={
                     "task": getattr(task, "name", "m1.process_filing"),
-                    "retries": retries,
+                    "retries": getattr(task.request, "retries", 0),
                     "corp_code": corp_code,
                     "ticker": ticker,
                     "dlq_id": str(letter.id),
                 },
             )
-        except Exception as log_exc:  # pragma: no cover - best-effort logging
-            logger.warning(
-                "Failed to record ingest DLQ entry for filing %s: %s",
-                filing_id,
-                log_exc,
-                exc_info=True,
-            )
-        raise
+        except Exception as log_exc:  # pragma: no cover - audit best-effort
+            logger.warning("Failed to record ingest audit for filing %s: %s", filing_id, log_exc, exc_info=True)
 
-    countdown = _ingest_retry_delay(retries)
-    ingest_record_retry(getattr(task, "name", "m1.process_filing"))
-    raise task.retry(exc=exc, countdown=countdown)
+    _handle_ingest_exception(
+        task,
+        exc,
+        payload={"filing_id": filing_id},
+        receipt_no=receipt_no or filing_id,
+        corp_code=corp_code,
+        ticker=ticker,
+        db=db,
+        on_dead_letter=_notify,
+    )
+
+
+def _handle_ingest_exception(
+    task,
+    exc: Exception,
+    *,
+    payload: Mapping[str, Any],
+    receipt_no: Optional[str] = None,
+    corp_code: Optional[str] = None,
+    ticker: Optional[str] = None,
+    db: Optional[Session] = None,
+    on_dead_letter: Optional[Callable[[IngestDeadLetter], None]] = None,
+) -> None:
+    """Retry or persist the failure for ingest tasks."""
+    if isinstance(exc, TransientIngestError):
+        retries = getattr(task.request, "retries", 0)
+        if retries >= INGEST_TASK_MAX_RETRIES:
+            exc = FatalIngestError(f"{getattr(task, 'name', 'ingest-task')} exceeded retry budget: {exc}")
+        else:
+            countdown = _ingest_retry_delay(retries)
+            ingest_record_retry(getattr(task, "name", "ingest-task"))
+            raise task.retry(exc=exc, countdown=countdown)
+
+    if isinstance(exc, FatalIngestError):
+        session = db or SessionLocal()
+        try:
+            letter = ingest_dlq_service.record_dead_letter(
+                session,
+                task_name=getattr(task, "name", "ingest-task"),
+                payload=payload,
+                error=str(exc),
+                retries=getattr(task.request, "retries", 0),
+                receipt_no=receipt_no,
+                corp_code=corp_code,
+                ticker=ticker,
+            )
+            _refresh_dlq_metrics(session)
+            if on_dead_letter:
+                on_dead_letter(letter)
+        finally:
+            if db is None:
+                session.close()
+        raise exc
+
+    raise exc
+
 NEWS_FETCH_LIMIT = env_int("NEWS_FETCH_LIMIT", 5, minimum=1)
 NEWS_SUMMARY_MAX_CHARS = env_int("NEWS_SUMMARY_MAX_CHARS", 480, minimum=120)
 NEWS_RETENTION_DAYS = env_int("NEWS_RETENTION_DAYS", 45, minimum=7)
@@ -376,6 +431,59 @@ def _open_session() -> Session:
     return SessionLocal()
 
 
+def _build_alert_failure_message(events: Sequence[Mapping[str, Any]]) -> str:
+    lines = [":rotating_light: *알림 채널 오류 감지*"]
+    max_rules = 5
+    for idx, event in enumerate(events):
+        if idx >= max_rules:
+            break
+        rule_name = event.get("ruleName") or event.get("ruleId")
+        plan_tier = event.get("planTier")
+        org_id = event.get("orgId")
+        lines.append(
+            f"- {rule_name} (플랜 {plan_tier}{' · Org ' + str(org_id) if org_id else ''})"
+        )
+        for channel in (event.get("channels") or [])[:3]:
+            channel_name = channel.get("channel")
+            error_text = channel.get("error") or "오류"
+            retry_after = channel.get("retryAfter")
+            retry_label = f" · 재시도 {retry_after}" if retry_after else ""
+            lines.append(f"    • {channel_name}: {error_text}{retry_label}")
+    remaining = len(events) - max_rules
+    if remaining > 0:
+        lines.append(f"... 추가 {remaining}건")
+    return "\n".join(lines)
+
+
+def _notify_alert_channel_failures(events: Sequence[Mapping[str, Any]]) -> None:
+    if not events:
+        return
+    if not ALERT_FAILURE_SLACK_TARGETS and not ALERT_FAILURE_EMAIL_TARGETS:
+        logger.debug("Channel failures detected but no alert recipients configured.")
+        return
+    message = _build_alert_failure_message(events)
+    if ALERT_FAILURE_SLACK_TARGETS:
+        try:
+            dispatch_notification(
+                "slack",
+                message,
+                targets=ALERT_FAILURE_SLACK_TARGETS,
+                metadata={"markdown": message},
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("Failed to dispatch Slack channel failure alert: %s", exc, exc_info=True)
+    if ALERT_FAILURE_EMAIL_TARGETS:
+        try:
+            dispatch_notification(
+                "email",
+                message,
+                targets=ALERT_FAILURE_EMAIL_TARGETS,
+                metadata={"subject": ALERT_FAILURE_EMAIL_SUBJECT},
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("Failed to dispatch email channel failure alert: %s", exc, exc_info=True)
+
+
 @shared_task(
     name="alerts.evaluate_rules",
     bind=True,
@@ -396,14 +504,18 @@ def evaluate_alert_rules(self, limit: int = 1000) -> Dict[str, int]:
         result = alert_service.evaluate_due_alerts(db, limit=limit, task_id=task_id)
         db.commit()
         logger.info(
-            "Alert evaluation completed (task=%s): evaluated=%s triggered=%s skipped=%s errors=%s plans=%s",
+            "Alert evaluation completed (task=%s): evaluated=%s triggered=%s skipped=%s errors=%s plans=%s channelFailures=%s",
             task_id,
             result.get("evaluated"),
             result.get("triggered"),
             result.get("skipped"),
             result.get("errors"),
             result.get("by_plan"),
+            len(result.get("channelFailures") or []),
         )
+        channel_failures = result.get("channelFailures") or []
+        if channel_failures:
+            _notify_alert_channel_failures(channel_failures)
         return result
     except Exception as exc:  # pragma: no cover - Celery runtime guard
         db.rollback()
@@ -658,14 +770,15 @@ def seed_recent_filings_task(self, days_back: int = 1) -> int:
     logger.info("Running DART seeding task for the last %d day(s).", days_back)
     try:
         created = seed_recent_filings_job(days_back=days_back)
+    except FatalIngestError as exc:
+        _handle_ingest_exception(self, exc, payload={"days_back": days_back})
+        raise
+    except TransientIngestError as exc:
+        _handle_ingest_exception(self, exc, payload={"days_back": days_back})
+        raise
     except Exception as exc:
-        retries = getattr(self.request, "retries", 0)
-        if retries >= INGEST_TASK_MAX_RETRIES:
-            logger.error("DART seeding task failed after %d retries: %s", retries, exc)
-            raise
-        countdown = _ingest_retry_delay(retries)
-        ingest_record_retry(getattr(self, "name", "m1.seed_recent_filings"))
-        raise self.retry(exc=exc, countdown=countdown)
+        _handle_ingest_exception(self, TransientIngestError(str(exc)), payload={"days_back": days_back})
+        raise
 
     # Kick off event study ingest/aggregation asynchronously so the dashboard stays fresh.
     try:
@@ -1109,17 +1222,35 @@ def process_news_article(article_payload: Any) -> str:
         db.close()
 
 
-@shared_task(name="m2.seed_news_feeds")
-def seed_news_feeds(limit_per_feed: Optional[int] = None, use_mock_fallback: bool = False) -> int:
+@shared_task(name="m2.seed_news_feeds", bind=True, max_retries=INGEST_TASK_MAX_RETRIES)
+def seed_news_feeds(self, limit_per_feed: Optional[int] = None, use_mock_fallback: bool = False) -> int:
     """Fetch latest news articles and enqueue them for processing."""
     fetch_limit = max(1, int(limit_per_feed or NEWS_FETCH_LIMIT))
     queued = 0
 
     try:
         articles = fetch_news_batch(limit_per_feed=fetch_limit, use_mock_fallback=use_mock_fallback)
+    except FatalIngestError as exc:
+        _handle_ingest_exception(
+            self,
+            exc,
+            payload={"limit_per_feed": fetch_limit, "use_mock_fallback": use_mock_fallback},
+        )
+        raise
+    except TransientIngestError as exc:
+        _handle_ingest_exception(
+            self,
+            exc,
+            payload={"limit_per_feed": fetch_limit, "use_mock_fallback": use_mock_fallback},
+        )
+        raise
     except Exception as exc:
-        logger.error("Failed to fetch news batch: %s", exc, exc_info=True)
-        return queued
+        _handle_ingest_exception(
+            self,
+            TransientIngestError(str(exc)),
+            payload={"limit_per_feed": fetch_limit, "use_mock_fallback": use_mock_fallback},
+        )
+        raise
 
     if not articles:
         logger.info("No news articles fetched from feeds.")
@@ -1972,8 +2103,8 @@ def snapshot_evidence_diff(payload: Dict[str, Any]) -> Dict[str, Any]:
         db.close()
 
 
-@shared_task(name="market_data.sync_stock_prices")
-def sync_stock_prices(days_back: int = 7) -> Dict[str, Any]:
+@shared_task(name="market_data.sync_stock_prices", bind=True, max_retries=INGEST_TASK_MAX_RETRIES)
+def sync_stock_prices(self, days_back: int = 7) -> Dict[str, Any]:
     """Fetch recent stock prices from the public API and upsert into the price table."""
 
     start_date = date.today() - timedelta(days=days_back)
@@ -1987,15 +2118,33 @@ def sync_stock_prices(days_back: int = 7) -> Dict[str, Any]:
         )
         logger.info("Synced %d stock price rows (%s~%s).", inserted, start_date, end_date)
         return {"rows": inserted}
-    except market_data_service.MarketDataError as exc:
-        logger.warning("Stock price sync failed: %s", exc)
-        return {"rows": 0, "error": str(exc)}
+    except FatalIngestError as exc:
+        _handle_ingest_exception(
+            self,
+            exc,
+            payload={"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        )
+        raise
+    except TransientIngestError as exc:
+        _handle_ingest_exception(
+            self,
+            exc,
+            payload={"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        )
+        raise
+    except Exception as exc:
+        _handle_ingest_exception(
+            self,
+            TransientIngestError(str(exc)),
+            payload={"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        )
+        raise
     finally:
         db.close()
 
 
-@shared_task(name="market_data.sync_benchmark_prices")
-def sync_benchmark_prices(days_back: int = 7) -> Dict[str, Any]:
+@shared_task(name="market_data.sync_benchmark_prices", bind=True, max_retries=INGEST_TASK_MAX_RETRIES)
+def sync_benchmark_prices(self, days_back: int = 7) -> Dict[str, Any]:
     """Fetch benchmark ETF prices for market-model estimation."""
 
     start_date = date.today() - timedelta(days=days_back)
@@ -2009,9 +2158,27 @@ def sync_benchmark_prices(days_back: int = 7) -> Dict[str, Any]:
         )
         logger.info("Synced %d benchmark price rows (%s~%s).", inserted, start_date, end_date)
         return {"rows": inserted}
-    except market_data_service.MarketDataError as exc:
-        logger.warning("Benchmark price sync failed: %s", exc)
-        return {"rows": 0, "error": str(exc)}
+    except FatalIngestError as exc:
+        _handle_ingest_exception(
+            self,
+            exc,
+            payload={"start_date": start_date.isoformat(), "end_date": end_date.isoformat(), "type": "etf"},
+        )
+        raise
+    except TransientIngestError as exc:
+        _handle_ingest_exception(
+            self,
+            exc,
+            payload={"start_date": start_date.isoformat(), "end_date": end_date.isoformat(), "type": "etf"},
+        )
+        raise
+    except Exception as exc:
+        _handle_ingest_exception(
+            self,
+            TransientIngestError(str(exc)),
+            payload={"start_date": start_date.isoformat(), "end_date": end_date.isoformat(), "type": "etf"},
+        )
+        raise
     finally:
         db.close()
 
@@ -2111,3 +2278,15 @@ def extract_tables_for_receipt(self, receipt_no: str) -> Dict[str, Any]:
         return {"receipt_no": receipt_no, "error": str(exc)}
     finally:
         db.close()
+
+
+@shared_task(name="rag.grid.run_job")
+def run_rag_grid_job(job_id: str) -> None:
+    """Initialize and dispatch an asynchronous QA grid job."""
+    rag_grid.start_grid_job(job_id)
+
+
+@shared_task(name="rag.grid.process_cell")
+def process_rag_grid_cell(cell_id: str) -> None:
+    """Execute a single QA grid cell."""
+    rag_grid.process_grid_cell(cell_id)

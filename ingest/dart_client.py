@@ -15,6 +15,8 @@ import httpx
 import xmltodict
 from dotenv import load_dotenv
 
+from services.ingest_errors import FatalIngestError, TransientIngestError
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -29,13 +31,13 @@ def _load_json_payload(text: str, *, context: str) -> Dict[str, Any]:
     stripped = (text or "").strip()
     if not stripped:
         logger.warning("Empty JSON payload received from %s.", context)
-        return {}
+        raise FatalIngestError(f"{context} returned an empty body.")
     try:
         return json.loads(stripped)
     except json.JSONDecodeError as exc:
         preview = stripped[:160]
         logger.error("Unable to decode JSON payload from %s: %s (body preview=%s)", context, exc, preview)
-        return {}
+        raise FatalIngestError(f"{context} responded with invalid JSON.") from exc
 
 
 class DartClient:
@@ -55,14 +57,17 @@ class DartClient:
                 response.raise_for_status()
         except httpx.HTTPError as exc:
             logger.error("Failed to download corp code ZIP: %s", exc)
-            raise
+            raise TransientIngestError("Failed to download corp code ZIP.") from exc
 
         content_type = response.headers.get("Content-Type", "")
         if "zip" not in content_type.lower():
             logger.warning("Unexpected corp code content type: %s", content_type)
 
-        with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
-            xml_bytes = zip_file.read("CORPCODE.xml")
+        try:
+            with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
+                xml_bytes = zip_file.read("CORPCODE.xml")
+        except zipfile.BadZipFile as exc:
+            raise FatalIngestError("Downloaded corp code archive is corrupted.") from exc
 
         parsed = xmltodict.parse(xml_bytes)
         corp_list = parsed.get("result", {}).get("list", [])
@@ -118,8 +123,12 @@ class DartClient:
                     }
                     if corp_code:
                         params["corp_code"] = corp_code
-                    response = client.get(f"{DART_API_BASE}/list.json", params=params)
-                    response.raise_for_status()
+                    try:
+                        response = client.get(f"{DART_API_BASE}/list.json", params=params)
+                        response.raise_for_status()
+                    except httpx.HTTPError as exc:
+                        logger.error("Failed to list recent filings: %s", exc)
+                        raise TransientIngestError("DART list.json call failed.") from exc
 
                     try:
                         text = response.content.decode("utf-8")
@@ -151,9 +160,12 @@ class DartClient:
                     current_page += 1
                     if throttle_seconds > 0:
                         time.sleep(throttle_seconds)
-        except httpx.HTTPError as exc:
-            logger.error("Failed to list recent filings: %s", exc)
+        except TransientIngestError:
             raise
+        except FatalIngestError:
+            raise
+        except Exception as exc:
+            raise FatalIngestError("Unexpected error while listing recent filings.") from exc
 
         return aggregated
 
@@ -166,7 +178,7 @@ class DartClient:
                 response.raise_for_status()
         except httpx.HTTPError as exc:
             logger.error("Failed to download document for %s: %s", receipt_no, exc)
-            raise
+            raise TransientIngestError(f"Document download failed for {receipt_no}.") from exc
 
         content_type = response.headers.get("Content-Type", "").lower()
         content_bytes = response.content
@@ -228,7 +240,7 @@ class DartClient:
                 response.raise_for_status()
         except httpx.HTTPError as exc:
             logger.error("DART request failed for %s: %s", endpoint, exc)
-            raise
+            raise TransientIngestError(f"DART endpoint {endpoint} call failed.") from exc
 
         try:
             text = response.content.decode("utf-8")
@@ -236,8 +248,6 @@ class DartClient:
             text = response.content.decode("euc-kr", errors="replace")
 
         payload = _load_json_payload(text, context=endpoint)
-        if not payload:
-            return {}
 
         status = payload.get("status")
         if status and status != "000":
@@ -252,12 +262,24 @@ class DartClient:
             {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code},
         )
 
-    def fetch_single_account_detail(self, corp_code: str, bsns_year: int, reprt_code: str) -> Dict[str, Any]:
+    def fetch_single_account_detail(
+        self,
+        corp_code: str,
+        bsns_year: int,
+        reprt_code: str,
+        fs_div: str = "CFS",  # or "OFS"
+    ) -> Dict[str, Any]:
         """Fetch DE003 (단일회사 전표준재무제표) data."""
         return self._get_json(
             "fnlttSinglAcntAll.json",
-            {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code},
+            {
+                "corp_code": corp_code,
+                "bsns_year": str(bsns_year),
+                "reprt_code": reprt_code,
+                "fs_div": fs_div,
+            },
         )
+
 
     def fetch_major_shareholders(self, corp_code: str, bsns_year: int, reprt_code: str) -> Dict[str, Any]:
         """Fetch DE004 (임원·주요주주 현황) dataset."""

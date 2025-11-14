@@ -64,8 +64,8 @@ vi.mock("@/components/chat/ChatMessage", () => ({
   ChatMessageBubble: ({ content }: { content: string }) => <div>{content}</div>,
 }));
 
-vi.mock("@/components/chat/ChatContextPanel", () => ({
-  ChatContextPanel: () => <aside data-testid="context-panel" />,
+vi.mock("@/components/chat/ChatContextPane", () => ({
+  ChatContextPane: () => <aside data-testid="context-panel" />,
 }));
 
 const emptyEvidence: ChatSession["evidence"] = {

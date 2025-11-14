@@ -1,0 +1,50 @@
+timezone: Asia/Seoul
+entries:
+  alerts-evaluate-rules:
+    task: alerts.evaluate_rules
+    cron: "*/1 * * * *"
+    kwargs: {}
+    options: {}
+  seed-recent-filings-hourly:
+    task: m1.seed_recent_filings
+    cron: "0 * * * mon-fri"
+    kwargs:
+      days_back: 1
+  seed-recent-filings-weekend-catchup:
+    task: m1.seed_recent_filings
+    cron: "0 7 * * mon"
+    kwargs:
+      days_back: 3
+  seed-news-hourly:
+    task: m2.seed_news_feeds
+    cron: "0 * * * *"
+  market-mood-aggregate-15min:
+    task: m2.aggregate_news
+    cron: "*/15 * * * *"
+  sector-daily-hourly:
+    task: m2.aggregate_sector_daily
+    cron: "10 * * * *"
+    kwargs:
+      hours_back: 36
+  sector-window-hourly:
+    task: m2.aggregate_sector_windows
+    cron: "20 * * * *"
+  daily-filing-digest:
+    task: m4.send_filing_digest
+    cron: "0 18 * * mon-fri"
+    kwargs:
+      timeframe: daily
+  weekly-filing-digest:
+    task: m4.send_filing_digest
+    cron: "30 9 * * mon"
+    kwargs:
+      timeframe: weekly
+  daily-brief-pdf:
+    task: m4.generate_daily_brief
+    cron: "30 7 * * mon-fri"
+  lightmem-longterm-update:
+    task: memory.promote_long_term
+    cron: "15 3 * * *"
+  lightmem-health-monitor:
+    task: health.monitor_lightmem
+    cron: "*/10 * * * *"
