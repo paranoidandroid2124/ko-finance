@@ -54,7 +54,7 @@ def sync_additional_disclosures(db: Session, client: DartClient, filing: Filing)
             filing.report_name,
         )
 
-    _sync_major_issues(db, client, filing, bsns_year, reprt_code)
+    _sync_major_issues(db, client, filing)
 
 
 def _infer_reporting_context(filing: Filing) -> Tuple[int, Optional[str]]:
@@ -385,11 +385,12 @@ def _sync_major_issues(
     db: Session,
     client: DartClient,
     filing: Filing,
-    bsns_year: int,
-    reprt_code: Optional[str],
 ) -> None:
-    response = client.fetch_major_issues(filing.corp_code, bsns_year, reprt_code)
-    rows: Sequence[Dict[str, Any]] = response.get("list") or []
+    rows = client.fetch_major_issues_for_filing(
+        corp_code=filing.corp_code,
+        receipt_no=filing.receipt_no,
+        receipt_date=filing.filed_at,
+    )
     if not rows:
         logger.debug("No DE005 (majorissue) rows for filing %s.", filing.receipt_no or filing.id)
         return

@@ -40,6 +40,15 @@ def _load_json_payload(text: str, *, context: str) -> Dict[str, Any]:
         raise FatalIngestError(f"{context} responded with invalid JSON.") from exc
 
 
+DS005_ENDPOINTS: Dict[str, str] = {
+    # Representative subset of DS005 endpoints. Extend as needed.
+    "capital_increase_mixed": "pifricDecsn.json",  # 유무상증자 결정
+    "merger": "cmpMgDecsn.json",  # 회사합병 결정
+    "business_suspension": "bsnSp.json",  # 영업정지
+    "treasury_stock_acquisition": "tsstkAqDecsn.json",  # 자기주식 취득 결정
+}
+
+
 class DartClient:
     """Wrapper around DART OpenAPI endpoints used in M1 pipeline."""
 
@@ -288,12 +297,70 @@ class DartClient:
             {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code},
         )
 
-    def fetch_major_issues(self, corp_code: str, bsns_year: int, reprt_code: Optional[str] = None) -> Dict[str, Any]:
-        """Fetch DE005 (주요사항 보고) dataset."""
-        params: Dict[str, Any] = {"corp_code": corp_code, "bsns_year": str(bsns_year)}
-        if reprt_code:
-            params["reprt_code"] = reprt_code
-        return self._get_json("majorissue.json", params)
+    def fetch_major_issues_for_filing(
+        self,
+        corp_code: str,
+        receipt_no: Optional[str],
+        receipt_date: Optional[datetime],
+        endpoint_keys: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch DS005 (주요사항 보고) entries associated with a specific filing.
+
+        OpenDART exposes DS005 data via multiple issue-specific endpoints rather than a single
+        majorissue.json feed. We therefore query a curated subset of endpoints and return the rows
+        whose rcept_no matches the filing's receipt number.
+        """
+        if not receipt_no:
+            logger.debug("Skipping DS005 lookup because receipt_no is missing.")
+            return []
+
+        target_date = receipt_date or datetime.utcnow()
+        query_date = target_date.strftime("%Y%m%d")
+        selected_endpoints = endpoint_keys or list(DS005_ENDPOINTS.keys())
+        issues: List[Dict[str, Any]] = []
+
+        for key in selected_endpoints:
+            endpoint = DS005_ENDPOINTS.get(key)
+            if not endpoint:
+                logger.warning("Unknown DS005 endpoint key '%s'; skipping.", key)
+                continue
+
+            payload = self._get_json(
+                endpoint,
+                {
+                    "corp_code": corp_code,
+                    "bgn_de": query_date,
+                    "end_de": query_date,
+                },
+            )
+
+            status = str(payload.get("status", ""))
+            message = payload.get("message")
+
+            if status == "000":
+                for row in payload.get("list") or []:
+                    if row.get("rcept_no") == receipt_no:
+                        row["_issue_type"] = key
+                        row["_endpoint"] = endpoint
+                        issues.append(row)
+            elif status == "013":
+                logger.debug(
+                    "No DS005 records for corp=%s date=%s via %s",
+                    corp_code,
+                    query_date,
+                    endpoint,
+                )
+                continue
+            else:
+                logger.warning(
+                    "DS005 endpoint %s returned status %s: %s",
+                    endpoint,
+                    status,
+                    message,
+                )
+
+        return issues
 
 
 __all__ = ["DartClient"]
