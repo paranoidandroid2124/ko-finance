@@ -85,6 +85,7 @@ export type UseSearchControllerValue = {
   isError: boolean;
   canLoadMore: boolean;
   handleSearchSubmit: () => void;
+  handleQuickSearch: (value: string) => void;
   handleTypeChange: (type: SearchResultType) => void;
   handleLoadMore: () => void;
   handleFilterChange: (next: SearchFilterState) => void;
@@ -191,22 +192,32 @@ export function useSearchController(): UseSearchControllerValue {
     [router],
   );
 
+  const handleQuickSearch = useCallback(
+    (rawValue: string) => {
+      const trimmed = rawValue.trim();
+      if (!trimmed) {
+        setSearchInput("");
+        setSearchQuery("");
+        resetResultState();
+        syncUrl("", "filing", filters);
+        return;
+      }
+      setSearchInput(trimmed);
+      if (trimmed !== searchQuery) {
+        setActiveType("filing");
+        resetResultState();
+        setSearchQuery(trimmed);
+        syncUrl(trimmed, "filing", filters);
+      } else {
+        void refetch();
+      }
+    },
+    [filters, refetch, resetResultState, searchQuery, syncUrl],
+  );
+
   const handleSearchSubmit = useCallback(() => {
-    const trimmed = searchInput.trim();
-    if (!trimmed) {
-      setSearchQuery("");
-      resetResultState();
-      return;
-    }
-    if (trimmed !== searchQuery) {
-      setActiveType("filing");
-      resetResultState();
-      setSearchQuery(trimmed);
-      syncUrl(trimmed, "filing", filters);
-    } else {
-      void refetch();
-    }
-  }, [filters, refetch, resetResultState, searchInput, searchQuery, syncUrl]);
+    handleQuickSearch(searchInput);
+  }, [handleQuickSearch, searchInput]);
 
   const handleTypeChange = useCallback(
     (type: SearchResultType) => {
@@ -290,6 +301,7 @@ export function useSearchController(): UseSearchControllerValue {
     isError,
     canLoadMore,
     handleSearchSubmit,
+    handleQuickSearch,
     handleTypeChange,
     handleLoadMore,
     handleFilterChange,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -192,6 +193,22 @@ class AlertPlanInfo(BaseModel):
     nextEvaluationAt: Optional[str] = None
 
 
+class AlertRulePreset(BaseModel):
+    id: str
+    bundle: str
+    bundleLabel: Optional[str] = None
+    planTiers: List[str] = Field(default_factory=list)
+    name: str
+    description: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    sampleDsl: Optional[str] = None
+    recommendedChannel: Optional[AlertChannelType] = None
+    trigger: AlertTriggerSchema
+    frequency: AlertFrequencySchema
+    insight: Optional[str] = None
+    priority: Optional[int] = None
+
+
 class AlertRuleResponse(BaseModel):
     id: str
     name: str
@@ -261,6 +278,7 @@ class AlertEventMatchResponse(BaseModel):
 class AlertRuleListResponse(BaseModel):
     items: List[AlertRuleResponse]
     plan: AlertPlanInfo
+    presets: List[AlertRulePreset] = Field(default_factory=list)
 
 
 class WatchlistRadarSummary(BaseModel):
@@ -326,6 +344,53 @@ class WatchlistDispatchRequest(BaseModel):
     limit: Optional[int] = Field(default=20, ge=1, le=200)
     slackTargets: Optional[List[str]] = Field(default=None)
     emailTargets: Optional[List[str]] = Field(default=None)
+
+
+class WatchlistDigestScheduleSchema(BaseModel):
+    id: UUID
+    label: str
+    timeOfDay: str
+    timezone: str
+    weekdaysOnly: bool
+    windowMinutes: int
+    limit: int
+    slackTargets: List[str] = Field(default_factory=list)
+    emailTargets: List[str] = Field(default_factory=list)
+    enabled: bool
+    nextDispatchAt: Optional[str] = None
+    lastDispatchedAt: Optional[str] = None
+    lastStatus: Optional[str] = None
+    lastError: Optional[str] = None
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
+
+
+class WatchlistDigestScheduleListResponse(BaseModel):
+    items: List[WatchlistDigestScheduleSchema]
+
+
+class WatchlistDigestScheduleCreateRequest(BaseModel):
+    label: str = Field(..., min_length=1, max_length=80)
+    timeOfDay: str = Field(..., regex=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    timezone: str = Field(default="Asia/Seoul", min_length=3, max_length=64)
+    weekdaysOnly: bool = Field(default=True)
+    windowMinutes: int = Field(default=1440, ge=5, le=7 * 24 * 60)
+    limit: int = Field(default=20, ge=1, le=200)
+    slackTargets: List[str] = Field(default_factory=list, max_items=20)
+    emailTargets: List[str] = Field(default_factory=list, max_items=20)
+    enabled: bool = Field(default=True)
+
+
+class WatchlistDigestScheduleUpdateRequest(BaseModel):
+    label: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    timeOfDay: Optional[str] = Field(default=None, regex=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    timezone: Optional[str] = Field(default=None, min_length=3, max_length=64)
+    weekdaysOnly: Optional[bool] = None
+    windowMinutes: Optional[int] = Field(default=None, ge=5, le=7 * 24 * 60)
+    limit: Optional[int] = Field(default=None, ge=1, le=200)
+    slackTargets: Optional[List[str]] = Field(default=None, max_items=20)
+    emailTargets: Optional[List[str]] = Field(default=None, max_items=20)
+    enabled: Optional[bool] = None
 
 
 class WatchlistRuleChannelSummary(BaseModel):

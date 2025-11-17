@@ -57,6 +57,7 @@ class AuthUserSchema(BaseModel):
     plan: str
     role: str
     emailVerified: bool
+    orgId: Optional[str] = Field(default=None, description="현재 세션이 속한 기본 조직 ID.")
 
 
 class LoginResponse(BaseModel):

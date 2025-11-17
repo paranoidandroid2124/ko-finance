@@ -164,6 +164,40 @@ def _resolve_urn(chunk: Dict[str, Any], *, chunk_id: Optional[str]) -> str:
     return f"urn:chunk:{deterministic}"
 
 
+def _table_hint(metadata: Dict[str, Any], page_number: Optional[int]) -> Optional[Dict[str, Any]]:
+    table_index = metadata.get("table_index")
+    if table_index is None:
+        return None
+    try:
+        table_index_int = int(table_index)
+    except (TypeError, ValueError):
+        return None
+    page_value = metadata.get("page_number") or page_number
+    try:
+        page_number_int = int(page_value) if page_value is not None else None
+    except (TypeError, ValueError):
+        page_number_int = None
+    row_index: Optional[int] = None
+    cell_coordinates = metadata.get("cell_coordinates") or []
+    if isinstance(cell_coordinates, list):
+        for cell in cell_coordinates:
+            if not isinstance(cell, dict):
+                continue
+            try:
+                row_candidate = int(cell.get("row"))
+            except (TypeError, ValueError):
+                row_candidate = None
+            if row_candidate is None:
+                continue
+            if row_index is None or row_candidate < row_index:
+                row_index = row_candidate
+    return {
+        "table_index": table_index_int,
+        "page_number": page_number_int,
+        "focus_row_index": row_index,
+    }
+
+
 def _build_evidence_payload(chunks: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     evidence: List[Dict[str, Any]] = []
     for chunk in chunks or []:
@@ -181,6 +215,12 @@ def _build_evidence_payload(chunks: Iterable[Dict[str, Any]]) -> List[Dict[str, 
             chunk.get("source_reliability") or metadata.get("source_reliability")
         )
         created_at = metadata.get("created_at") or chunk.get("created_at")
+        filing_id = chunk.get("filing_id") or metadata.get("filing_id")
+        receipt_no = metadata.get("receipt_no") or chunk.get("receipt_no")
+        viewer_url = metadata.get("viewer_url") or chunk.get("viewer_url")
+        download_url = metadata.get("download_url") or chunk.get("download_url")
+        document_url = metadata.get("document_url") or chunk.get("document_url") or viewer_url or download_url
+        document_title = metadata.get("title") or chunk.get("title")
 
         evidence_model = RAGEvidence(
             urn_id=_resolve_urn(chunk, chunk_id=chunk_id),
@@ -193,10 +233,18 @@ def _build_evidence_payload(chunks: Iterable[Dict[str, Any]]) -> List[Dict[str, 
             self_check=self_check,
             source_reliability=reliability,
             created_at=created_at,
+            filing_id=str(filing_id) if filing_id else None,
+            receipt_no=str(receipt_no) if receipt_no else None,
+            document_url=document_url,
+            download_url=download_url,
+            viewer_url=viewer_url,
+            document_title=document_title,
         )
-        evidence.append(
-            evidence_model.model_dump(mode="json", exclude_none=True, exclude_unset=True)
-        )
+        entry = evidence_model.model_dump(mode="json", exclude_none=True, exclude_unset=True)
+        table_hint = _table_hint(metadata, safe_int(page_number))
+        if table_hint:
+            entry["table_hint"] = table_hint
+        evidence.append(entry)
     return evidence
 
 
@@ -386,6 +434,7 @@ def _attach_evidence_diff(
     evidence: List[Dict[str, Any]],
     *,
     db: Optional[Session] = None,
+    trace_id: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     if not evidence:
         return evidence, {"enabled": False, "removed": []}
@@ -396,7 +445,7 @@ def _attach_evidence_diff(
         session = SessionLocal()
         owns_session = True
     try:
-        meta = attach_diff_metadata(session, evidence) or {}
+        meta = attach_diff_metadata(session, evidence, trace_id=trace_id) or {}
         meta.setdefault("enabled", False)
         meta.setdefault("removed", [])
         return evidence, meta
@@ -448,8 +497,19 @@ def _enqueue_evidence_snapshot(
     author: Optional[str],
     trace_id: str,
     process: str = "api.rag.query",
+    org_id: Optional[uuid.UUID] = None,
+    user_id: Optional[uuid.UUID] = None,
 ) -> None:
     if not evidence:
+        return
+    enriched: List[Dict[str, Any]] = []
+    for entry in evidence:
+        if not isinstance(entry, dict):
+            continue
+        copy_entry = dict(entry)
+        copy_entry.setdefault("trace_id", trace_id)
+        enriched.append(copy_entry)
+    if not enriched:
         return
     try:
         snapshot_evidence_diff.delay(
@@ -457,7 +517,9 @@ def _enqueue_evidence_snapshot(
                 "trace_id": trace_id,
                 "author": author,
                 "process": process,
-                "evidence": evidence,
+                "evidence": enriched,
+                "org_id": str(org_id) if org_id else None,
+                "user_id": str(user_id) if user_id else None,
             }
         )
     except Exception as exc:  # pragma: no cover - fire-and-forget
@@ -968,6 +1030,8 @@ def build_basic_reply(
     run_self_check: bool,
     filters: Optional[Dict[str, Any]] = None,
     relative_range: Optional[date_range_parser.RelativeDateRange] = None,
+    org_id: Optional[uuid.UUID] = None,
+    user_id: Optional[uuid.UUID] = None,
 ) -> RAGQueryResponse:
     judge_result = llm_service.assess_query_risk(question)
     judge_decision = (judge_result.get("decision") or "unknown") if judge_result else "unknown"
@@ -1055,7 +1119,7 @@ def build_basic_reply(
 
     evidence_context = _build_evidence_payload(payload.get("context") or context_chunks)
     snapshot_payload = deepcopy(evidence_context)
-    evidence_context, diff_meta = _attach_evidence_diff(evidence_context)
+    evidence_context, diff_meta = _attach_evidence_diff(evidence_context, trace_id=trace_id)
     meta_payload.setdefault("evidence_version", "v2")
     meta_payload["evidence_diff"] = diff_meta
 
@@ -1102,6 +1166,8 @@ def build_basic_reply(
             snapshot_payload,
             author=None,
             trace_id=trace_id,
+            org_id=org_id,
+            user_id=user_id,
         )
 
     return response
@@ -1386,7 +1452,7 @@ def query_rag(
 
         context = _build_evidence_payload(result.get("context") or context_chunks)
         snapshot_payload = deepcopy(context)
-        context, diff_meta = _attach_evidence_diff(context, db=db)
+        context, diff_meta = _attach_evidence_diff(context, db=db, trace_id=trace_id)
         citations: Dict[str, List[Any]] = dict(result.get("citations") or {})
         warnings: List[str] = list(result.get("warnings") or [])
         highlights: List[Dict[str, object]] = list(result.get("highlights") or [])
@@ -1528,6 +1594,8 @@ def query_rag(
                 snapshot_payload,
                 author=snapshot_author,
                 trace_id=trace_id,
+                org_id=org_id or session.org_id,
+                user_id=user_id or session.user_id,
             )
 
         db.commit()
@@ -1548,6 +1616,8 @@ def query_rag(
             run_self_check=request.run_self_check,
             filters=filter_payload,
             relative_range=relative_range,
+            org_id=org_id,
+            user_id=user_id,
         )
     except Exception as exc:
         db.rollback()
@@ -1782,7 +1852,7 @@ def query_rag_stream(
                 answer_text = final_payload.get("answer") or "".join(streamed_tokens) or "지금은 답변을 준비할 수 없습니다."
                 context = _build_evidence_payload(final_payload.get("context") or context_chunks)
                 snapshot_payload = deepcopy(context)
-                context, diff_meta = _attach_evidence_diff(context, db=db)
+                context, diff_meta = _attach_evidence_diff(context, db=db, trace_id=trace_id)
                 citations: Dict[str, List[Any]] = dict(final_payload.get("citations") or {})
                 llm_warnings_raw = list(final_payload.get("warnings") or [])
                 llm_warning_messages = [
@@ -1912,15 +1982,17 @@ def query_rag_stream(
 
                 snapshot_author = None
                 if user_id:
-                    snapshot_author = str(user_id)
-                elif session.user_id:
-                    snapshot_author = str(session.user_id)
-                if snapshot_payload:
-                    _enqueue_evidence_snapshot(
-                        snapshot_payload,
-                        author=snapshot_author,
-                        trace_id=trace_id,
-                    )
+                snapshot_author = str(user_id)
+            elif session.user_id:
+                snapshot_author = str(session.user_id)
+            if snapshot_payload:
+                _enqueue_evidence_snapshot(
+                    snapshot_payload,
+                    author=snapshot_author,
+                    trace_id=trace_id,
+                    org_id=org_id or session.org_id,
+                    user_id=user_id or session.user_id,
+                )
 
                 db.commit()
                 if needs_summary:
@@ -2080,7 +2152,7 @@ def query_rag_v2(
         context_chunks = pipeline_result.raw_chunks
         legacy_context = _build_evidence_payload(context_chunks)
         snapshot_payload = deepcopy(legacy_context)
-        legacy_context, diff_meta = _attach_evidence_diff(legacy_context, db=db)
+        legacy_context, diff_meta = _attach_evidence_diff(legacy_context, db=db, trace_id=trace_id)
 
         warning_messages: List[str] = []
         response_warnings: List[RagWarningSchema] = []
@@ -2155,6 +2227,8 @@ def query_rag_v2(
                 snapshot_payload,
                 author=str(user_id or session.user_id or "system"),
                 trace_id=trace_id,
+                org_id=org_id or session.org_id,
+                user_id=user_id or session.user_id,
             )
 
         db.commit()

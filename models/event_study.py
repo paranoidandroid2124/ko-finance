@@ -83,6 +83,28 @@ class EventStudyResult(Base):
     car = Column(Numeric, nullable=True)
 
 
+class EventWindow(Base):
+    """Canonical event window preset shared across services and UI."""
+
+    __tablename__ = "event_windows"
+
+    key = Column(String, primary_key=True)
+    label = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    start_offset = Column(SmallInteger, nullable=False)
+    end_offset = Column(SmallInteger, nullable=False)
+    default_significance = Column(Numeric, nullable=False, default=0.1, server_default="0.1")
+    display_order = Column(SmallInteger, nullable=False, default=0, server_default="0")
+    is_default = Column(Boolean, nullable=False, default=False, server_default="false")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class EventSummary(Base):
     """Aggregated statistics (AAR/CAAR/CI) for event cohorts."""
 
@@ -165,6 +187,7 @@ __all__ = [
     "EventRecord",
     "Price",
     "EventStudyResult",
+    "EventWindow",
     "EventSummary",
     "EventWatchlist",
     "EventAlertMatch",

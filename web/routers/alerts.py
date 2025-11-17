@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List
+from typing import Optional, List, Mapping, Sequence, Dict
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from core.env import env_int
@@ -19,10 +19,15 @@ from schemas.api.alerts import (
     AlertRuleUpdateRequest,
     AlertRuleStatsResponse,
     AlertPlanInfo,
+    AlertRulePreset,
     WatchlistDispatchRequest,
     WatchlistDispatchResponse,
     WatchlistRadarResponse,
     WatchlistRuleDetailResponse,
+    WatchlistDigestScheduleSchema,
+    WatchlistDigestScheduleListResponse,
+    WatchlistDigestScheduleCreateRequest,
+    WatchlistDigestScheduleUpdateRequest,
 )
 from services.alert_service import (
     PlanQuotaError,
@@ -37,8 +42,9 @@ from services.alert_service import (
     update_alert_rule,
     archive_alert_rule,
 )
+from services.alerts import list_alert_presets, record_preset_usage
 from services.alert_channel_registry import list_channel_definitions
-from services import alert_rate_limiter, watchlist_service
+from services import alert_rate_limiter, watchlist_service, watchlist_digest_schedule_service
 from services.audit_log import audit_alert_event
 from services.user_settings_service import UserLightMemSettings
 from services import lightmem_gate
@@ -118,6 +124,13 @@ def _watchlist_memory_enabled(
     return lightmem_gate.watchlist_enabled(plan, user_settings)
 
 
+def _digest_memory_enabled(
+    plan: PlanContext,
+    user_settings: Optional[UserLightMemSettings],
+) -> bool:
+    return lightmem_gate.digest_enabled(plan, user_settings)
+
+
 def _owner_filters(user_id: Optional[uuid.UUID], org_id: Optional[uuid.UUID]) -> dict:
     return {"user_id": user_id, "org_id": org_id}
 
@@ -176,6 +189,76 @@ def _audit_rule_event(
         logger.debug("Failed to record audit event=%s target=%s", action, target_id, exc_info=True)
 
 
+def _extract_preset_metadata(extras: Optional[Mapping[str, object]]) -> Optional[Dict[str, str]]:
+    if not extras:
+        return None
+    preset_id = extras.get("presetId") or extras.get("preset_id")
+    if not preset_id:
+        return None
+    bundle = extras.get("presetBundle") or extras.get("preset_bundle")
+    return {
+        "presetId": str(preset_id),
+        "bundle": str(bundle) if bundle else None,
+    }
+
+
+def _track_preset_usage(
+    preset_meta: Mapping[str, Optional[str]],
+    *,
+    plan: PlanContext,
+    user_id: Optional[uuid.UUID],
+    org_id: Optional[uuid.UUID],
+    channels: Optional[Sequence[AlertChannelSchema]],
+    rule_id: Optional[uuid.UUID] = None,
+) -> None:
+    channel_types = []
+    if channels:
+        for channel in channels:
+            channel_types.append(channel.type)
+    try:
+        record_preset_usage(
+            preset_id=str(preset_meta.get("presetId")),
+            bundle=preset_meta.get("bundle"),
+            plan_tier=plan.tier,
+            channel_types=channel_types,
+            user_id=user_id,
+            org_id=org_id,
+            rule_id=rule_id,
+        )
+    except Exception:  # pragma: no cover - analytics logging best effort
+        logger.debug("Failed to record preset usage", exc_info=True)
+
+
+def _require_digest_enabled(plan: PlanContext) -> None:
+    if plan.memory_digest_enabled:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_402_PAYMENT_REQUIRED,
+        detail={"code": "plan.digest_required", "message": "Digest 기능은 Pro 이상 플랜에서 제공됩니다."},
+    )
+
+
+def _serialize_digest_schedule(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": uuid.UUID(str(payload.get("id"))),
+        "label": payload.get("label") or "Digest Schedule",
+        "timeOfDay": payload.get("time_of_day") or "09:00",
+        "timezone": payload.get("timezone") or "Asia/Seoul",
+        "weekdaysOnly": bool(payload.get("weekdays_only")),
+        "windowMinutes": int(payload.get("window_minutes") or 1440),
+        "limit": int(payload.get("limit") or 20),
+        "slackTargets": list(payload.get("slack_targets") or []),
+        "emailTargets": list(payload.get("email_targets") or []),
+        "enabled": bool(payload.get("enabled")),
+        "nextDispatchAt": payload.get("next_run_at"),
+        "lastDispatchedAt": payload.get("last_dispatched_at"),
+        "lastStatus": payload.get("last_status"),
+        "lastError": payload.get("last_error"),
+        "createdAt": payload.get("created_at"),
+        "updatedAt": payload.get("updated_at"),
+    }
+
+
 def _response_from_rule(rule) -> AlertRuleResponse:
     payload = serialize_alert(rule)
     return AlertRuleResponse.model_validate(payload)
@@ -197,7 +280,9 @@ def list_rules(
     rules = list_alert_rules(db, owner_filters=_owner_filters(user_id, org_id))
     items = [_response_from_rule(rule) for rule in rules]
     plan_info = AlertPlanInfo.model_validate(serialize_plan_capabilities(plan.tier, rules))
-    return AlertRuleListResponse(items=items, plan=plan_info)
+    preset_payloads = list_alert_presets(plan.tier)
+    presets = [AlertRulePreset.model_validate(payload) for payload in preset_payloads]
+    return AlertRuleListResponse(items=items, plan=plan_info, presets=presets)
 
 
 @router.post("", response_model=AlertRuleResponse, status_code=status.HTTP_201_CREATED)
@@ -213,6 +298,8 @@ def create_rule(
     filters = _owner_filters(user_id, org_id)
     enforce_quota("alerts.rules.create", plan=plan, user_id=user_id, org_id=org_id)
     _enforce_write_rate_limit(user_id, org_id)
+    preset_meta = _extract_preset_metadata(payload.extras)
+    channel_payloads = [channel.model_dump() for channel in payload.channels]
     try:
         rule = create_alert_rule(
             db,
@@ -221,13 +308,22 @@ def create_rule(
             name=payload.name,
             description=payload.description,
             trigger=payload.trigger.model_dump(),
-            channels=[channel.model_dump() for channel in payload.channels],
+            channels=channel_payloads,
             message_template=payload.messageTemplate,
             frequency=payload.frequency.model_dump(),
             extras=payload.extras,
         )
         db.commit()
         _audit_rule_event("alerts.create", rule, user_id, org_id)
+        if preset_meta:
+            _track_preset_usage(
+                preset_meta,
+                plan=plan,
+                user_id=user_id,
+                org_id=org_id,
+                channels=payload.channels,
+                rule_id=getattr(rule, "id", None),
+            )
     except PlanQuotaError as exc:
         db.rollback()
         raise _plan_http_exception(status.HTTP_403_FORBIDDEN, exc.code, str(exc))
@@ -411,6 +507,7 @@ def watchlist_dispatch(
     plan: PlanContext = Depends(require_plan_feature("search.alerts")),
     db: Session = Depends(get_db),
 ) -> WatchlistDispatchResponse:
+    _require_digest_enabled(plan)
     window_minutes = max(min(int(payload.windowMinutes or 1440), 7 * 24 * 60), 5)
     limit = max(min(int(payload.limit or 20), 200), 1)
     user_id = _resolve_lightmem_user_id(x_user_id)
@@ -421,7 +518,7 @@ def watchlist_dispatch(
     user_token = str(user_id) if user_id else None
     session_key = f"watchlist:dispatch:{tenant_token or user_token or 'global'}"
     user_memory_settings = _load_user_lightmem_settings(user_id)
-    plan_memory_enabled = _watchlist_memory_enabled(plan, user_memory_settings)
+    plan_memory_enabled = _digest_memory_enabled(plan, user_memory_settings)
     result = watchlist_service.dispatch_watchlist_digest(
         db,
         window_minutes=window_minutes,
@@ -442,6 +539,128 @@ def watchlist_dispatch(
         }
     )
     return response
+
+
+@router.get("/watchlist/schedules", response_model=WatchlistDigestScheduleListResponse)
+def list_watchlist_schedules(
+    x_user_id: Optional[str] = Header(default=None),
+    x_org_id: Optional[str] = Header(default=None),
+    plan: PlanContext = Depends(require_plan_feature("search.alerts")),
+) -> WatchlistDigestScheduleListResponse:
+    _require_digest_enabled(plan)
+    user_id = _resolve_lightmem_user_id(x_user_id)
+    org_id = _parse_uuid(x_org_id)
+    owner_filters = _owner_filters(user_id, org_id)
+    entries = watchlist_digest_schedule_service.list_schedules(owner_filters)
+    items = [
+        WatchlistDigestScheduleSchema.model_validate(_serialize_digest_schedule(entry))
+        for entry in entries
+    ]
+    return WatchlistDigestScheduleListResponse(items=items)
+
+
+@router.post(
+    "/watchlist/schedules",
+    response_model=WatchlistDigestScheduleSchema,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_watchlist_schedule(
+    payload: WatchlistDigestScheduleCreateRequest,
+    x_user_id: Optional[str] = Header(default=None),
+    x_org_id: Optional[str] = Header(default=None),
+    plan: PlanContext = Depends(require_plan_feature("search.alerts")),
+) -> WatchlistDigestScheduleSchema:
+    _require_digest_enabled(plan)
+    user_id = _resolve_lightmem_user_id(x_user_id)
+    org_id = _parse_uuid(x_org_id)
+    owner_filters = _owner_filters(user_id, org_id)
+    try:
+        entry = watchlist_digest_schedule_service.create_schedule(
+            label=payload.label,
+            owner_filters=owner_filters,
+            window_minutes=payload.windowMinutes,
+            limit=payload.limit,
+            time_of_day=payload.timeOfDay,
+            timezone_name=payload.timezone,
+            weekdays_only=payload.weekdaysOnly,
+            slack_targets=payload.slackTargets,
+            email_targets=payload.emailTargets,
+            enabled=payload.enabled,
+            actor=str(user_id or org_id or "self-service"),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "digest_schedule.invalid", "message": str(exc)},
+        ) from exc
+    return WatchlistDigestScheduleSchema.model_validate(_serialize_digest_schedule(entry))
+
+
+@router.patch(
+    "/watchlist/schedules/{schedule_id}",
+    response_model=WatchlistDigestScheduleSchema,
+)
+def update_watchlist_schedule(
+    schedule_id: uuid.UUID,
+    payload: WatchlistDigestScheduleUpdateRequest,
+    x_user_id: Optional[str] = Header(default=None),
+    x_org_id: Optional[str] = Header(default=None),
+    plan: PlanContext = Depends(require_plan_feature("search.alerts")),
+) -> WatchlistDigestScheduleSchema:
+    _require_digest_enabled(plan)
+    user_id = _resolve_lightmem_user_id(x_user_id)
+    org_id = _parse_uuid(x_org_id)
+    owner_filters = _owner_filters(user_id, org_id)
+    try:
+        entry = watchlist_digest_schedule_service.update_schedule(
+            schedule_id,
+            owner_filters=owner_filters,
+            label=payload.label,
+            window_minutes=payload.windowMinutes,
+            limit=payload.limit,
+            time_of_day=payload.timeOfDay,
+            timezone_name=payload.timezone,
+            weekdays_only=payload.weekdaysOnly,
+            slack_targets=payload.slackTargets,
+            email_targets=payload.emailTargets,
+            enabled=payload.enabled,
+            actor=str(user_id or org_id or "self-service"),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "digest_schedule.not_found", "message": "스케줄을 찾을 수 없습니다."},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "digest_schedule.invalid", "message": str(exc)},
+        ) from exc
+    return WatchlistDigestScheduleSchema.model_validate(_serialize_digest_schedule(entry))
+
+
+@router.delete(
+    "/watchlist/schedules/{schedule_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_watchlist_schedule(
+    schedule_id: uuid.UUID,
+    x_user_id: Optional[str] = Header(default=None),
+    x_org_id: Optional[str] = Header(default=None),
+    plan: PlanContext = Depends(require_plan_feature("search.alerts")),
+) -> Response:
+    _require_digest_enabled(plan)
+    user_id = _resolve_lightmem_user_id(x_user_id)
+    org_id = _parse_uuid(x_org_id)
+    owner_filters = _owner_filters(user_id, org_id)
+    try:
+        watchlist_digest_schedule_service.delete_schedule(schedule_id, owner_filters)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "digest_schedule.not_found", "message": "스케줄을 찾을 수 없습니다."},
+        ) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/watchlist/rules/{rule_id}/detail", response_model=WatchlistRuleDetailResponse)

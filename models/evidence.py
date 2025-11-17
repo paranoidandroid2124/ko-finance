@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import JSON, Column, DateTime, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 
 from database import Base
 
@@ -22,10 +22,11 @@ class EvidenceSnapshot(Base):
     payload = Column(JSONB, nullable=False)
     author = Column(String, nullable=True)
     process = Column(String, nullable=True)
+    org_id = Column(PGUUID(as_uuid=True), nullable=True, index=True)
+    user_id = Column(PGUUID(as_uuid=True), nullable=True, index=True)
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
     )
-

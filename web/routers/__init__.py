@@ -20,6 +20,7 @@ _ROUTER_MODULES = [
     "analytics",
     "company",
     "dashboard",
+    "evidence",
     "event_study",
     "health",
     "public",

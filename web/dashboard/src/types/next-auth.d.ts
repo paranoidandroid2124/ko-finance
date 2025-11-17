@@ -11,6 +11,7 @@ declare module "next-auth" {
     accessTokenExpires?: number;
     expiresIn?: number;
     onboardingRequired?: boolean;
+    orgId?: string;
   }
 
   interface JWT {
@@ -24,6 +25,7 @@ declare module "next-auth" {
     accessTokenExpires?: number | null;
     error?: string;
     onboardingRequired?: boolean;
+    orgId?: string;
   }
 
   interface Session {
@@ -32,6 +34,7 @@ declare module "next-auth" {
       plan: "free" | "starter" | "pro" | "enterprise";
       role?: "user" | "admin";
       onboardingRequired?: boolean;
+      orgId?: string;
     } & DefaultSession["user"];
     accessToken?: string;
     refreshToken?: string;

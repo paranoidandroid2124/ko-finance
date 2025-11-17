@@ -27,6 +27,42 @@ export type EvidenceSelfCheck = {
   explanation?: string | null;
 };
 
+export type EvidenceDocumentMeta = {
+  documentId?: string | null;
+  title?: string | null;
+  corpName?: string | null;
+  ticker?: string | null;
+  receiptNo?: string | null;
+  viewerUrl?: string | null;
+  downloadUrl?: string | null;
+  publishedAt?: string | null;
+};
+
+export type EvidenceTableCell = {
+  columnIndex: number;
+  headerPath: string[];
+  value?: string | null;
+  normalizedValue?: string | null;
+  numericValue?: number | null;
+  valueType?: string | null;
+  confidence?: number | null;
+};
+
+export type EvidenceTableReference = {
+  tableId?: string | null;
+  pageNumber?: number | null;
+  tableIndex?: number | null;
+  title?: string | null;
+  rowCount?: number | null;
+  columnCount?: number | null;
+  headerRows?: number | null;
+  confidence?: number | null;
+  columnHeaders?: string[][];
+  focusRowIndex?: number | null;
+  focusRowCells?: EvidenceTableCell[];
+  explorerUrl?: string | null;
+};
+
 export type EvidenceItem = {
   urnId: string;
   quote: string;
@@ -47,6 +83,11 @@ export type EvidenceItem = {
   previousAnchor?: EvidenceAnchor | null;
   previousSourceReliability?: "high" | "medium" | "low" | null;
   previousSelfCheck?: EvidenceSelfCheck | null;
+  documentTitle?: string | null;
+  documentUrl?: string | null;
+  documentDownloadUrl?: string | null;
+  documentMeta?: EvidenceDocumentMeta | null;
+  tableReference?: EvidenceTableReference | null;
 };
 
 export type EvidencePanelStatus = "loading" | "ready" | "empty" | "anchor-mismatch";
@@ -624,6 +665,11 @@ export function EvidencePanel({
   );
 }
 
-export type { EvidenceItem as EvidencePanelItem };
+export type {
+  EvidenceItem as EvidencePanelItem,
+  EvidenceDocumentMeta,
+  EvidenceTableReference,
+  EvidenceTableCell,
+};
 
 

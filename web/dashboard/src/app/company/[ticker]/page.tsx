@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -12,8 +12,9 @@ import { NewsSignalCards } from "@/components/company/NewsSignalCards";
 import { FinancialStatementsBoard } from "@/components/company/FinancialStatementsBoard";
 import { EvidenceBundleCard, FiscalAlignmentCard, RestatementRadarCard } from "@/components/company/InsightCards";
 import { RecentFilingsPanel } from "@/components/company/RecentFilingsPanel";
+import { CompanySummaryCard } from "@/components/company/CompanySummaryCard";
 import { PlanLock } from "@/components/ui/PlanLock";
-import { useCompanySnapshot } from "@/hooks/useCompanySnapshot";
+import { useCompanySnapshot, type CompanyFilingSummary, type EventItem } from "@/hooks/useCompanySnapshot";
 import { useCompanyTimeline } from "@/hooks/useCompanyTimeline";
 import { useBoards } from "@/hooks/useBoards";
 import { normalizeCompanySearchResult, type CompanySearchResult } from "@/hooks/useCompanySearch";
@@ -41,9 +42,10 @@ type CompanyHeaderProps = {
   name: string;
   ticker?: string | null;
   corpCode?: string | null;
+  sectorName?: string | null;
 };
 
-function CompanyHeader({ name, ticker, corpCode }: CompanyHeaderProps) {
+function CompanyHeader({ name, ticker, corpCode, sectorName }: CompanyHeaderProps) {
   return (
     <section className="rounded-xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
@@ -55,6 +57,11 @@ function CompanyHeader({ name, ticker, corpCode }: CompanyHeaderProps) {
             {corpCode ? <span>법인코드 {corpCode}</span> : null}
           </div>
         </div>
+        {sectorName ? (
+          <span className="rounded-full border border-border-light px-3 py-1 text-xs font-semibold text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
+            {sectorName}
+          </span>
+        ) : null}
       </div>
     </section>
   );
@@ -110,6 +117,10 @@ const relatedBoards = useMemo(() => {
   const ticker = (data.ticker ?? identifier).toUpperCase();
   return boardsData.filter((board) => board.tickers.some((value) => value.toUpperCase() === ticker));
 }, [boardsData, data, identifier]);
+const sectorName = useMemo(() => {
+  const sectorBoard = relatedBoards.find((board) => board.type === "sector");
+  return sectorBoard?.name ?? null;
+}, [relatedBoards]);
 
   useEffect(() => {
     if (!data || typeof window === "undefined") {
@@ -171,7 +182,7 @@ const relatedBoards = useMemo(() => {
     return (
       <AppShell>
         <div className="space-y-6">
-          <CompanyHeader name={data.corpName ?? identifier} ticker={data.ticker} corpCode={data.corpCode} />
+          <CompanyHeader name={data.corpName ?? identifier} ticker={data.ticker} corpCode={data.corpCode} sectorName={sectorName} />
           <RecentFilingsPanel filings={data.recentFilings} companyName={data.corpName ?? identifier} />
           <EmptyState
             title="표시할 데이터가 없습니다"
@@ -185,7 +196,7 @@ const relatedBoards = useMemo(() => {
   return (
     <AppShell>
       <div className="space-y-6">
-        <CompanyHeader name={data.corpName ?? identifier} ticker={data.ticker} corpCode={data.corpCode} />
+        <CompanyHeader name={data.corpName ?? identifier} ticker={data.ticker} corpCode={data.corpCode} sectorName={sectorName} />
 
         <nav className="flex flex-wrap gap-2 rounded-2xl border border-border-light bg-background-cardLight p-3 dark:border-border-dark dark:bg-background-cardDark">
           {TABS.map((tab) => (
@@ -206,6 +217,18 @@ const relatedBoards = useMemo(() => {
 
         {activeTab === "overview" ? (
           <section className="space-y-6">
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]">
+              <CompanySummaryCard
+                name={data.corpName ?? identifier}
+                ticker={data.ticker}
+                headline={data.latestFiling}
+                summary={data.summary}
+              />
+              <div className="space-y-6">
+                <RecentEventsSummaryCard events={data.majorEvents} />
+                <RecentFilingsPeek filings={data.recentFilings} />
+              </div>
+            </div>
             <KeyMetricsGrid metrics={data.keyMetrics} />
             <div className="grid gap-6 lg:grid-cols-3">
               <PlanLock requiredTier="pro" title="정정 영향 인사이트" description="정정 공시가 주요 지표에 미친 영향을 한눈에 살펴보세요.">
@@ -337,5 +360,120 @@ const relatedBoards = useMemo(() => {
         ) : null}
       </div>
     </AppShell>
+  );
+}
+const formatDateLabel = (value?: string | null) => {
+  if (!value) {
+    return "날짜 정보 없음";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleDateString("ko-KR");
+};
+
+type RecentEventsSummaryCardProps = {
+  events: EventItem[];
+};
+
+function RecentEventsSummaryCard({ events }: RecentEventsSummaryCardProps) {
+  if (!events.length) {
+    return (
+      <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-sm dark:border-border-dark dark:bg-background-cardDark">
+        <h3 className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">최근 감지 이벤트</h3>
+        <p className="mt-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+          최근 30일 동안 감지된 이벤트가 없습니다. Events & Alerts 탭에서 모니터링 규칙을 확인해보세요.
+        </p>
+      </section>
+    );
+  }
+
+  const primary = events[0];
+  const secondary = events.slice(1, 3);
+
+  return (
+    <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-sm dark:border-border-dark dark:bg-background-cardDark">
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">최근 감지 이벤트</h3>
+        <span className="text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">{events.length}건 추적</span>
+      </div>
+      <div className="mt-3 rounded-lg border border-border-light/70 bg-background-light/40 px-4 py-3 dark:border-border-dark/70 dark:bg-background-dark/40">
+        <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">
+          {primary.eventName ?? primary.eventType}
+        </p>
+        <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+          {formatDateLabel(primary.eventDate)} · {primary.eventType}
+        </p>
+      </div>
+      {secondary.length ? (
+        <ul className="mt-3 space-y-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+          {secondary.map((item) => (
+            <li
+              key={item.id}
+              className="flex items-center justify-between rounded-lg border border-border-light/70 px-3 py-1.5 dark:border-border-dark/70"
+            >
+              <span className="truncate">{item.eventName ?? item.eventType}</span>
+              <span>{formatDateLabel(item.eventDate)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="mt-3 text-[11px] text-text-tertiaryLight dark:text-text-tertiaryDark">
+        상세한 타임라인은 Events & Alerts 탭에서 확인하세요.
+      </p>
+    </section>
+  );
+}
+
+type RecentFilingsPeekProps = {
+  filings: CompanyFilingSummary[];
+};
+
+function RecentFilingsPeek({ filings }: RecentFilingsPeekProps) {
+  const items = filings.slice(0, 3);
+
+  const openViewer = (url?: string | null) => {
+    if (!url) {
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  return (
+    <section className="rounded-xl border border-border-light bg-background-cardLight p-5 shadow-sm dark:border-border-dark dark:bg-background-cardDark">
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">최신 공시</h3>
+        <span className="text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">
+          {filings.length ? `${filings.length}건` : "기록 없음"}
+        </span>
+      </div>
+      {items.length ? (
+        <ul className="mt-3 space-y-2">
+          {items.map((filing) => (
+            <li
+              key={filing.id ?? filing.receiptNo ?? filing.title ?? Math.random().toString(36)}
+              className="rounded-lg border border-border-light/70 px-3 py-2 dark:border-border-dark/70"
+            >
+              <button
+                type="button"
+                onClick={() => openViewer(filing.viewerUrl)}
+                className="w-full text-left text-sm font-semibold text-primary underline-offset-2 hover:underline dark:text-primary.dark"
+              >
+                {filing.reportName ?? filing.title ?? "공시 상세"}
+              </button>
+              <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                {formatDateLabel(filing.filedAt)} · {filing.category ?? "분류 미상"}
+              </p>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-3 text-xs text-text-secondaryLight dark:text-text-secondaryDark">최근에 감지된 공시가 없습니다.</p>
+      )}
+      <p className="mt-3 text-[11px] text-text-tertiaryLight dark:text-text-tertiaryDark">
+        Filings 탭에서 전체 공시 이력을 확인할 수 있습니다.
+      </p>
+    </section>
   );
 }

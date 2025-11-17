@@ -13,9 +13,10 @@ import { FilingTrendChart } from "@/components/charts/FilingTrendChart";
 import { useDashboardOverview, type DashboardWatchlistSummary } from "@/hooks/useDashboardOverview";
 import { usePlanTrialCta } from "@/hooks/usePlanTrialCta";
 import { useOnboardingStore } from "@/store/onboardingStore";
-import { useSectorSignals } from "@/hooks/useSectorSignals";
+import { useSectorSignals, type SectorSignalPoint } from "@/hooks/useSectorSignals";
 import { SectorHotspotScatter } from "@/components/sectors/SectorHotspotScatter";
 import { SectorSparkCard } from "@/components/sectors/SectorSparkCard";
+import { SectorDetailDrawer } from "@/components/sectors/SectorDetailDrawer";
 import { GlobalSearchBar } from "@/components/search/GlobalSearchBar";
 import { EventStudyExportButton } from "@/components/event-study/EventStudyExportButton";
 import { usePlanStore } from "@/store/planStore";
@@ -92,6 +93,13 @@ export default function DashboardPage() {
     });
     return Array.from(unique.values()).slice(0, 3);
   }, [sectorPoints]);
+  const [sectorDetailPoint, setSectorDetailPoint] = useState<SectorSignalPoint | null>(null);
+  const [isSectorDrawerOpen, setIsSectorDrawerOpen] = useState(false);
+  const handleSelectSector = useCallback((point: SectorSignalPoint) => {
+    setSectorDetailPoint(point);
+    setIsSectorDrawerOpen(true);
+  }, []);
+  const closeSectorDrawer = useCallback(() => setIsSectorDrawerOpen(false), []);
 
   const uniqueTickerCount = useMemo(() => {
     const set = new Set<string>();
@@ -182,6 +190,15 @@ export default function DashboardPage() {
         <EmptyState
           title="요약할 워치리스트가 없습니다"
           description="Watchlist 페이지에서 감시할 테마를 추가하면 이곳에서 요약됩니다."
+          action={
+            <button
+              type="button"
+              onClick={() => router.push("/watchlist")}
+              className="inline-flex items-center justify-center rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white shadow hover:bg-primary/90 dark:bg-primary.dark dark:hover:bg-primary.dark/90"
+            >
+              워치리스트 만들기
+            </button>
+          }
           className="border-none p-0"
         />
       );
@@ -488,10 +505,10 @@ export default function DashboardPage() {
                 </div>
                 <span className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">실시간 업데이트</span>
               </div>
-              <SectorHotspotScatter points={sectorPoints} isLoading={isSectorLoading} />
+              <SectorHotspotScatter points={sectorPoints} isLoading={isSectorLoading} onSelect={handleSelectSector} />
               <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {dashboardSparkPoints.map((point) => (
-                  <SectorSparkCard key={`dashboard-spark-${point.sector.id}`} point={point} />
+                  <SectorSparkCard key={`dashboard-spark-${point.sector.id}`} point={point} onSelect={handleSelectSector} />
                 ))}
                 {!isSectorLoading && dashboardSparkPoints.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-border-light p-4 text-xs text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
@@ -560,6 +577,7 @@ export default function DashboardPage() {
           </div>
         </section>
       </div>
+      <SectorDetailDrawer open={isSectorDrawerOpen} point={sectorDetailPoint} onClose={closeSectorDrawer} />
     </AppShell>
   );
 }

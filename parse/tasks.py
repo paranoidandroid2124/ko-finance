@@ -48,6 +48,7 @@ from parse.pdf_parser import extract_chunks
 from parse.xml_parser import extract_chunks_from_xml
 from schemas.news import NewsArticleCreate
 from services import (
+    admin_ops_service,
     alert_service,
     chat_service,
     storage_service,
@@ -62,6 +63,8 @@ from services import (
     ingest_dlq_service,
     table_extraction_service,
     rag_grid,
+    watchlist_service,
+    watchlist_digest_schedule_service,
 )
 from services.ingest_errors import FatalIngestError, TransientIngestError
 import services.lightmem_gate as lightmem_gate
@@ -163,6 +166,15 @@ def _normalize_sentiment(value: Any) -> Optional[str]:
     return None
 
 
+def _safe_uuid(value: Any) -> Optional[uuid.UUID]:
+    try:
+        if value:
+            return uuid.UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    return None
+
+
 def _persist_evidence_snapshot(
     db: Session,
     *,
@@ -170,6 +182,8 @@ def _persist_evidence_snapshot(
     evidence_payload: Dict[str, Any],
     author: Optional[str],
     process: Optional[str],
+    org_id: Optional[uuid.UUID],
+    user_id: Optional[uuid.UUID],
 ) -> Optional[Dict[str, Any]]:
     if not urn_id:
         return None
@@ -202,6 +216,8 @@ def _persist_evidence_snapshot(
         payload=evidence_payload,
         author=author,
         process=process,
+        org_id=org_id,
+        user_id=user_id,
     )
     db.add(snapshot)
     return {
@@ -421,6 +437,28 @@ def _build_vector_metadata(filing: Filing) -> Dict[str, Any]:
         "report_name": filing.report_name,
         "category": filing.category,
     }
+    urls = filing.urls if isinstance(filing.urls, Mapping) else {}
+    viewer_url = urls.get("viewer") if isinstance(urls, Mapping) else None
+    download_url = (
+        urls.get("download")
+        if isinstance(urls, Mapping)
+        else None
+    )
+    pdf_url = (
+        urls.get("pdf")
+        if isinstance(urls, Mapping)
+        else None
+    )
+    if viewer_url:
+        meta["viewer_url"] = viewer_url
+        meta["document_url"] = viewer_url
+    if download_url:
+        meta["download_url"] = download_url
+        meta.setdefault("document_url", download_url)
+    elif pdf_url:
+        meta.setdefault("document_url", pdf_url)
+    if filing.receipt_no:
+        meta["receipt_no"] = filing.receipt_no
     filed_at = filing.filed_at
     if filed_at:
         if filed_at.tzinfo is None:
@@ -1814,6 +1852,141 @@ def send_filing_digest(target_date_iso: Optional[str] = None, timeframe: str = "
         db.close()
 
 
+@shared_task(name="watchlist.run_digest_schedules")
+def run_watchlist_digest_schedules(now_iso: Optional[str] = None) -> str:
+    """Dispatch due watchlist digest schedules."""
+
+    if now_iso:
+        try:
+            now = datetime.fromisoformat(now_iso)
+        except ValueError:
+            now = datetime.now(timezone.utc)
+    else:
+        now = datetime.now(timezone.utc)
+
+    job_id = "watchlist.digest.scheduler"
+    task_identifier = f"{job_id}:{uuid.uuid4().hex[:8]}"
+    run_status = "completed"
+    run_note = "no_due_schedules"
+
+    try:
+        due_schedules = watchlist_digest_schedule_service.list_due_schedules(now=now)
+        if not due_schedules:
+            run_note = "no_due_schedules"
+            return run_note
+
+        due_count = len(due_schedules)
+        if due_count >= 10:
+            logger.warning(
+                "watchlist.digest.schedule_backlog",
+                extra={"due_count": due_count},
+            )
+
+        db = SessionLocal()
+        dispatched = 0
+        plan_blocked = 0
+        try:
+            for entry in due_schedules:
+                schedule_id = uuid.UUID(entry["id"])
+                plan_context = plan_service.get_active_plan_context()
+                if not plan_context.memory_digest_enabled:
+                    plan_blocked += 1
+                    watchlist_digest_schedule_service.mark_dispatched(
+                        schedule_id,
+                        dispatched_at=now,
+                        next_run=None,
+                        status="skipped",
+                        last_error="digest_disabled",
+                    )
+                    logger.info(
+                        "watchlist.digest.schedule.skipped",
+                        extra={"scheduleId": str(schedule_id), "reason": "digest_disabled"},
+                    )
+                    continue
+                user_id_str = entry.get("user_id")
+                org_id_str = entry.get("org_id")
+                owner_filters: Dict[str, Optional[uuid.UUID]] = {}
+                if org_id_str:
+                    try:
+                        owner_filters["org_id"] = uuid.UUID(org_id_str)
+                    except ValueError:
+                        owner_filters["org_id"] = None
+                if user_id_str:
+                    try:
+                        owner_filters["user_id"] = uuid.UUID(user_id_str)
+                    except ValueError:
+                        owner_filters["user_id"] = None
+
+                try:
+                    watchlist_service.dispatch_watchlist_digest(
+                        db,
+                        window_minutes=int(entry.get("window_minutes") or 1440),
+                        limit=int(entry.get("limit") or 20),
+                        slack_targets=entry.get("slack_targets") or [],
+                        email_targets=entry.get("email_targets") or [],
+                        owner_filters={key: value for key, value in owner_filters.items() if value},
+                        plan_memory_enabled=plan_context.memory_digest_enabled,
+                        session_id=f"watchlist:schedule:{schedule_id}",
+                        tenant_id=org_id_str,
+                        user_id_hint=user_id_str,
+                    )
+                except Exception as exc:  # pragma: no cover - schedule resilience
+                    logger.warning(
+                        "watchlist.digest.schedule_failed",
+                        extra={"scheduleId": str(schedule_id), "error": str(exc)},
+                        exc_info=True,
+                    )
+                    watchlist_digest_schedule_service.mark_dispatched(
+                        schedule_id,
+                        dispatched_at=now,
+                        next_run=None,
+                        status="failed",
+                        last_error=str(exc),
+                    )
+                else:
+                    dispatched += 1
+                    watchlist_digest_schedule_service.mark_dispatched(
+                        schedule_id,
+                        dispatched_at=now,
+                        next_run=None,
+                        status="success",
+                        last_error=None,
+                    )
+        finally:
+            db.close()
+
+        logger.info(
+            "watchlist.digest.schedule_run",
+            extra={"count": dispatched, "plan_blocked": plan_blocked},
+        )
+        if dispatched == 0 and plan_blocked == due_count:
+            run_note = "digest_disabled"
+        else:
+            run_note = f"dispatched:{dispatched}"
+            if plan_blocked:
+                run_note += f"|plan_blocked:{plan_blocked}"
+        return run_note
+    except Exception as exc:
+        run_status = "failed"
+        run_note = f"error:{exc}"
+        raise
+    finally:
+        try:
+            admin_ops_service.append_run_history(
+                task_id=task_identifier,
+                job_id=job_id,
+                task="watchlist.run_digest_schedules",
+                status=run_status,
+                actor="system",
+                note=run_note,
+                started_at=now.isoformat(),
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+        except Exception:  # pragma: no cover
+            logger.debug("Failed to append digest schedule run history", exc_info=True)
+
+
+
 def _parse_reference_date(target_date_iso: Optional[str]) -> date:
     if target_date_iso:
         try:
@@ -2076,6 +2249,8 @@ def snapshot_evidence_diff(payload: Dict[str, Any]) -> Dict[str, Any]:
     author = payload.get("author")
     process = payload.get("process") or "api.rag"
     trace_id = payload.get("trace_id")
+    owner_org_id = _safe_uuid(payload.get("org_id"))
+    owner_user_id = _safe_uuid(payload.get("user_id"))
 
     try:
         for item in evidence_items:
@@ -2088,6 +2263,8 @@ def snapshot_evidence_diff(payload: Dict[str, Any]) -> Dict[str, Any]:
                 evidence_payload=item,
                 author=author,
                 process=process,
+                org_id=owner_org_id,
+                user_id=owner_user_id,
             )
             if result:
                 stored.append(result)

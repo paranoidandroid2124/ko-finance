@@ -41,3 +41,30 @@ def test_sync_entitlement_subscription_uses_fallback(monkeypatch: pytest.MonkeyP
     assert captured["org_id"] == fallback_org
     assert captured["plan_slug"] == "starter"
     assert captured["metadata"]["fallback"]["orgId"] == str(fallback_org)
+
+
+def test_sync_entitlement_subscription_uses_metadata_org(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = {}
+
+    def _fake_sync_subscription(org_id, plan_slug, status, current_period_end, metadata):
+        captured["org_id"] = org_id
+        captured["plan_slug"] = plan_slug
+        captured["status"] = status
+        captured["metadata"] = metadata
+
+    monkeypatch.setattr(payments.entitlement_service, "sync_subscription_from_billing", _fake_sync_subscription)
+
+    org_id = uuid.uuid4()
+    event = {"data": {"status": "DONE", "metadata": {"orgId": str(org_id)}}}
+    result = payments._sync_entitlement_subscription(
+        plan_slug="pro",
+        status="DONE",
+        order_id="kfinance-pro-321",
+        event=event,
+        log_context={},
+    )
+
+    assert result == org_id
+    assert captured["org_id"] == org_id
+    assert captured["plan_slug"] == "pro"
+    assert captured["metadata"]["orderId"] == "kfinance-pro-321"

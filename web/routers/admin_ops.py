@@ -40,10 +40,12 @@ from schemas.api.admin import (
     AdminOpsTriggerResponse,
     AdminOpsQuickActionRequest,
     AdminOpsQuickActionResponse,
+    AdminAlertPresetUsageResponse,
     PromptChannel,
 )
 from services import admin_ops_service
 from services.admin_audit import append_audit_log
+from services.alerts import summarize_preset_usage
 from web.deps_admin import require_admin_session
 from web.routers.admin_rag import _perform_reindex
 
@@ -225,6 +227,18 @@ def trigger_schedule(
         payload={"jobId": job_id, "taskId": task_id, "note": payload.note},
     )
     return AdminOpsTriggerResponse(jobId=job_id, taskId=task_id, status="queued")
+
+
+@router.get(
+    "/alert-presets/usage",
+    response_model=AdminAlertPresetUsageResponse,
+    summary="알림 프리셋 사용량 요약을 조회합니다.",
+)
+def read_alert_preset_usage(
+    window_days: int = Query(default=14, ge=1, le=90, description="집계 기간(일)."),
+) -> AdminAlertPresetUsageResponse:
+    stats = summarize_preset_usage(window_days=window_days)
+    return AdminAlertPresetUsageResponse(**stats)
 
 
 @router.post(

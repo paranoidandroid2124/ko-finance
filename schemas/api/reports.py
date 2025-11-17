@@ -116,6 +116,7 @@ class DigestPreviewResponse(BaseModel):
     periodLabel: str = Field(..., description="기간 표시 문자열.")
     generatedAtLabel: str = Field(..., description="생성 시각 표시 문자열.")
     sourceLabel: Optional[str] = Field(default=None, description="데이터 출처 표시.")
+    emailHtml: Optional[str] = Field(default=None, description="이메일 템플릿 미리보기.")
     news: List[DigestNewsItem] = Field(default_factory=list)
     watchlist: List[DigestWatchlistItem] = Field(default_factory=list)
     sentiment: Optional[DigestSentimentBlock] = None

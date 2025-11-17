@@ -456,6 +456,28 @@ class AdminOpsTriggerResponse(AdminBaseModel):
     status: str = Field(..., description="실행 상태(queued|running).")
 
 
+class AdminAlertPresetUsageEntry(AdminBaseModel):
+    presetId: str = Field(..., description="프리셋 식별자.")
+    bundle: Optional[str] = Field(default=None, description="소속된 번들 이름.")
+    count: int = Field(..., description="집계 기간 동안 생성된 횟수.")
+    lastUsedAt: Optional[datetime] = Field(default=None, description="가장 최근 실행 시각.")
+    channelTotals: Dict[str, int] = Field(default_factory=dict, description="채널별 생성 횟수.")
+
+
+class AdminAlertPresetBundleUsage(AdminBaseModel):
+    bundle: str = Field(..., description="번들 식별자.")
+    count: int = Field(..., description="집계 기간 동안의 총 실행 횟수.")
+
+
+class AdminAlertPresetUsageResponse(AdminBaseModel):
+    generatedAt: datetime = Field(..., description="데이터 생성 시각.")
+    windowDays: int = Field(..., description="집계 기간(일).")
+    totalLaunches: int = Field(..., description="전체 프리셋 생성 횟수.")
+    presets: List[AdminAlertPresetUsageEntry] = Field(default_factory=list, description="프리셋별 사용량.")
+    bundles: List[AdminAlertPresetBundleUsage] = Field(default_factory=list, description="번들별 사용량.")
+    planTotals: Dict[str, int] = Field(default_factory=dict, description="플랜 티어별 프리셋 생성 횟수.")
+
+
 QuickActionName = Literal["seed-news", "aggregate-sentiment", "rebuild-rag"]
 
 
@@ -951,6 +973,9 @@ __all__ = [
     "AdminOpsScheduleSchema",
     "AdminOpsTriggerRequest",
     "AdminOpsTriggerResponse",
+    "AdminAlertPresetUsageEntry",
+    "AdminAlertPresetUsageResponse",
+    "AdminAlertPresetBundleUsage",
     "AdminOpsQuickActionRequest",
     "AdminOpsQuickActionResponse",
     "AdminRagConfigResponse",

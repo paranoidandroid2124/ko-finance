@@ -58,6 +58,55 @@ export type EventStudyEventsResponse = {
   events: EventStudyEvent[];
 };
 
+export type EventStudyWindowPreset = {
+  key: string;
+  label: string;
+  description?: string | null;
+  start: number;
+  end: number;
+};
+
+export type EventStudyWindowListResponse = {
+  windows: EventStudyWindowPreset[];
+  defaultKey: string;
+};
+
+export type EventStudyMetricsQuery = {
+  windowKey?: string;
+  eventType: string;
+  ticker: string;
+  sig?: number;
+  capBuckets?: string[];
+  markets?: string[];
+  startDate?: string;
+  endDate?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type EventStudyMetricsResponse = {
+  windowKey: string;
+  windowLabel: string;
+  start: number;
+  end: number;
+  eventType: string;
+  ticker?: string | null;
+  capBucket?: string | null;
+  scope: string;
+  significance: number;
+  n: number;
+  hitRate: number;
+  meanCaar: number;
+  ciLo: number;
+  ciHi: number;
+  pValue: number;
+  aar: EventStudyPoint[];
+  caar: EventStudyPoint[];
+  dist: Array<{ bin: number; range: [number, number]; count: number }>;
+  events: EventStudyEventsResponse;
+};
+
 export type EventStudySummaryQuery = {
   start: number;
   end: number;
@@ -143,6 +192,53 @@ const fetchEventStudyEvents = async (query: EventStudyEventsQuery): Promise<Even
   return (await response.json()) as EventStudyEventsResponse;
 };
 
+const fetchEventStudyWindows = async (): Promise<EventStudyWindowListResponse> => {
+  const response = await fetch(`${resolveApiBase()}/api/v1/event-study/windows`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error("이벤트 윈도우 프리셋을 불러오지 못했습니다.");
+  }
+  return (await response.json()) as EventStudyWindowListResponse;
+};
+
+const fetchEventStudyMetrics = async (query: EventStudyMetricsQuery): Promise<EventStudyMetricsResponse> => {
+  const params = new URLSearchParams();
+  if (query.windowKey) {
+    params.set("windowKey", query.windowKey);
+  }
+  params.set("eventType", query.eventType);
+  params.set("ticker", query.ticker);
+  if (typeof query.sig === "number") {
+    params.set("sig", String(query.sig));
+  }
+  appendListParam(
+    params,
+    "capBuckets",
+    query.capBuckets?.map((value) => value.toUpperCase()),
+  );
+  appendListParam(params, "markets", query.markets);
+  if (query.startDate) {
+    params.set("startDate", query.startDate);
+  }
+  if (query.endDate) {
+    params.set("endDate", query.endDate);
+  }
+  if (query.search) {
+    params.set("search", query.search);
+  }
+  params.set("limit", String(query.limit ?? 50));
+  params.set("offset", String(query.offset ?? 0));
+
+  const response = await fetch(`${resolveApiBase()}/api/v1/event-study/metrics?${params.toString()}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error("이벤트 스터디 메트릭을 불러오지 못했습니다.");
+  }
+  return (await response.json()) as EventStudyMetricsResponse;
+};
+
 export const useEventStudySummary = (
   params: EventStudySummaryQuery,
   options?: { enabled?: boolean },
@@ -156,12 +252,33 @@ export const useEventStudySummary = (
 };
 
 export const useEventStudyEvents = (
-  params: EventStudyEventsQuery,
-  options?: { enabled?: boolean },
+    params: EventStudyEventsQuery,
+    options?: { enabled?: boolean },
 ) => {
-  return useQuery<EventStudyEventsResponse>({
+    return useQuery<EventStudyEventsResponse>({
     queryKey: ["event-study-events", params],
     queryFn: () => fetchEventStudyEvents(params),
+    staleTime: 30_000,
+        placeholderData: keepPreviousData,
+        enabled: options?.enabled ?? true,
+    });
+};
+
+export const useEventStudyWindows = () => {
+  return useQuery<EventStudyWindowListResponse>({
+    queryKey: ["event-study-windows"],
+    queryFn: fetchEventStudyWindows,
+    staleTime: 30 * 60 * 1000,
+  });
+};
+
+export const useEventStudyMetrics = (
+  params: EventStudyMetricsQuery,
+  options?: { enabled?: boolean },
+) => {
+  return useQuery<EventStudyMetricsResponse>({
+    queryKey: ["event-study-metrics", params],
+    queryFn: () => fetchEventStudyMetrics(params),
     staleTime: 30_000,
     placeholderData: keepPreviousData,
     enabled: options?.enabled ?? true,

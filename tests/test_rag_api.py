@@ -41,7 +41,7 @@ app.include_router(rag.router, prefix="/api/v1")
 client = TestClient(app)
 
 
-def fake_diff_metadata(_db, evidence):
+def fake_diff_metadata(_db, evidence, trace_id=None):
     for item in evidence:
         if isinstance(item, dict):
             item.setdefault("diff_type", "created")

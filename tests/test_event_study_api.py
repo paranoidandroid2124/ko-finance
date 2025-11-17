@@ -63,6 +63,18 @@ def seed_event_data(session: Session) -> None:
     session.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS market_cap NUMERIC"))
     session.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS cap_bucket TEXT"))
     session.execute(text("ALTER TABLE event_summary ADD COLUMN IF NOT EXISTS cap_bucket TEXT DEFAULT 'ALL'"))
+    session.execute(
+        text(
+            """
+            INSERT INTO event_windows (key, label, description, start_offset, end_offset, default_significance, display_order, is_default)
+            VALUES
+                ('window_short', '[-5,+5]', 'short window', -5, 5, 0.1, 10, FALSE),
+                ('window_medium', '[-5,+20]', 'default window', -5, 20, 0.1, 20, TRUE),
+                ('window_long', '[-10,+30]', 'long window', -10, 30, 0.1, 30, FALSE)
+            ON CONFLICT (key) DO NOTHING
+            """
+        )
+    )
     session.commit()
     filing = Filing(
         id=uuid.uuid4(),
@@ -231,6 +243,17 @@ def test_event_study_events_listing(event_study_client):
     assert cap_payload["events"][0]["capBucket"] == "MID"
 
 
+def test_event_study_windows_endpoint(event_study_client):
+    client, session = event_study_client
+    seed_event_data(session)
+
+    response = client.get("/api/v1/event-study/windows")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["defaultKey"] == "window_medium"
+    assert any(window["key"] == "window_long" for window in payload["windows"])
+
+
 def test_event_study_event_detail(event_study_client):
     client, session = event_study_client
     seed_event_data(session)
@@ -242,6 +265,26 @@ def test_event_study_event_detail(event_study_client):
     assert len(payload["series"]) == 5
     assert payload["capBucket"] == "LARGE"
     assert payload["marketCap"] == pytest.approx(5_000_000_000_000)
+
+
+def test_event_study_metrics_endpoint(event_study_client):
+    client, session = event_study_client
+    seed_event_data(session)
+
+    response = client.get(
+        "/api/v1/event-study/metrics",
+        params={
+            "eventType": "BUYBACK",
+            "ticker": "005930",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["windowKey"] == "window_medium"
+    assert payload["eventType"] == "BUYBACK"
+    assert payload["ticker"] == "005930"
+    assert payload["n"] == 1
+    assert payload["events"]["total"] == 1
 
 
 def test_event_study_export_endpoint(event_study_client, monkeypatch, tmp_path: Path):

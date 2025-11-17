@@ -1,14 +1,9 @@
 "use client";
 
 import { notFound } from "next/navigation";
-import { useMemo } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { EvidenceWorkspace } from "@/components/evidence/EvidenceWorkspace";
-import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
-import { ErrorState } from "@/components/ui/ErrorState";
-import { useCompanyTimeline } from "@/hooks/useCompanyTimeline";
 import type { EvidencePanelItem } from "@/components/evidence";
-import type { TimelineSparklinePoint } from "@/components/company/TimelineSparkline";
 import { usePlanUpgrade } from "@/hooks/usePlanUpgrade";
 
 const SAMPLE_PDF =
@@ -79,47 +74,12 @@ const SAMPLE_REMOVED: EvidencePanelItem[] = [
   },
 ];
 
-const TIMELINE_DEFAULT_POINTS = [
-  {
-    date: "2025-11-10",
-    sentimentZ: 0.42,
-    priceClose: 71200,
-    volume: 320000,
-    eventType: "실적 발표",
-    evidenceUrnIds: ["urn:chunk:sample-1"],
-  },
-  {
-    date: "2025-11-15",
-    sentimentZ: 0.21,
-    priceClose: 70650,
-    volume: 298000,
-    eventType: "시장 브리핑",
-    evidenceUrnIds: ["urn:chunk:sample-2"],
-  },
-  {
-    date: "2025-11-20",
-    sentimentZ: -0.12,
-    priceClose: 69900,
-    volume: 410000,
-    eventType: "리스크 업데이트",
-  },
-] satisfies TimelineSparklinePoint[];
-
 export default function EvidenceLabPage() {
   if (process.env.NEXT_PUBLIC_ENABLE_LABS !== "true") {
     notFound();
   }
 
-  const ticker = "005930";
-  const { data, isLoading, isError } = useCompanyTimeline(ticker, 180);
   const { requestUpgrade } = usePlanUpgrade();
-
-  const timelinePoints = useMemo(() => {
-    if (data?.points && data.points.length > 0) {
-      return data.points;
-    }
-    return TIMELINE_DEFAULT_POINTS;
-  }, [data?.points]);
 
   return (
     <AppShell>
@@ -129,29 +89,20 @@ export default function EvidenceLabPage() {
             Evidence Workspace Prototype
           </h1>
           <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
-            EvidencePanel v2와 TimelineSparkline 연동을 확인하는 실험용 화면입니다. 샘플 데이터와 삼성전자({ticker}) 타임라인 API를 조합합니다.
+            EvidencePanel v2와 TimelineSparkline 연동을 확인하는 실험용 화면입니다. 샘플 데이터와 삼성전자 타임라인
+            API를 조합합니다.
           </p>
         </header>
 
-        {isLoading ? (
-          <SkeletonBlock lines={8} />
-        ) : isError ? (
-          <ErrorState
-            title="타임라인 데이터를 불러오지 못했습니다"
-            description="네트워크 상태를 확인하고 다시 시도해 주세요."
-          />
-        ) : (
-          <EvidenceWorkspace
-            planTier="pro"
-            evidence={SAMPLE_EVIDENCE}
-            timeline={timelinePoints}
-            pdfUrl={SAMPLE_PDF}
-            pdfDownloadUrl={SAMPLE_PDF}
-            diffEnabled
-            diffRemoved={SAMPLE_REMOVED}
-            onRequestUpgrade={requestUpgrade}
-          />
-        )}
+        <EvidenceWorkspace
+          planTier="pro"
+          evidence={SAMPLE_EVIDENCE}
+          pdfUrl={SAMPLE_PDF}
+          pdfDownloadUrl={SAMPLE_PDF}
+          diffEnabled
+          diffRemoved={SAMPLE_REMOVED}
+          onRequestUpgrade={requestUpgrade}
+        />
       </div>
     </AppShell>
   );

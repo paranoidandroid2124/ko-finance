@@ -21,12 +21,14 @@ from schemas.api.event_study import (
     EventStudyEventsResponse,
     EventStudyExportRequest,
     EventStudyExportResponse,
+    EventStudyMetricsResponse,
     EventStudyPoint,
     EventStudySeriesPoint,
     EventStudySummaryItem,
     EventStudySummaryResponse,
+    EventStudyWindowListResponse,
 )
-from services import event_study_report, report_renderer
+from services import event_study_report, event_study_service, report_renderer
 from services.audit_log import record_audit_event
 from services.evidence_package import make_evidence_bundle
 from services.plan_service import PlanContext
@@ -46,6 +48,15 @@ def _normalize_str_list(values: Optional[List[str]]) -> List[str]:
         if stripped:
             cleaned.append(stripped.upper())
     return cleaned
+
+
+def _normalize_single_value(value: Optional[str]) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    return stripped.upper()
 
 
 def _window_key(start: int, end: int) -> str:
@@ -72,6 +83,129 @@ def _convert_points(rows: Optional[Sequence[dict]], metric_key: str) -> List[Eve
         except (TypeError, ValueError):
             continue
     return points
+
+
+def _fetch_event_rows(
+    db: Session,
+    *,
+    limit: int,
+    offset: int,
+    window_end: int,
+    event_types: Optional[Sequence[str]],
+    ticker: Optional[str],
+    markets: Optional[Sequence[str]],
+    cap_buckets: Optional[Sequence[str]],
+    start_date: Optional[date],
+    end_date: Optional[date],
+    search_query: Optional[str],
+) -> EventStudyEventsResponse:
+    base_query = (
+        db.query(EventRecord, Filing.market)
+        .outerjoin(Filing, Filing.receipt_no == EventRecord.rcept_no)
+    )
+    if event_types:
+        base_query = base_query.filter(EventRecord.event_type.in_(event_types))
+    if ticker:
+        base_query = base_query.filter(EventRecord.ticker == ticker)
+    if start_date:
+        base_query = base_query.filter(EventRecord.event_date >= start_date)
+    if end_date:
+        base_query = base_query.filter(EventRecord.event_date <= end_date)
+    if markets:
+        base_query = base_query.filter(Filing.market.in_(markets))
+    if cap_buckets:
+        base_query = base_query.filter(EventRecord.cap_bucket.in_(cap_buckets))
+    if search_query:
+        like_term = f"%{search_query}%"
+        base_query = base_query.filter(
+            or_(
+                EventRecord.corp_name.ilike(like_term),
+                EventRecord.ticker.ilike(like_term),
+            )
+        )
+
+    total = base_query.count()
+    rows = (
+        base_query.order_by(EventRecord.event_date.desc(), EventRecord.rcept_no.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    receipt_nos = [row.EventRecord.rcept_no for row in rows]
+    caar_map: dict[str, Optional[float]] = {}
+    peak_map: dict[str, Tuple[float, int]] = {}
+    if receipt_nos:
+        all_series = (
+            db.query(EventStudyResult)
+            .filter(EventStudyResult.rcept_no.in_(receipt_nos))
+            .all()
+        )
+        for series_row in all_series:
+            key = series_row.rcept_no
+            if series_row.t == window_end:
+                caar_map[key] = _to_float(series_row.car)
+            if series_row.ar is None:
+                continue
+            current_abs = abs(float(series_row.ar))
+            existing = peak_map.get(key)
+            if existing is None or current_abs > existing[0]:
+                peak_map[key] = (current_abs, series_row.t)
+
+    events: List[EventStudyEventItem] = []
+    for record, market in rows:
+        peak_day = peak_map.get(record.rcept_no, (None, None))[1] if record.rcept_no in peak_map else None
+        events.append(
+            EventStudyEventItem(
+                receipt_no=record.rcept_no,
+                corp_code=record.corp_code,
+                corp_name=record.corp_name,
+                ticker=record.ticker,
+                event_type=record.event_type,
+                market=market,
+                event_date=record.event_date,
+                amount=_to_float(record.amount),
+                ratio=_to_float(record.ratio),
+                method=record.method,
+                score=_to_float(record.score),
+                caar=caar_map.get(record.rcept_no),
+                aar_peak_day=peak_day,
+                viewer_url=record.source_url,
+                cap_bucket=(record.cap_bucket or None),
+                market_cap=_to_float(record.market_cap),
+            )
+        )
+
+    return EventStudyEventsResponse(
+        total=total,
+        limit=limit,
+        offset=offset,
+        window_end=window_end,
+        events=events,
+    )
+
+
+@router.get("/windows", response_model=EventStudyWindowListResponse)
+def list_event_windows(
+    *,
+    db: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature("timeline.full")),
+) -> EventStudyWindowListResponse:
+    presets = event_study_service.list_window_presets(db)
+    default_key = event_study_service.default_window_key(db)
+    return EventStudyWindowListResponse(
+        default_key=default_key,
+        windows=[
+            {
+                "key": preset.key,
+                "label": preset.label,
+                "description": preset.description,
+                "start": preset.start,
+                "end": preset.end,
+            }
+            for preset in presets
+        ],
+    )
 
 
 @router.get("/summary", response_model=EventStudySummaryResponse)
@@ -156,6 +290,88 @@ def get_event_study_summary(
     )
 
 
+@router.get("/metrics", response_model=EventStudyMetricsResponse)
+def get_event_study_metrics(
+    *,
+    window_key: Optional[str] = Query(default=None, alias="windowKey"),
+    event_type: str = Query(..., alias="eventType"),
+    ticker: str = Query(...),
+    significance: float = Query(0.1, alias="sig", gt=0.0, le=0.5),
+    start_date: Optional[date] = Query(default=None, alias="startDate"),
+    end_date: Optional[date] = Query(default=None, alias="endDate"),
+    cap_buckets: Optional[List[str]] = Query(default=None, alias="capBuckets"),
+    markets: Optional[List[str]] = Query(default=None, alias="markets"),
+    search: Optional[str] = Query(default=None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature("timeline.full")),
+) -> EventStudyMetricsResponse:
+    normalized_type = _normalize_single_value(event_type)
+    normalized_ticker = _normalize_single_value(ticker)
+    if not normalized_type:
+        raise HTTPException(status_code=400, detail="eventType is required")
+    if not normalized_ticker:
+        raise HTTPException(status_code=400, detail="ticker is required")
+
+    normalized_caps = _normalize_str_list(cap_buckets)
+    normalized_markets = _normalize_str_list(markets)
+    search_query = search.strip() if isinstance(search, str) and search.strip() else None
+
+    preset = event_study_service.resolve_window_preset(db, window_key)
+    summary = event_study_service.compute_event_metrics(
+        db,
+        event_type=normalized_type,
+        window=(preset.start, preset.end),
+        ticker=normalized_ticker,
+        markets=normalized_markets or None,
+        cap_buckets=normalized_caps or None,
+        start_date=start_date,
+        end_date=end_date,
+        search=search_query,
+        significance=significance,
+        min_samples=1,
+    )
+    if not summary:
+        raise HTTPException(status_code=404, detail="No events matched the requested filters")
+
+    events_response = _fetch_event_rows(
+        db,
+        limit=limit,
+        offset=offset,
+        window_end=preset.end,
+        event_types=[normalized_type],
+        ticker=normalized_ticker,
+        markets=normalized_markets or None,
+        cap_buckets=normalized_caps or None,
+        start_date=start_date,
+        end_date=end_date,
+        search_query=search_query,
+    )
+
+    return EventStudyMetricsResponse(
+        window_key=preset.key,
+        window_label=preset.label,
+        start=preset.start,
+        end=preset.end,
+        event_type=normalized_type,
+        ticker=normalized_ticker,
+        cap_bucket=normalized_caps[0] if normalized_caps else None,
+        scope="market",
+        significance=significance,
+        n=summary.n,
+        hit_rate=summary.hit_rate,
+        mean_caar=summary.mean_caar,
+        ci_lo=summary.ci_lo,
+        ci_hi=summary.ci_hi,
+        p_value=summary.p_value,
+        aar=_convert_points(summary.aar, "aar"),
+        caar=_convert_points(summary.caar, "caar"),
+        dist=summary.dist,
+        events=events_response,
+    )
+
+
 @router.get("/events", response_model=EventStudyEventsResponse)
 def list_event_study_events(
     *,
@@ -176,86 +392,18 @@ def list_event_study_events(
     normalized_cap_buckets = _normalize_str_list(cap_buckets)
     search_query = search.strip() if isinstance(search, str) and search.strip() else None
 
-    base_query = (
-        db.query(EventRecord, Filing.market)
-        .outerjoin(Filing, Filing.receipt_no == EventRecord.rcept_no)
-    )
-    if normalized_types:
-        base_query = base_query.filter(EventRecord.event_type.in_(normalized_types))
-    if start_date:
-        base_query = base_query.filter(EventRecord.event_date >= start_date)
-    if end_date:
-        base_query = base_query.filter(EventRecord.event_date <= end_date)
-    if normalized_markets:
-        base_query = base_query.filter(Filing.market.in_(normalized_markets))
-    if normalized_cap_buckets:
-        base_query = base_query.filter(EventRecord.cap_bucket.in_(normalized_cap_buckets))
-    if search_query:
-        like_term = f"%{search_query}%"
-        base_query = base_query.filter(
-            or_(
-                EventRecord.corp_name.ilike(like_term),
-                EventRecord.ticker.ilike(like_term),
-            )
-        )
-
-    total = base_query.count()
-    rows = (
-        base_query.order_by(EventRecord.event_date.desc(), EventRecord.rcept_no.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
-
-    receipt_nos = [row.EventRecord.rcept_no for row in rows]
-    caar_map: dict[str, Optional[float]] = {}
-    peak_map: dict[str, Optional[int]] = {}
-    if receipt_nos:
-        all_series = (
-            db.query(EventStudyResult)
-            .filter(EventStudyResult.rcept_no.in_(receipt_nos))
-            .all()
-        )
-        for series_row in all_series:
-            key = series_row.rcept_no
-            if series_row.t == window_end:
-                caar_map[key] = _to_float(series_row.car)
-            if series_row.ar is None:
-                continue
-            current_abs = abs(float(series_row.ar))
-            existing = peak_map.get(key)
-            if existing is None or current_abs > existing[0]:
-                peak_map[key] = (current_abs, series_row.t)
-
-    events: List[EventStudyEventItem] = []
-    for record, market in rows:
-        events.append(
-            EventStudyEventItem(
-                receipt_no=record.rcept_no,
-                corp_code=record.corp_code,
-                corp_name=record.corp_name,
-                ticker=record.ticker,
-                event_type=record.event_type,
-                market=market,
-                event_date=record.event_date,
-                amount=_to_float(record.amount),
-                ratio=_to_float(record.ratio),
-                method=record.method,
-                score=_to_float(record.score),
-                caar=caar_map.get(record.rcept_no),
-                aar_peak_day=peak_map.get(record.rcept_no, (None, None))[1] if record.rcept_no in peak_map else None,
-                viewer_url=record.source_url,
-                cap_bucket=(record.cap_bucket or None),
-                market_cap=_to_float(record.market_cap),
-            )
-        )
-
-    return EventStudyEventsResponse(
-        total=total,
+    return _fetch_event_rows(
+        db,
         limit=limit,
         offset=offset,
         window_end=window_end,
-        events=events,
+        event_types=normalized_types or None,
+        ticker=None,
+        markets=normalized_markets or None,
+        cap_buckets=normalized_cap_buckets or None,
+        start_date=start_date,
+        end_date=end_date,
+        search_query=search_query,
     )
 
 

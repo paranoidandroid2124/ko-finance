@@ -15,12 +15,14 @@ import {
   generateAlertSampleMetadata,
   fetchOpsRunHistory,
   fetchOpsSchedules,
+  fetchAlertPresetUsage,
   fetchRagConfig,
   fetchRagReindexHistory,
   fetchRagReindexQueue,
   fetchRagSlaSummary,
   fetchSystemPrompts,
   fetchUiUxSettings,
+  fetchAlertPresetUsage,
   triggerOpsSchedule,
   triggerRagReindex,
   retryRagReindexQueue,
@@ -64,6 +66,7 @@ import {
   type AdminOpsScheduleList,
   type AdminOpsTriggerPayload,
   type AdminOpsTriggerResult,
+  type AdminAlertPresetUsageResponse,
   type AdminRagConfig,
   type AdminUiUxSettingsResponse,
   type AdminUiUxSettingsUpdatePayload,
@@ -106,6 +109,7 @@ export const ADMIN_OPS_API_KEYS_KEY = ["admin", "ops", "apiKeys"] as const;
 export const ADMIN_OPS_RUN_HISTORY_KEY = ["admin", "ops", "runHistory"] as const;
 export const ADMIN_ALERT_TEMPLATES_KEY = ["admin", "ops", "alertTemplates"] as const;
 export const ADMIN_OPS_ALERT_CHANNELS_KEY = ["admin", "ops", "alertChannels"] as const;
+export const ADMIN_ALERT_PRESET_USAGE_KEY = ["admin", "ops", "alertPresets", "usage"] as const;
 
 export const useLlmProfiles = (enabled = true) =>
   useQuery<AdminLlmProfileList, Error>({
@@ -442,5 +446,14 @@ export const useOpsRunHistory = (enabled = true) =>
     queryFn: fetchOpsRunHistory,
     enabled,
     staleTime: 30_000,
+    retry: shouldRetry,
+  });
+
+export const useAlertPresetUsage = (windowDays = 14, enabled = true) =>
+  useQuery<AdminAlertPresetUsageResponse, Error>({
+    queryKey: [...ADMIN_ALERT_PRESET_USAGE_KEY, windowDays],
+    queryFn: () => fetchAlertPresetUsage(windowDays),
+    enabled,
+    staleTime: 60_000,
     retry: shouldRetry,
   });

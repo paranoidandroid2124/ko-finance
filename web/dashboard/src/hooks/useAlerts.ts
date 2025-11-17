@@ -22,6 +22,12 @@ import {
   type WatchlistRadarResponse,
   type WatchlistRadarRequest,
   type WatchlistRuleDetailResponse,
+  fetchWatchlistSchedules,
+  createWatchlistSchedule,
+  updateWatchlistSchedule,
+  deleteWatchlistSchedule,
+  type WatchlistDigestSchedule,
+  type WatchlistDigestSchedulePayload,
   updateAlertRule,
 } from "@/lib/alertsApi";
 
@@ -166,3 +172,43 @@ export const useAlertEventMatches = (params: { limit?: number; since?: string } 
     queryFn: () => fetchAlertEventMatches(params),
     staleTime: 60_000,
   });
+
+const WATCHLIST_SCHEDULES_QUERY_KEY = ["watchlist", "digest-schedules"] as const;
+
+export const useWatchlistSchedules = (enabled = true) =>
+  useQuery<WatchlistDigestSchedule[]>({
+    queryKey: WATCHLIST_SCHEDULES_QUERY_KEY,
+    queryFn: fetchWatchlistSchedules,
+    enabled,
+    staleTime: 30_000,
+  });
+
+export const useCreateWatchlistSchedule = () => {
+  const queryClient = useQueryClient();
+  return useMutation<WatchlistDigestSchedule, Error, WatchlistDigestSchedulePayload>({
+    mutationFn: (payload) => createWatchlistSchedule(payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: WATCHLIST_SCHEDULES_QUERY_KEY });
+    },
+  });
+};
+
+export const useUpdateWatchlistSchedule = () => {
+  const queryClient = useQueryClient();
+  return useMutation<WatchlistDigestSchedule, Error, { id: string; payload: WatchlistDigestSchedulePayload }>({
+    mutationFn: ({ id, payload }) => updateWatchlistSchedule(id, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: WATCHLIST_SCHEDULES_QUERY_KEY });
+    },
+  });
+};
+
+export const useDeleteWatchlistSchedule = () => {
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: (id) => deleteWatchlistSchedule(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: WATCHLIST_SCHEDULES_QUERY_KEY });
+    },
+  });
+};

@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import pytest
 
+from fastapi import HTTPException
+
 from services.plan_guard import PlanGuardError, ensure_entitlement, ensure_worker_entitlement
 from services.plan_service import PlanContext, PlanQuota
+from web.deps import require_plan_feature
 
 
 def _make_plan(
@@ -52,3 +55,11 @@ def test_ensure_worker_entitlement_uses_active_context(monkeypatch: pytest.Monke
     monkeypatch.setattr("services.plan_guard.get_active_plan_context", fake_context)
     resolved = ensure_worker_entitlement("evidence.inline_pdf")
     assert resolved is plan
+
+
+def test_require_plan_feature_dependency_blocks_missing_entitlement() -> None:
+    plan = _make_plan(tier="free", entitlements=set())
+    dependency = require_plan_feature("rag.core")
+    with pytest.raises(HTTPException) as exc:
+        dependency(plan=plan)
+    assert exc.value.status_code == 403

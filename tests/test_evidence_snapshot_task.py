@@ -1,4 +1,5 @@
 import types
+import uuid
 
 import parse.tasks as tasks
 
@@ -23,12 +24,16 @@ def test_snapshot_evidence_diff_dispatch(monkeypatch):
     monkeypatch.setattr(tasks, "SessionLocal", lambda: dummy_session)
 
     stored_records = [{"urn_id": "urn:chunk:1", "snapshot_hash": "hash-1", "diff_type": "created"}]
+    expected_org_id = uuid.uuid4()
+    expected_user_id = uuid.uuid4()
 
-    def fake_persist(db, urn_id, evidence_payload, author, process):
+    def fake_persist(db, urn_id, evidence_payload, author, process, org_id, user_id):
         assert db is dummy_session
         assert urn_id == "urn:chunk:1"
         assert author == "tester"
         assert process == "api.rag.query"
+        assert org_id == expected_org_id
+        assert user_id == expected_user_id
         return stored_records[0]
 
     monkeypatch.setattr(tasks, "_persist_evidence_snapshot", fake_persist)
@@ -39,6 +44,8 @@ def test_snapshot_evidence_diff_dispatch(monkeypatch):
             "author": "tester",
             "process": "api.rag.query",
             "evidence": [{"urn_id": "urn:chunk:1"}],
+            "org_id": str(expected_org_id),
+            "user_id": str(expected_user_id),
         }
     )
 
@@ -62,6 +69,8 @@ def test_snapshot_evidence_diff_handles_errors(monkeypatch):
             "author": None,
             "process": "api.rag.query",
             "evidence": [{"urn_id": "urn:chunk:2"}],
+            "org_id": None,
+            "user_id": None,
         }
     )
 

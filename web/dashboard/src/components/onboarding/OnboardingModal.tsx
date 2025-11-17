@@ -1,13 +1,15 @@
-﻿"use client";
+"use client";
 
-import { useCallback, useEffect } from "react";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { CheckCircle2, Sparkles, X } from "lucide-react";
 
 import { useOnboardingStore } from "@/store/onboardingStore";
 
 export function OnboardingModal() {
-  const { data: session, update } = useSession();
+  const router = useRouter();
+  const { data: session } = useSession();
   const onboardingRequired = Boolean(session?.onboardingRequired ?? session?.user?.onboardingRequired);
   const needsOnboarding = useOnboardingStore((state) => state.needsOnboarding);
   const dismissed = useOnboardingStore((state) => state.dismissed);
@@ -15,7 +17,6 @@ export function OnboardingModal() {
   const loading = useOnboardingStore((state) => state.loading);
   const fetchContent = useOnboardingStore((state) => state.fetchContent);
   const markDismissed = useOnboardingStore((state) => state.markDismissed);
-  const completeOnboarding = useOnboardingStore((state) => state.completeOnboarding);
   const setNeedsOnboarding = useOnboardingStore((state) => state.setNeedsOnboarding);
 
   useEffect(() => {
@@ -28,18 +29,10 @@ export function OnboardingModal() {
     }
   }, [needsOnboarding, content, fetchContent, loading]);
 
-  const handleComplete = useCallback(async () => {
-    if (!content) {
-      return;
-    }
-    try {
-      const completedSteps = content.checklist.map((item) => item.id);
-      await completeOnboarding(completedSteps);
-      await update?.({ onboardingRequired: false });
-    } catch (error) {
-      console.error("Failed to complete onboarding", error);
-    }
-  }, [completeOnboarding, content, update]);
+  const handleStartWizard = () => {
+    router.push("/onboarding");
+    markDismissed();
+  };
 
   if (!needsOnboarding || dismissed) {
     return null;
@@ -142,10 +135,10 @@ export function OnboardingModal() {
             <button
               type="button"
               className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
-              onClick={handleComplete}
+              onClick={handleStartWizard}
               disabled={!content}
             >
-              시작했어요
+              온보딩 페이지 열기
             </button>
           </div>
         </div>

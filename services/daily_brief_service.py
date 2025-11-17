@@ -33,6 +33,7 @@ from services.id_utils import normalize_uuid
 from services.aggregation.news_statistics import build_top_topics, summarize_news_signals
 from services.daily_brief_renderer import render_daily_brief
 from services.watchlist_utils import is_watchlist_rule
+from services.digest import render_daily_digest_email
 
 import llm.llm_service as llm_service
 
@@ -953,7 +954,7 @@ def build_digest_preview(
         period_label = _format_digest_period_label(ref_date, normalized_timeframe)
         generated_label = datetime.now(KST).strftime("%Y-%m-%d %H:%M (%Z)")
 
-        return {
+        result: Dict[str, Any] = {
             "timeframe": normalized_timeframe,
             "periodLabel": period_label,
             "generatedAtLabel": generated_label,
@@ -965,6 +966,10 @@ def build_digest_preview(
             "llmOverview": watchlist_payload.get("llmOverview"),
             "llmPersonalNote": watchlist_payload.get("llmPersonalNote"),
         }
+        email_html = render_daily_digest_email(result)
+        if email_html:
+            result["emailHtml"] = email_html
+        return result
     finally:
         if owns_session:
             db.close()

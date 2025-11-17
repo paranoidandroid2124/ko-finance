@@ -42,6 +42,16 @@ PLAN_CONSTRAINTS: Dict[str, Dict[str, Any]] = {
         "min_evaluation_interval_minutes": 15,
         "max_daily_triggers": 10,
     },
+    "starter": {
+        "max_alerts": 5,
+        "channels": ("email", "telegram"),
+        "default_evaluation_interval_minutes": 15,
+        "default_window_minutes": 360,
+        "default_cooldown_minutes": 120,
+        "min_cooldown_minutes": 15,
+        "min_evaluation_interval_minutes": 5,
+        "max_daily_triggers": 20,
+    },
     "pro": {
         "max_alerts": 10,
         "channels": ("email", "telegram"),

@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse, Response
 from services.plan_service import resolve_plan_context
 from web import routers
 from web.middleware.auth_context import auth_context_middleware
+from web.middleware.audit_trail import audit_trail_middleware
 from web.middleware.rbac import rbac_context_middleware
 
 try:  # pragma: no cover - optional dependency
@@ -54,6 +55,12 @@ async def apply_rbac_context(request: Request, call_next):
     return await rbac_context_middleware(request, call_next)
 
 
+@app.middleware("http")
+async def track_sensitive_requests(request: Request, call_next):
+    """Record audit trails for privileged or export endpoints."""
+    return await audit_trail_middleware(request, call_next)
+
+
 @app.get("/", summary="Health Check", tags=["Default"])
 def health_check():
     """API 상태를 확인하는 헬스 체크 엔드포인트입니다."""
@@ -92,6 +99,7 @@ app.include_router(routers.search.router, prefix="/api/v1")
 app.include_router(routers.sectors.router, prefix="/api/v1")
 app.include_router(routers.company.router, prefix="/api/v1")
 app.include_router(routers.event_study.router, prefix="/api/v1")
+app.include_router(routers.evidence.router, prefix="/api/v1")
 app.include_router(routers.payments.router, prefix="/api/v1")
 app.include_router(routers.plan.router, prefix="/api/v1")
 app.include_router(routers.onboarding.router, prefix="/api/v1")

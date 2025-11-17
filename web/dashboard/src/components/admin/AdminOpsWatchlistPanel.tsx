@@ -8,6 +8,7 @@ import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { FilterChip } from "@/components/ui/FilterChip";
 import { EventMatchList } from "@/components/watchlist/EventMatchList";
 import { useWatchlistRadar, useAlertEventMatches } from "@/hooks/useAlerts";
+import { useAlertPresetUsage } from "@/hooks/useAdminConfig";
 import type { AlertEventMatch, WatchlistRadarItem } from "@/lib/alertsApi";
 import { formatKoreanDateTime } from "@/lib/datetime";
 import type { ToastInput } from "@/store/toastStore";
@@ -62,6 +63,7 @@ export function AdminOpsWatchlistPanel({ adminActor: _adminActor, toast }: Admin
 
   const { data, isLoading, isFetching, error, refetch } = useWatchlistRadar(watchlistRequest);
   const { data: eventMatchesData, isLoading: isEventMatchLoading } = useAlertEventMatches({ limit: 10 });
+  const { data: presetUsageData, isLoading: isPresetUsageLoading } = useAlertPresetUsage(14, true);
   const summary = data?.summary;
   const items = data?.items ?? EMPTY_ITEMS;
   const generatedAtLabel =
@@ -204,6 +206,55 @@ export function AdminOpsWatchlistPanel({ adminActor: _adminActor, toast }: Admin
           ))}
         </section>
       )}
+
+      <section className="rounded-xl border border-border-light bg-background-base p-4 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+        {isPresetUsageLoading ? (
+          <SkeletonBlock lines={3} />
+        ) : (
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-text-tertiaryLight dark:text-text-tertiaryDark">
+                프리셋 온보딩 · 최근 {presetUsageData?.windowDays ?? 14}일
+              </p>
+              <h4 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">
+                총 {numberFormatter.format(presetUsageData?.totalLaunches ?? 0)}회 생성
+              </h4>
+              <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
+                Top Preset:{" "}
+                {presetUsageData?.presets?.[0]
+                  ? `${presetUsageData.presets[0].name ?? presetUsageData.presets[0].presetId} (${numberFormatter.format(presetUsageData.presets[0].count)}회)`
+                  : "데이터 없음"}
+              </p>
+              {presetUsageData?.presets?.[0]?.lastUsedAt ? (
+                <p className="text-xs text-text-tertiaryLight dark:text-text-tertiaryDark">
+                  최근 실행: {formatKoreanDateTime(presetUsageData.presets[0].lastUsedAt, { includeSeconds: false })}
+                </p>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+              {Object.entries(presetUsageData?.presets?.[0]?.channelTotals ?? {}).map(([channel, count]) => (
+                <span
+                  key={`preset-channel-${channel}`}
+                  className="inline-flex items-center gap-1 rounded-full border border-border-light px-2 py-0.5 dark:border-border-dark"
+                >
+                  {CHANNEL_LABEL_MAP[channel] ?? channel}
+                  <span className="font-semibold text-text-primaryLight dark:text-text-primaryDark">
+                    {numberFormatter.format(count)}
+                  </span>
+                </span>
+              ))}
+              {presetUsageData?.bundles?.[0] ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-border-light px-2 py-0.5 dark:border-border-dark">
+                  번들 {presetUsageData.bundles[0].label ?? presetUsageData.bundles[0].bundle}
+                  <span className="font-semibold text-text-primaryLight dark:text-text-primaryDark">
+                    {numberFormatter.format(presetUsageData.bundles[0].count)}
+                  </span>
+                </span>
+              ) : null}
+            </div>
+          </div>
+        )}
+      </section>
 
       {failedCount > 0 ? (
         <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">

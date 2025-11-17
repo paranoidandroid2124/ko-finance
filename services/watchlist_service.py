@@ -5,19 +5,18 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 import threading
 import time
 
 from sqlalchemy import func
-from jinja2 import Environment, FileSystemLoader, TemplateNotFound, select_autoescape
 from sqlalchemy.orm import Session
 
 from core.logging import get_logger
 from models.alert import AlertDelivery, AlertRule
 from core.env import env_int
 from services import notification_service
+from services.digest import render_watchlist_digest_email
 from services.memory.facade import MEMORY_SERVICE
 from llm import llm_service
 from services.watchlist_tasks import generate_watchlist_personal_note_task
@@ -25,30 +24,14 @@ from services.watchlist_utils import is_watchlist_rule
 
 logger = get_logger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-EMAIL_TEMPLATE_DIR = REPO_ROOT / "templates" / "email"
-EMAIL_TEMPLATE_NAME = "watchlist_digest.html.jinja"
 PERSONAL_NOTE_MAX_CALLS = env_int("WATCHLIST_PERSONAL_NOTE_MAX_CALLS", 1, minimum=0)
 PERSONAL_NOTE_CACHE_SECONDS = env_int("WATCHLIST_PERSONAL_NOTE_CACHE_SECONDS", 3600, minimum=60)
 PERSONAL_NOTE_MIN_INTERVAL_SECONDS = env_int("WATCHLIST_PERSONAL_NOTE_MIN_INTERVAL_SECONDS", 2, minimum=0)
 PERSONAL_NOTE_TASK_TIMEOUT_SECONDS = env_int("WATCHLIST_PERSONAL_NOTE_TASK_TIMEOUT_SECONDS", 30, minimum=5)
 
-_EMAIL_ENV: Optional[Environment] = None
 _PERSONAL_NOTE_CACHE_LOCK = threading.Lock()
 _PERSONAL_NOTE_CACHE: Dict[str, "PersonalNoteCacheEntry"] = {}
 _PERSONAL_NOTE_LAST_CALL = 0.0
-
-
-def _get_email_env() -> Environment:
-    global _EMAIL_ENV
-    if _EMAIL_ENV is None:
-        _EMAIL_ENV = Environment(
-            loader=FileSystemLoader(EMAIL_TEMPLATE_DIR),
-            autoescape=select_autoescape(["html", "xml"]),
-            trim_blocks=True,
-            lstrip_blocks=True,
-        )
-    return _EMAIL_ENV
 
 
 def _string_list(value: Any) -> List[str]:
@@ -909,22 +892,7 @@ def render_watchlist_slack(payload: Mapping[str, Any], *, max_items: int = 5) ->
 
 
 def render_watchlist_email(payload: Mapping[str, Any]) -> str:
-    env = _get_email_env()
-    try:
-        template = env.get_template(EMAIL_TEMPLATE_NAME)
-    except TemplateNotFound as exc:  # pragma: no cover - deployment guard
-        raise RuntimeError(f"Watchlist digest template '{EMAIL_TEMPLATE_NAME}' not found.") from exc
-    context = {
-        "generated_at": payload.get("generatedAt"),
-        "window_start": payload.get("summary", {}).get("windowStart"),
-        "window_end": payload.get("summary", {}).get("windowEnd"),
-        "window_minutes": payload.get("windowMinutes"),
-        "summary": payload.get("summary") or {},
-        "items": payload.get("items") or [],
-        "llm_overview": payload.get("llmOverview"),
-        "llm_personal_note": payload.get("llmPersonalNote"),
-    }
-    return template.render(**context)
+    return render_watchlist_digest_email(payload)
 
 
 def dispatch_watchlist_digest(

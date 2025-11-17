@@ -17,6 +17,23 @@ class EventStudyPoint(BaseModel):
     model_config = ConfigDict(populate_by_name=True, json_schema_extra={"examples": [{"t": 0, "value": 0.0123}]})
 
 
+class EventStudyWindowItem(BaseModel):
+    """Canonical event window preset metadata."""
+
+    key: str
+    label: str
+    start: int
+    end: int
+    description: Optional[str] = None
+
+
+class EventStudyWindowListResponse(BaseModel):
+    """List of preset windows along with the default key."""
+
+    windows: List[EventStudyWindowItem]
+    default_key: str = Field(..., alias="defaultKey")
+
+
 class EventStudyHistogramBin(BaseModel):
     """Histogram bin describing CAAR distribution."""
 
@@ -110,6 +127,30 @@ class EventStudyEventDetail(BaseModel):
     series: List[EventStudySeriesPoint] = Field(default_factory=list)
     cap_bucket: Optional[str] = Field(default=None, serialization_alias="capBucket")
     market_cap: Optional[float] = Field(default=None, serialization_alias="marketCap")
+
+
+class EventStudyMetricsResponse(BaseModel):
+    """Combined cohort metrics and supporting events for a ticker/event type."""
+
+    window_key: str = Field(..., alias="windowKey")
+    window_label: str = Field(..., alias="windowLabel")
+    start: int
+    end: int
+    event_type: str = Field(..., alias="eventType")
+    ticker: Optional[str] = None
+    cap_bucket: Optional[str] = Field(default=None, alias="capBucket")
+    scope: str
+    significance: float
+    n: int
+    hit_rate: float = Field(..., alias="hitRate")
+    mean_caar: float = Field(..., alias="meanCaar")
+    ci_lo: float = Field(..., alias="ciLo")
+    ci_hi: float = Field(..., alias="ciHi")
+    p_value: float = Field(..., alias="pValue")
+    aar: List[EventStudyPoint]
+    caar: List[EventStudyPoint]
+    dist: List[EventStudyHistogramBin]
+    events: EventStudyEventsResponse
 
 
 class EventStudyExportRequest(BaseModel):

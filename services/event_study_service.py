@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 import math
 from collections import defaultdict
+from dataclasses import dataclass
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from statistics import NormalDist
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from sqlalchemy import and_, asc
+from sqlalchemy import and_, asc, or_
 from sqlalchemy.orm import Session
 
 from core.env import env_str
@@ -25,11 +27,20 @@ from models.event_study import (
 )
 from models.security_metadata import SecurityMetadata
 from models.filing import Filing
-from services.event_extractor import EventAttributes, extract_event_attributes, get_event_rule_metadata
+from services.event_extractor import EventAttributes, extract_event_attributes
+from services.event_study_windows import (
+    EventWindowPreset,
+    format_window_label,
+    get_default_window_key,
+    get_event_window_preset,
+    get_event_window_span,
+    list_event_window_presets,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_BENCHMARK_SYMBOL = env_str("EVENT_STUDY_BENCHMARK", "KOSPI")
+DEFAULT_SIGNIFICANCE = 0.1
 
 _EVENT_TYPES: Tuple[str, ...] = (
     "BUYBACK",
@@ -43,20 +54,20 @@ _EVENT_TYPES: Tuple[str, ...] = (
 )
 _CAP_BUCKETS: Tuple[str, ...] = ("ALL", "LARGE", "MID", "SMALL")
 
-
-_DOMAIN_EVENT_WINDOWS: Dict[str, Tuple[int, int]] = {
-    "REGULATORY": (-1, 3),
-    "LEGAL": (-1, 5),
-    "ESG": (0, 3),
-    "CYBER": (0, 3),
-    "GUIDANCE": (-1, 1),
-    "FIN": (0, 3),
-    "PRODUCT": (0, 3),
-    "SUPPLY": (0, 5),
-    "CREDIT": (0, 3),
-    "MARKET": (0, 1),
-}
 _MARKET_CLOSE_HOUR = 16
+
+
+@dataclass
+class CohortSummary:
+    n: int
+    aar: List[Dict[str, float]]
+    caar: List[Dict[str, float]]
+    dist: List[Dict[str, float]]
+    hit_rate: float
+    mean_caar: float
+    ci_lo: float
+    ci_hi: float
+    p_value: float
 
 
 def ingest_events_from_filings(
@@ -162,17 +173,17 @@ def update_event_study_series(
     *,
     benchmark_symbol: str = DEFAULT_BENCHMARK_SYMBOL,
     estimation_window: Tuple[int, int] = (-120, -10),
-    event_window: Tuple[int, int] = (-5, 20),
+    event_window: Optional[Tuple[int, int]] = None,
 ) -> int:
     """Compute AR/CAR for events that lack time-series entries."""
 
     results_created = 0
+    window = event_window or get_event_window_span(db)
     events = db.query(EventRecord).all()
     for event in events:
         if not event.ticker or not event.event_date:
             continue
 
-        window = _resolve_event_window(event_window, event.event_type)
         existing = (
             db.query(EventStudyResult)
             .filter(
@@ -216,89 +227,132 @@ def aggregate_event_summaries(
     db: Session,
     *,
     as_of: date,
-    window: Tuple[int, int] = (-5, 20),
+    window_keys: Optional[Sequence[str]] = None,
     scope: str = "market",
+    significance: float = DEFAULT_SIGNIFICANCE,
+    min_samples: int = 5,
 ) -> int:
     """Aggregate AAR/CAAR statistics per event type."""
 
-    start, end = window
-    event_types = list(_EVENT_TYPES)
+    presets = list_event_window_presets(db)
+    if window_keys:
+        key_set = {key.lower() for key in window_keys}
+        presets = [preset for preset in presets if preset.key.lower() in key_set]
+    if not presets:
+        presets = list_event_window_presets(db)
 
     summaries_created = 0
-    for event_type in event_types:
-        for cap_bucket in _CAP_BUCKETS:
-            events_query = (
-                db.query(EventRecord)
-                .filter(EventRecord.event_type == event_type, EventRecord.event_date != None)  # noqa: E711
-            )
-            if cap_bucket != "ALL":
-                events_query = events_query.filter(EventRecord.cap_bucket == cap_bucket)
-            events = events_query.all()
-            if not events:
-                continue
-
-            aar_accumulator: Dict[int, List[float]] = defaultdict(list)
-            car_samples: List[float] = []
-
-            for event in events:
-                series = (
-                    db.query(EventStudyResult)
-                    .filter(
-                        EventStudyResult.rcept_no == event.rcept_no,
-                        EventStudyResult.t >= start,
-                        EventStudyResult.t <= end,
-                    )
-                    .order_by(asc(EventStudyResult.t))
-                    .all()
+    for preset in presets:
+        window_label = format_window_label(preset.start, preset.end)
+        for event_type in _EVENT_TYPES:
+            for cap_bucket in _CAP_BUCKETS:
+                events_query = (
+                    db.query(EventRecord)
+                    .filter(EventRecord.event_type == event_type, EventRecord.event_date != None)  # noqa: E711
                 )
-                if len(series) < (end - start + 1):
+                if cap_bucket != "ALL":
+                    events_query = events_query.filter(EventRecord.cap_bucket == cap_bucket)
+                events = events_query.all()
+                if not events:
                     continue
-                for row in series:
-                    if row.ar is not None:
-                        aar_accumulator[row.t].append(float(row.ar))
-                final_car = next((row.car for row in series if row.t == end), None)
-                if final_car is not None:
-                    car_samples.append(float(final_car))
 
-            if len(car_samples) < 5:
-                continue
+                summary = _build_cohort_summary(
+                    db,
+                    events,
+                    start=preset.start,
+                    end=preset.end,
+                    significance=significance or float(preset.significance or DEFAULT_SIGNIFICANCE),
+                    min_samples=min_samples,
+                )
+                if not summary:
+                    continue
 
-            aar_points = []
-            caar_points = []
-            cumulative = 0.0
-            for t in range(start, end + 1):
-                values = aar_accumulator.get(t, [])
-                aar_value = sum(values) / len(values) if values else 0.0
-                cumulative += aar_value
-                aar_points.append({"t": t, "aar": round(aar_value, 6)})
-                caar_points.append({"t": t, "caar": round(cumulative, 6)})
-
-            stats = _compute_summary_stats(car_samples)
-            histogram = _build_histogram(car_samples)
-
-            payload = EventSummary(
-                asof=as_of,
-                event_type=event_type,
-                window=f"[{start},{end}]",
-                scope=scope,
-                cap_bucket=cap_bucket,
-                filters={"capBucket": cap_bucket} if cap_bucket != "ALL" else None,
-                n=stats["n"],
-                aar=aar_points,
-                caar=caar_points,
-                hit_rate=stats["hit_rate"],
-                mean_caar=stats["mean"],
-                ci_lo=stats["ci_lo"],
-                ci_hi=stats["ci_hi"],
-                p_value=stats["p_value"],
-                dist=histogram,
-            )
-            db.merge(payload)
-            summaries_created += 1
+                payload = EventSummary(
+                    asof=as_of,
+                    event_type=event_type,
+                    window=window_label,
+                    scope=scope,
+                    cap_bucket=cap_bucket,
+                    filters={"capBucket": cap_bucket} if cap_bucket != "ALL" else None,
+                    n=summary.n,
+                    aar=summary.aar,
+                    caar=summary.caar,
+                    hit_rate=summary.hit_rate,
+                    mean_caar=summary.mean_caar,
+                    ci_lo=summary.ci_lo,
+                    ci_hi=summary.ci_hi,
+                    p_value=summary.p_value,
+                    dist=summary.dist,
+                )
+                db.merge(payload)
+                summaries_created += 1
 
     if summaries_created:
         db.commit()
     return summaries_created
+
+
+def list_window_presets(db: Session) -> List[EventWindowPreset]:
+    return list_event_window_presets(db)
+
+
+def resolve_window_preset(db: Session, window_key: Optional[str] = None) -> EventWindowPreset:
+    return get_event_window_preset(window_key, db)
+
+
+def default_window_key(db: Session) -> str:
+    return get_event_window_preset(None, db).key
+
+
+def compute_event_metrics(
+    db: Session,
+    *,
+    event_type: str,
+    window: Tuple[int, int],
+    ticker: Optional[str] = None,
+    markets: Optional[Sequence[str]] = None,
+    cap_buckets: Optional[Sequence[str]] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    search: Optional[str] = None,
+    significance: float = DEFAULT_SIGNIFICANCE,
+    min_samples: int = 1,
+) -> Optional[CohortSummary]:
+    query = (
+        db.query(EventRecord)
+        .outerjoin(Filing, Filing.receipt_no == EventRecord.rcept_no)
+        .filter(EventRecord.event_type == event_type, EventRecord.event_date != None)  # noqa: E711
+    )
+    if ticker:
+        query = query.filter(EventRecord.ticker == ticker.upper())
+    if start_date:
+        query = query.filter(EventRecord.event_date >= start_date)
+    if end_date:
+        query = query.filter(EventRecord.event_date <= end_date)
+    if markets:
+        query = query.filter(Filing.market.in_(markets))
+    if cap_buckets:
+        query = query.filter(EventRecord.cap_bucket.in_(cap_buckets))
+    if search:
+        like_term = f"%{search.strip()}%"
+        query = query.filter(
+            or_(
+                EventRecord.corp_name.ilike(like_term),
+                EventRecord.ticker.ilike(like_term),
+            )
+        )
+
+    events = query.all()
+    if not events:
+        return None
+    return _build_cohort_summary(
+        db,
+        events,
+        start=window[0],
+        end=window[1],
+        significance=significance,
+        min_samples=min_samples,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -358,12 +412,77 @@ def _compute_event_returns(
     return ar_car_series
 
 
-def _resolve_event_window(default_window: Tuple[int, int], event_type: Optional[str]) -> Tuple[int, int]:
-    if not event_type:
-        return default_window
-    metadata = get_event_rule_metadata(event_type)
-    domain = metadata["domain"] if metadata and "domain" in metadata else "FIN"
-    return _DOMAIN_EVENT_WINDOWS.get(domain, default_window)
+def _build_cohort_summary(
+    db: Session,
+    events: Sequence[EventRecord],
+    *,
+    start: int,
+    end: int,
+    significance: float,
+    min_samples: int,
+) -> Optional[CohortSummary]:
+    if not events:
+        return None
+    receipt_nos = [event.rcept_no for event in events if event.event_date]
+    if not receipt_nos:
+        return None
+
+    rows = (
+        db.query(EventStudyResult)
+        .filter(
+            EventStudyResult.rcept_no.in_(receipt_nos),
+            EventStudyResult.t >= start,
+            EventStudyResult.t <= end,
+        )
+        .order_by(EventStudyResult.rcept_no.asc(), EventStudyResult.t.asc())
+        .all()
+    )
+    series_by_event: Dict[str, List[EventStudyResult]] = defaultdict(list)
+    for row in rows:
+        series_by_event[row.rcept_no].append(row)
+
+    expected_length = end - start + 1
+    aar_accumulator: Dict[int, List[float]] = defaultdict(list)
+    car_samples: List[float] = []
+
+    for event in events:
+        series = sorted(series_by_event.get(event.rcept_no, []), key=lambda value: value.t)
+        if len(series) < expected_length:
+            continue
+        for entry in series:
+            if entry.ar is not None:
+                aar_accumulator[entry.t].append(float(entry.ar))
+        final_car = next((entry.car for entry in series if entry.t == end), None)
+        if final_car is not None:
+            car_samples.append(float(final_car))
+
+    if len(car_samples) < max(1, min_samples):
+        return None
+
+    aar_points: List[Dict[str, float]] = []
+    caar_points: List[Dict[str, float]] = []
+    cumulative = 0.0
+    for t in range(start, end + 1):
+        values = aar_accumulator.get(t, [])
+        aar_value = sum(values) / len(values) if values else 0.0
+        cumulative += aar_value
+        aar_points.append({"t": t, "aar": round(aar_value, 6)})
+        caar_points.append({"t": t, "caar": round(cumulative, 6)})
+
+    stats = _compute_summary_stats(car_samples, significance=significance)
+    histogram = _build_histogram(car_samples)
+
+    return CohortSummary(
+        n=stats["n"],
+        aar=aar_points,
+        caar=caar_points,
+        dist=histogram,
+        hit_rate=stats["hit_rate"],
+        mean_caar=stats["mean"],
+        ci_lo=stats["ci_lo"],
+        ci_hi=stats["ci_hi"],
+        p_value=stats["p_value"],
+    )
 
 
 def _load_returns(
@@ -416,7 +535,7 @@ def _fit_market_model(
     return alpha, beta
 
 
-def _compute_summary_stats(samples: Sequence[float]) -> Dict[str, float]:
+def _compute_summary_stats(samples: Sequence[float], *, significance: float = DEFAULT_SIGNIFICANCE) -> Dict[str, float]:
     n = len(samples)
     if n == 0:
         return {"n": 0, "hit_rate": 0.0, "mean": 0.0, "ci_lo": 0.0, "ci_hi": 0.0, "p_value": 1.0}
@@ -426,17 +545,15 @@ def _compute_summary_stats(samples: Sequence[float]) -> Dict[str, float]:
     variance = sum((value - m) ** 2 for value in samples) / max(1, n - 1)
     stddev = math.sqrt(variance)
     se = stddev / math.sqrt(n)
-    ci = 1.96 * se
-    p_value = _approx_p_value(m, se) if se > 0 else 1.0
+    alpha = min(0.5, max(1e-4, significance or DEFAULT_SIGNIFICANCE))
+    normal_dist = NormalDist()
+    ci = normal_dist.inv_cdf(1 - alpha / 2) * se if se > 0 else 0.0
+    if se > 0:
+        z = m / se
+        p_value = 2 * (1 - normal_dist.cdf(abs(z)))
+    else:
+        p_value = 1.0
     return {"n": n, "hit_rate": hit_rate, "mean": m, "ci_lo": m - ci, "ci_hi": m + ci, "p_value": p_value}
-
-
-def _approx_p_value(mean_value: float, se: float) -> float:
-    if se <= 0:
-        return 1.0
-    z = mean_value / se
-    p = 0.5 * math.erfc(abs(z) / math.sqrt(2))
-    return max(1e-6, min(1.0, p))
 
 
 def _build_histogram(samples: Sequence[float], bins: int = 12) -> List[Dict[str, float]]:

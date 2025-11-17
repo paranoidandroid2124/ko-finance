@@ -42,6 +42,9 @@ entries:
   daily-brief-pdf:
     task: m4.generate_daily_brief
     cron: "30 7 * * mon-fri"
+  watchlist-digest-scheduler:
+    task: watchlist.run_digest_schedules
+    cron: "*/5 * * * *"
   lightmem-longterm-update:
     task: memory.promote_long_term
     cron: "15 3 * * *"

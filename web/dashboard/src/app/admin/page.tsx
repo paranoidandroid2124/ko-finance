@@ -3,18 +3,20 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 
+import { AdminBillingPanel } from "@/components/admin/AdminBillingPanel";
 import { AdminGuardrailPanel } from "@/components/admin/AdminGuardrailPanel";
 import { AdminLlmPanel } from "@/components/admin/AdminLlmPanel";
 import { AdminOpsPanel } from "@/components/admin/AdminOpsPanel";
+import { AdminOrgRbacPanel } from "@/components/admin/AdminOrgRbacPanel";
 import { AdminRagPanel } from "@/components/admin/AdminRagPanel";
 import { AdminReportsPanel } from "@/components/admin/AdminReportsPanel";
-import { AdminUiUxPanel } from "@/components/admin/AdminUiUxPanel";
+import { AdminAlertPresetUsagePanel } from "@/components/admin/AdminAlertPresetUsagePanel";
 import { AdminTokenLoginCard } from "@/components/admin/AdminTokenLoginCard";
+import { AdminUiUxPanel } from "@/components/admin/AdminUiUxPanel";
+import { AdminWebhookPanel } from "@/components/admin/AdminWebhookPanel";
 import { PlanQuickActionsPanel } from "@/components/admin/PlanQuickActionsPanel";
-import { TossWebhookAuditPanel } from "@/components/admin/TossWebhookAuditPanel";
 import { AdminShell } from "@/components/layout/AdminShell";
 import { PlanAlertOverview } from "@/components/plan/PlanAlertOverview";
-import { PlanSummaryCard } from "@/components/plan/PlanSummaryCard";
 import { PlanTierPreview } from "@/components/plan/PlanTierPreview";
 import { useAlertRules } from "@/hooks/useAlerts";
 import { useAdminSession } from "@/hooks/useAdminSession";
@@ -50,6 +52,20 @@ const CONFIG_SECTIONS: Section[] = [
     description: "의도 필터, 금지어, 안내 문구를 조정해 안전망을 강화해요.",
     bullets: ["Intent rules", "Blocklist", "Friendly fallback"],
     actionLabel: "Guardrail 다듬기",
+  },
+  {
+    id: "billing",
+    title: "결제 & 플랜",
+    description: "현재 워크스페이스 플랜과 청구 주기를 점검해요.",
+    bullets: ["플랜 요약", "만료일 확인", "업셀 경로"],
+    actionLabel: "청구 관리",
+  },
+  {
+    id: "rbac",
+    title: "조직 & RBAC",
+    description: "구성원 역할과 초대 상태를 빠르게 확인합니다.",
+    bullets: ["역할 배정", "초대 내역", "보안 가시성"],
+    actionLabel: "구성원 설정",
   },
   {
     id: "rag",
@@ -109,6 +125,13 @@ const OPERATIONS_SECTIONS: Section[] = [
     description: "텔레그램, 이메일, 웹훅 채널을 살펴보고 업데이트해요.",
     bullets: ["채널 구성", "메시지 템플릿", "에스컬레이션"],
     actionLabel: "알림 조정",
+  },
+  {
+    id: "webhooks",
+    title: "웹훅 & 키 관리",
+    description: "토스 웹훅 서명 키와 최근 전달 로그를 모니터링해요.",
+    bullets: ["전달 로그", "서명 검증", "재전송 워크플로"],
+    actionLabel: "웹훅 살펴보기",
   },
 ];
 
@@ -253,6 +276,10 @@ export default function AdminPage() {
         return <AdminLlmPanel />;
       case "guardrails":
         return <AdminGuardrailPanel />;
+      case "billing":
+        return <AdminBillingPanel />;
+      case "rbac":
+        return <AdminOrgRbacPanel />;
       case "rag":
         return <AdminRagPanel />;
       case "news-pipeline":
@@ -263,6 +290,8 @@ export default function AdminPage() {
         return <AdminOpsPanel sections={["integrations"]} />;
       case "alerts":
         return <AdminOpsPanel sections={["alerts"]} />;
+      case "webhooks":
+        return <AdminWebhookPanel />;
       case "watchlist":
         return <AdminOpsPanel sections={["watchlist"]} />;
       case "reports":
@@ -286,12 +315,13 @@ export default function AdminPage() {
         <AdminTokenLoginCard />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[2fr,1fr]">
-        <PlanQuickActionsPanel />
+      <div className="grid gap-6 xl:grid-cols-[1.5fr,1fr]">
+        <AdminBillingPanel compact />
         <div className="space-y-6">
-          <PlanSummaryCard />
+          <PlanQuickActionsPanel />
           <PlanAlertOverview plan={alertPlan} loading={isAlertPlanLoading} error={alertPlanErrorMessage} />
-          <TossWebhookAuditPanel />
+          <AdminOrgRbacPanel compact />
+          <AdminWebhookPanel />
         </div>
       </div>
 
@@ -358,6 +388,8 @@ export default function AdminPage() {
           {activePanel}
         </section>
       ) : null}
+
+      <AdminAlertPresetUsagePanel />
 
       <section className="space-y-4">
         <header>

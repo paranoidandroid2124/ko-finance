@@ -32,7 +32,7 @@ const createBaseNavItems = (): NavItem[] => [
   { href: "/news", label: "뉴스", icon: Newspaper },
   { href: "/filings", label: "공시 자료", icon: FileText },
   { href: COMPANY_ROUTE, label: "기업 살펴보기", icon: Building2 },
-  { href: "/labs/event-study", label: "Labs · 이벤트 스터디", icon: FlaskConical },
+  { href: "/event-study", label: "이벤트 스터디", icon: FlaskConical },
   { href: "/chat", label: "대화", icon: MessageSquare },
   { href: "/pricing", label: "플랜 & 가격", icon: CreditCard },
 ];

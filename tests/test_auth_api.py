@@ -242,6 +242,7 @@ def test_login_refresh_and_logout(auth_api_client: Tuple[TestClient, Session], t
     assert login_data["sessionId"]
     assert login_data["sessionToken"]
     assert login_data["accessToken"]
+    assert login_data["user"]["orgId"]
 
     refresh_response = client.post(
         "/api/v1/auth/session/refresh",

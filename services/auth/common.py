@@ -9,6 +9,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import re
 import secrets
 import textwrap
 import uuid
@@ -48,6 +49,7 @@ from services.email_service import (
 )
 
 from services.audit_log import audit_rbac_event
+from services.entitlement_service import entitlement_service
 from services.rbac_service import ROLE_ORDER
 
 try:  # pragma: no cover - optional rate limiter
@@ -75,6 +77,15 @@ _LOGIN_FAILURE_LIMIT = env_int("AUTH_LOGIN_FAILURE_LIMIT", 5, minimum=3)
 _ACCOUNT_LOCK_SECONDS = env_int("AUTH_ACCOUNT_LOCK_SECONDS", 15 * 60, minimum=60)
 _ACCOUNT_UNLOCK_TTL = env_int("AUTH_ACCOUNT_UNLOCK_TTL_SECONDS", 15 * 60, minimum=60)
 _REMEMBER_REFRESH_TTL = env_int("AUTH_REMEMBER_REFRESH_TTL_SECONDS", 60 * 60 * 24 * 30, minimum=600)
+_LOGIN_IP_RATE_LIMIT = env_int("AUTH_LOGIN_IP_RATE_LIMIT", 10, minimum=3)
+_LOGIN_IP_RATE_WINDOW_SECONDS = env_int("AUTH_LOGIN_IP_RATE_WINDOW_SECONDS", 300, minimum=60)
+_LOGIN_EMAIL_RATE_LIMIT = env_int("AUTH_LOGIN_EMAIL_RATE_LIMIT", 5, minimum=3)
+_LOGIN_EMAIL_RATE_WINDOW_SECONDS = env_int("AUTH_LOGIN_EMAIL_RATE_WINDOW_SECONDS", 300, minimum=60)
+_PASSWORD_MIN_LENGTH = env_int("AUTH_PASSWORD_MIN_LENGTH", 12, minimum=8)
+_PASSWORD_REQUIRE_UPPER = env_bool("AUTH_PASSWORD_REQUIRE_UPPER", True)
+_PASSWORD_REQUIRE_LOWER = env_bool("AUTH_PASSWORD_REQUIRE_LOWER", True)
+_PASSWORD_REQUIRE_DIGIT = env_bool("AUTH_PASSWORD_REQUIRE_DIGIT", True)
+_PASSWORD_REQUIRE_SYMBOL = env_bool("AUTH_PASSWORD_REQUIRE_SYMBOL", True)
 
 _PASSWORD_HASHER = PasswordHasher(
     time_cost=_ARGON_TIME_COST,
@@ -90,6 +101,26 @@ _SAML_CLOCK_SKEW_SECONDS = env_int("AUTH_SAML_CLOCK_SKEW_SECONDS", 120, minimum=
 _PLAN_TIERS = {"free", "pro", "enterprise"}
 _FOR_UPDATE = " FOR UPDATE" if IS_POSTGRES else ""
 _USER_ROLES = {"user", "admin"}
+_UPPER_REGEX = re.compile(r"[A-Z]")
+_LOWER_REGEX = re.compile(r"[a-z]")
+_DIGIT_REGEX = re.compile(r"\d")
+_SYMBOL_REGEX = re.compile(r"[^A-Za-z0-9]")
+
+
+def _build_password_policy_description() -> str:
+    requirements = [f"최소 {_PASSWORD_MIN_LENGTH}자"]
+    if _PASSWORD_REQUIRE_UPPER:
+        requirements.append("대문자 1개 이상")
+    if _PASSWORD_REQUIRE_LOWER:
+        requirements.append("소문자 1개 이상")
+    if _PASSWORD_REQUIRE_DIGIT:
+        requirements.append("숫자 1개 이상")
+    if _PASSWORD_REQUIRE_SYMBOL:
+        requirements.append("특수문자 1개 이상")
+    return ", ".join(requirements)
+
+
+_PASSWORD_POLICY_DESCRIPTION = _build_password_policy_description()
 
 
 def _parse_role_mapping(raw: Optional[str]) -> Dict[str, str]:
@@ -211,6 +242,7 @@ class LoginResult:
     session_token: str
     user: Dict[str, Any]
     onboarding_required: bool = False
+    org_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -306,6 +338,7 @@ def register_user(session: Session, payload: Dict[str, Any], *, context: Request
     now = datetime.now(timezone.utc)
     verification_token_value: Optional[str] = None
 
+    org_uuid: Optional[uuid.UUID] = None
     with session.begin():
         existing = session.execute(
             text(
@@ -360,6 +393,8 @@ def register_user(session: Session, payload: Dict[str, Any], *, context: Request
             ).mappings().first()
             user_id = str(row["id"])
 
+        user_uuid = uuid.UUID(user_id)
+        org_uuid = _ensure_default_org(session, user_uuid)
         token = _issue_token_with_audit(
             session,
             user_id=user_id,
@@ -371,19 +406,23 @@ def register_user(session: Session, payload: Dict[str, Any], *, context: Request
             audit_channel=signup_channel,
         )
         verification_token_value = token.token
+    if org_uuid is not None:
+        _ensure_org_subscription(org_uuid, "free", source="auth.register")
     send_verification_email(email=raw_email or email, token=verification_token_value or "", name=name)
     return RegisterResult(user_id=user_id, verification_expires_in=_EMAIL_VERIFY_TTL)
 
 
 def login_user(session: Session, payload: Dict[str, Any], *, context: RequestContext) -> LoginResult:
     email = _normalize_email(payload.get("email", ""))
-    _enforce_rate_limit("auth.login.ip", context.ip, limit=10, window_seconds=300)
-    _enforce_rate_limit("auth.login.email", email, limit=5, window_seconds=300)
+    _enforce_rate_limit("auth.login.ip", context.ip, limit=_LOGIN_IP_RATE_LIMIT, window_seconds=_LOGIN_IP_RATE_WINDOW_SECONDS)
+    _enforce_rate_limit("auth.login.email", email, limit=_LOGIN_EMAIL_RATE_LIMIT, window_seconds=_LOGIN_EMAIL_RATE_WINDOW_SECONDS)
 
     remember_me = bool(payload.get("rememberMe"))
     password = payload.get("password") or ""
     now = datetime.now(timezone.utc)
 
+    org_uuid: Optional[uuid.UUID] = None
+    plan_slug: Optional[str] = None
     with session.begin():
         user = session.execute(
             text(
@@ -415,7 +454,11 @@ def login_user(session: Session, payload: Dict[str, Any], *, context: RequestCon
         if not user["email_verified_at"]:
             raise AuthServiceError("auth.needs_verification", "이메일 인증이 필요합니다.", 403)
 
+        _revoke_expired_sessions(session, str(user["id"]))
+        plan_slug = user["plan_tier"]
+        user_uuid = uuid.UUID(str(user["id"]))
         _mark_login_success(session, str(user["id"]), context, now)
+        org_uuid = _ensure_default_org(session, user_uuid)
         needs_onboarding = onboarding_service.ensure_first_login_metadata(
             session,
             user_id=str(user["id"]),
@@ -432,8 +475,10 @@ def login_user(session: Session, payload: Dict[str, Any], *, context: RequestCon
             now=now,
             remember_me=remember_me,
             onboarding_required=needs_onboarding,
+            org_id=str(org_uuid) if org_uuid else None,
         )
-
+    if org_uuid is not None:
+        _ensure_org_subscription(org_uuid, plan_slug, source="auth.login")
     return result
 
 
@@ -661,6 +706,7 @@ def refresh_session(
         if not user:
             raise AuthServiceError("auth.user_not_found", "사용자를 찾을 수 없습니다.", 404)
 
+        _revoke_expired_sessions(session, str(user["id"]))
         access_token, access_ttl = create_access_token(
             user_id=str(user["id"]),
             email=user["email"],
@@ -1097,9 +1143,26 @@ def _normalize_signup_channel(channel: Optional[str]) -> SignupChannel:
     return cast(SignupChannel, normalized)
 
 
+def _validate_password_strength(password: str) -> None:
+    value = password or ""
+    if len(value) < _PASSWORD_MIN_LENGTH:
+        raise AuthServiceError(
+            "auth.invalid_password",
+            f"비밀번호는 최소 {_PASSWORD_MIN_LENGTH}자 이상이어야 합니다. 요구사항: {_PASSWORD_POLICY_DESCRIPTION}",
+            400,
+        )
+    if _PASSWORD_REQUIRE_UPPER and not _UPPER_REGEX.search(value):
+        raise AuthServiceError("auth.invalid_password", f"비밀번호에 대문자가 포함되어야 합니다. 요구사항: {_PASSWORD_POLICY_DESCRIPTION}", 400)
+    if _PASSWORD_REQUIRE_LOWER and not _LOWER_REGEX.search(value):
+        raise AuthServiceError("auth.invalid_password", f"비밀번호에 소문자가 포함되어야 합니다. 요구사항: {_PASSWORD_POLICY_DESCRIPTION}", 400)
+    if _PASSWORD_REQUIRE_DIGIT and not _DIGIT_REGEX.search(value):
+        raise AuthServiceError("auth.invalid_password", f"비밀번호에 숫자가 포함되어야 합니다. 요구사항: {_PASSWORD_POLICY_DESCRIPTION}", 400)
+    if _PASSWORD_REQUIRE_SYMBOL and not _SYMBOL_REGEX.search(value):
+        raise AuthServiceError("auth.invalid_password", f"비밀번호에 특수문자가 포함되어야 합니다. 요구사항: {_PASSWORD_POLICY_DESCRIPTION}", 400)
+
+
 def _hash_password(password: str) -> str:
-    if len(password) < 8:
-        raise AuthServiceError("auth.invalid_password", "비밀번호는 8자 이상이어야 합니다.", 400)
+    _validate_password_strength(password)
     return _PASSWORD_HASHER.hash(password)
 
 
@@ -1154,6 +1217,23 @@ def _handle_failed_attempt(session: Session, user: Optional[Dict[str, Any]], con
             )
         except Exception as exc:  # pragma: no cover - best effort
             logger.warning("Failed to send account lock email: %s", exc, exc_info=True)
+
+
+def _revoke_expired_sessions(session: Session, user_id: Optional[str]) -> None:
+    if not user_id:
+        return
+    session.execute(
+        text(
+            """
+            UPDATE session_tokens
+            SET revoked_at = COALESCE(revoked_at, NOW())
+            WHERE user_id = :user_id
+              AND revoked_at IS NULL
+              AND expires_at < NOW()
+            """
+        ),
+        {"user_id": user_id},
+    )
 
 
 def _record_audit_event(
@@ -1262,18 +1342,20 @@ def _issue_login_result(
     now: Optional[datetime] = None,
     remember_me: bool = False,
     onboarding_required: bool = False,
+    org_id: Optional[str] = None,
 ) -> LoginResult:
     current = now or datetime.now(timezone.utc)
+    session_uuid = str(uuid.uuid4())
     access_token, access_ttl = create_access_token(
         user_id=user_id,
         email=email,
         plan=plan,
         role=role,
         email_verified=email_verified,
+        session_id=session_uuid,
     )
     refresh_jti = str(uuid.uuid4())
     session_token = secrets.token_urlsafe(32)
-    session_uuid = str(uuid.uuid4())
     refresh_ttl_override = _REMEMBER_REFRESH_TTL if remember_me else None
     refresh_token, refresh_ttl = create_refresh_token(
         user_id=user_id,
@@ -1339,8 +1421,10 @@ def _issue_login_result(
             "plan": plan,
             "role": role,
             "emailVerified": email_verified,
+            "orgId": org_id,
         },
         onboarding_required=onboarding_required,
+        org_id=org_id,
     )
 
 
@@ -1589,6 +1673,22 @@ def _ensure_membership_for_user(
     )
 
 
+def _ensure_org_subscription(org_id: uuid.UUID, plan_slug: Optional[str], *, source: str) -> None:
+    """Ensure an org_subscriptions row exists for ``org_id``."""
+
+    slug = _normalize_plan_tier_value(plan_slug, default="free")
+    try:
+        entitlement_service.sync_subscription_from_billing(
+            org_id=org_id,
+            plan_slug=slug,
+            status="active",
+            current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
+            metadata={"source": source},
+        )
+    except Exception:  # pragma: no cover - best-effort sync
+        logger.warning("Failed to bootstrap subscription for org=%s via %s.", org_id, source)
+
+
 def _ensure_org_target(
     session: Session,
     *,
@@ -1634,6 +1734,8 @@ def _complete_sso_login(
     context: RequestContext,
 ) -> LoginResult:
     now = datetime.now(timezone.utc)
+    org_uuid: Optional[uuid.UUID] = None
+    plan_slug: Optional[str] = None
     with session.begin():
         user_row = _ensure_sso_user(session, identity=identity, default_plan=default_plan)
         user_uuid = uuid.UUID(str(user_row["id"]))
@@ -1644,6 +1746,7 @@ def _complete_sso_login(
             default_slug=default_org_slug,
             auto_provision=auto_provision_org,
         )
+        org_uuid = org_id
         target_role = identity.rbac_role or default_rbac_role
         _ensure_membership_for_user(session, org_id=org_id, user_id=user_uuid, rbac_role=target_role)
         _mark_login_success(session, str(user_uuid), context, now)
@@ -1651,6 +1754,7 @@ def _complete_sso_login(
             session,
             user_id=str(user_uuid),
         )
+        plan_slug = user_row["plan_tier"]
         result = _issue_login_result(
             session,
             user_id=str(user_uuid),
@@ -1662,7 +1766,10 @@ def _complete_sso_login(
             context=context,
             now=now,
             onboarding_required=needs_onboarding,
+            org_id=str(org_id),
         )
+    if org_uuid is not None:
+        _ensure_org_subscription(org_uuid, plan_slug, source="auth.sso")
     return result
 
 

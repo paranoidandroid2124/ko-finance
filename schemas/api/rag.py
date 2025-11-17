@@ -195,6 +195,20 @@ class RAGEvidence(BaseModel):
         default=None,
         description="Fields that changed compared to the previous snapshot.",
     )
+    filing_id: Optional[str] = Field(default=None, description="Underlying filing identifier.")
+    receipt_no: Optional[str] = Field(default=None, description="DART receipt number, if available.")
+    document_title: Optional[str] = Field(default=None, description="Document title associated with the evidence.")
+    document_url: Optional[str] = Field(default=None, description="Primary document URL.")
+    viewer_url: Optional[str] = Field(default=None, description="Viewer URL for inline PDF rendering.")
+    download_url: Optional[str] = Field(default=None, description="Direct download URL for the document.")
+    document: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Structured document metadata payload.",
+    )
+    table_reference: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Structured table metadata payload (if evidence is derived from a table).",
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
