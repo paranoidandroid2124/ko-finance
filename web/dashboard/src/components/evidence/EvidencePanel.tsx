@@ -6,6 +6,7 @@ import { PlanLock } from "@/components/ui/PlanLock";
 import type { PlanTier as PlanTierType } from "@/store/planStore";
 import { InlinePdfViewer } from "./InlinePdfViewer";
 import { getPlanLabel } from "@/lib/planTier";
+import { EvidenceDiffTabs } from "./EvidenceDiffTabs";
 
 export type PlanTier = PlanTierType;
 
@@ -417,50 +418,24 @@ export function EvidencePanel({
   };
 
   const renderRemovedSection = () => {
-    if (!diffActive || !removedItems || removedItems.length === 0) {
-      return null;
-    }
-    return (
-      <div className="rounded-lg border border-dashed border-border-light/70 bg-white/60 px-3 py-3 text-xs text-text-secondaryLight dark:border-border-dark/60 dark:bg-white/10 dark:text-text-secondaryDark">
-        <p className="font-semibold text-text-secondaryLight dark:text-text-secondaryDark">
-          이전 버전에서 빠진 문장 {removedItems.length}개
-        </p>
-        <ul className="mt-2 space-y-1">
-          {removedItems.map((entry) => (
-            <li key={`removed-${entry.urnId}`} className="leading-5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-text-secondaryLight dark:text-text-secondaryDark">
-                  {entry.section ?? "문장"}
-                </span>
-                {entry.pageNumber ? (
-                  <span className="text-[10px] uppercase text-text-tertiaryLight dark:text-text-tertiaryDark">
-                    p.{entry.pageNumber}
-                  </span>
-                ) : null}
-              </div>
-              {entry.quote ? (
-                <p className="mt-1 text-[11px] text-text-ter티aryLight dark:text-text-tertiaryDark">{entry.quote}</p>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
+    return <EvidenceRemovedList diffActive={diffActive} items={removedItems ?? []} />;
   };
 
   const renderList = () => {
     if (status === "loading") {
       return (
         <ul className="space-y-2">
-          {SKELETON_ROWS.map((_, index) => (
-            <li
-              key={`skeleton-${index}`}
-              className="animate-pulse rounded-lg border border-border-light/60 bg-background-cardLight px-3 py-4 dark:border-border-dark/60 dark:bg-background-cardDark"
-            >
-              <div className="h-3 w-20 rounded bg-border-light/70 dark:bg-border-dark/40" />
-              <div className="mt-2 h-3 w-full rounded bg-border-light/60 dark:bg-border-dark/30" />
-              <div className="mt-2 h-3 w-2/3 rounded bg-border-light/50 dark:bg-border-dark/30" />
-            </li>
+          {items.map((item) => (
+            <EvidenceListItem
+              key={item.urnId}
+              item={item}
+              isActive={item.urnId === activeUrn}
+              diffActive={Boolean(diffActive)}
+              observerRef={bindObserver(item.urnId)}
+              onSelect={handleSelect}
+              onHover={onHoverEvidence}
+              onRequestUpgrade={onRequestUpgrade}
+            />
           ))}
         </ul>
       );
@@ -623,23 +598,16 @@ export function EvidencePanel({
               : "챗봇이 참고한 문장을 함께 살펴봐요."}
           </p>
         </div>
-        <div className="flex items-center gap-2 text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">
           <span className="rounded-md border border-border-light px-2 py-1 font-semibold uppercase dark:border-border-dark">
             {getPlanLabel(planTier)}
           </span>
-          {diffEnabled ? (
-            <button
-              type="button"
-              className={`rounded-md border px-2 py-1 font-semibold transition-motion-fast ${
-                diffActive
-                  ? "border-primary bg-primary/10 text-primary hover:bg-primary/15"
-                  : "border-border-light text-text-secondaryLight hover:border-primary/60 hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary"
-              }`}
-              onClick={() => onToggleDiff?.(!diffActive)}
-            >
-              변화 살펴보기
-            </button>
-          ) : null}
+          <EvidenceDiffTabs
+            diffEnabled={diffEnabled}
+            diffActive={diffActive}
+            removedCount={removedItems?.length}
+            onToggleDiff={onToggleDiff}
+          />
           {activeItem && onRequestOpenPdf ? (
             <button
               type="button"
@@ -665,11 +633,159 @@ export function EvidencePanel({
   );
 }
 
-export type {
-  EvidenceItem as EvidencePanelItem,
-  EvidenceDocumentMeta,
-  EvidenceTableReference,
-  EvidenceTableCell,
+export type { EvidenceItem as EvidencePanelItem };
+
+type EvidenceListItemProps = {
+  item: EvidenceItem;
+  isActive: boolean;
+  diffActive: boolean;
+  observerRef: (element: HTMLLIElement | null) => void;
+  onSelect: (urnId: string) => void;
+  onHover?: (urnId: string | undefined) => void;
+  onRequestUpgrade?: (tier: PlanTier) => void;
 };
+
+function EvidenceListItem({
+  item,
+  isActive,
+  diffActive,
+  observerRef,
+  onSelect,
+  onHover,
+  onRequestUpgrade,
+}: EvidenceListItemProps) {
+  const reliabilityTone = item.sourceReliability ? RELIABILITY_TONE[item.sourceReliability] : null;
+  const verdictTone = item.selfCheck?.verdict ? VERDICT_TONE[item.selfCheck.verdict] : null;
+  const diffKey = item.diffType as NonNullable<EvidenceItem["diffType"]> | undefined;
+  const diffTone = diffActive && diffKey ? DIFF_TONE[diffKey] ?? null : null;
+  const changedFields = Array.isArray(item.diffChangedFields) ? item.diffChangedFields : [];
+  const changedSummary =
+    diffActive && changedFields.length
+      ? changedFields.map((field) => DIFF_FIELD_LABELS[field] ?? field).join(", ")
+      : null;
+  const itemClass = `group relative rounded-lg border px-3 py-3 transition-motion-medium ${
+    isActive
+      ? "border-primary bg-primary/5 text-text-primaryLight shadow-card dark:border-primary.dark dark:bg-primary/10 dark:text-text-primaryDark"
+      : "border-border-light bg-white text-text-secondaryLight shadow-sm hover:border-primary/50 dark:border-border-dark dark:bg-white/5 dark:text-text-secondaryDark"
+  }${diffTone ? ` ${diffTone.card}` : ""}`;
+  const quoteClass =
+    diffActive && diffTone
+      ? `mt-2 whitespace-pre-line rounded-md border border-border-light/60 px-3 py-2 text-sm leading-6 ${diffTone.quote}`
+      : "mt-2 whitespace-pre-line text-sm leading-6 text-text-secondaryLight dark:text-text-secondaryDark";
+
+  const handleMouseLeave = () => onHover?.(undefined);
+  const handleMouseEnter = () => onHover?.(item.urnId);
+
+  return (
+    <li ref={observerRef} className={itemClass}>
+      {item.locked ? (
+        <div className="pointer-events-none absolute inset-0 rounded-lg border border-dashed border-border-light/90 bg-white/70 backdrop-blur-[2px] dark:border-border-dark/80 dark:bg-white/10" />
+      ) : null}
+      <button
+        type="button"
+        className="relative z-10 w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        onClick={() => onSelect(item.urnId)}
+        onMouseEnter={handleMouseEnter}
+        onFocus={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        onBlur={handleMouseLeave}
+      >
+        <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-primary">
+          <span>{item.section ?? "문장"}</span>
+          {item.pageNumber ? <span>p.{item.pageNumber}</span> : null}
+        </div>
+        <p className={quoteClass}>{item.quote}</p>
+      </button>
+
+      {diffActive && item.diffType === "updated" && item.previousQuote ? (
+        <div className="relative z-10 mt-2 rounded-md border border-dashed border-border-light/70 bg-white/60 p-2 text-[11px] text-text-tertiaryLight dark:border-border-dark/60 dark:bg-white/10 dark:text-text-ter티aryDark">
+          <span className="font-semibold text-text-secondaryLight dark:text-text-secondaryDark">이전 문장</span>
+          <p className="mt-1 whitespace-pre-line line-through decoration-destructive/70 decoration-1">{item.previousQuote}</p>
+          {(item.previousSection && item.previousSection !== item.section) ||
+          (item.previousPageNumber && item.previousPageNumber !== item.pageNumber) ? (
+            <p className="mt-1 text-[10px] uppercase text-text-tertiaryLight dark:text-text-ter티aryDark">
+              위치: {item.previousSection ?? "—"} / {item.previousPageNumber ? `p.${item.previousPageNumber}` : "페이지 정보 없음"}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {diffActive && item.diffType === "created" ? (
+        <p className="relative z-10 mt-2 text-[11px] font-semibold text-emerald-600 dark:text-emerald-300">이번에 새로 담긴 문장이에요.</p>
+      ) : null}
+      {diffActive && item.diffType === "unchanged" ? (
+        <p className="relative z-10 mt-2 text-[11px] text-text-ter티aryLight dark:text-text-ter티aryDark">이전 스냅샷과 같아요.</p>
+      ) : null}
+
+      <div className="relative z-10 mt-3 flex flex-wrap items-center gap-2 text-[11px]">
+        {diffActive && diffTone ? (
+          <span className={`inline-flex items-center rounded-md border px-2 py-0.5 font-semibold ${diffTone.badge}`}>{diffTone.label}</span>
+        ) : null}
+        {verdictTone ? (
+          <span className={`inline-flex items-center rounded-md border px-2 py-0.5 font-semibold ${verdictTone.badge}`}>{verdictTone.label}</span>
+        ) : null}
+        {reliabilityTone ? (
+          <span className={`inline-flex items-center rounded-md border px-2 py-0.5 font-semibold ${reliabilityTone.badge}`}>{reliabilityTone.label}</span>
+        ) : null}
+        {formatSimilarity(item.anchor) ? (
+          <span className="rounded-md border border-border-light px-2 py-0.5 font-semibold text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
+            {formatSimilarity(item.anchor)}
+          </span>
+        ) : null}
+        {item.chunkId ? (
+          <span className="rounded-md border border-border-light px-2 py-0.5 text-[10px] text-text-tertiaryLight dark:border-border-dark dark:text-text-ter티aryDark">
+            #{item.chunkId}
+          </span>
+        ) : null}
+      </div>
+
+      {diffActive && changedSummary ? (
+        <p className="relative z-10 mt-2 text-[11px] text-text-ter티aryLight dark:text-text-ter티aryDark">달라진 부분: {changedSummary}</p>
+      ) : null}
+
+      {item.locked && onRequestUpgrade ? (
+        <div className="relative z-10 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed border-border-light/70 bg-white/60 px-3 py-2 text-[11px] dark:border-border-dark/60 dark:bg-white/10">
+          <span className="text-text-secondaryLight dark:text-text-secondaryDark">이 하이라이트는 Pro 이상 플랜에서 확인하실 수 있어요.</span>
+          <button
+            type="button"
+            className="rounded-md border border-primary/60 px-2 py-1 text-[11px] font-semibold text-primary transition-motion-fast hover:bg-primary/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            onClick={() => onRequestUpgrade?.("pro")}
+          >
+            플랜 상담하기
+          </button>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+type EvidenceRemovedListProps = {
+  diffActive?: boolean;
+  items: EvidenceItem[];
+};
+
+function EvidenceRemovedList({ diffActive, items }: EvidenceRemovedListProps) {
+  if (!diffActive || items.length === 0) {
+    return null;
+  }
+  return (
+    <div className="rounded-lg border border-dashed border-border-light/70 bg-white/60 px-3 py-3 text-xs text-text-secondaryLight dark:border-border-dark/60 dark:bg-white/10 dark:text-text-secondaryDark">
+      <p className="font-semibold text-text-secondaryLight dark:text-text-secondaryDark">이전 버전에서 빠진 문장 {items.length}개</p>
+      <ul className="mt-2 space-y-1">
+        {items.map((entry) => (
+          <li key={`removed-${entry.urnId}`} className="leading-5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold text-text-secondaryLight dark:text-text-secondaryDark">{entry.section ?? "문장"}</span>
+              {entry.pageNumber ? (
+                <span className="text-[10px] uppercase text-text-tertiaryLight dark:text-text-ter티aryDark">p.{entry.pageNumber}</span>
+              ) : null}
+            </div>
+            {entry.quote ? <p className="mt-1 text-[11px] text-text-ter티aryLight dark:text-text-ter티aryDark">{entry.quote}</p> : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 

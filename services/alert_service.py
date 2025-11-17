@@ -76,13 +76,6 @@ PLAN_CONSTRAINTS: Dict[str, Dict[str, Any]] = {
 
 DEFAULT_PLAN_KEY = "pro"
 
-LEGACY_FREQUENCY_FIELDS = {
-    "evaluation_interval_minutes": "evaluationIntervalMinutes",
-    "window_minutes": "windowMinutes",
-    "cooldown_minutes": "cooldownMinutes",
-    "max_triggers_per_day": "maxTriggersPerDay",
-}
-
 DEFAULT_MESSAGE = "새로운 알림이 감지되었습니다."
 _EVAL_STATE_KEY = "alertWorkerState"
 _EVAL_STATE_VERSION = 1
@@ -388,10 +381,7 @@ def update_alert_rule(
         description = changes["description"]
         rule.description = description.strip() if description else None
     if "trigger" in changes and changes["trigger"]:
-        rule.condition = dict(changes["trigger"] or {})
-        trigger_updated = True
-    elif "condition" in changes and changes["condition"]:
-        rule.condition = dict(changes["condition"] or {})
+        rule.trigger = dict(changes["trigger"] or {})
         trigger_updated = True
     if "channels" in changes and changes["channels"] is not None:
         rule.channels = validate_channels(plan_tier, changes["channels"])
@@ -403,13 +393,6 @@ def update_alert_rule(
     frequency_payload: Optional[Mapping[str, Any]] = None
     if "frequency" in changes and isinstance(changes["frequency"], Mapping):
         frequency_payload = changes["frequency"]
-    else:
-        legacy: Dict[str, Any] = {}
-        for legacy_key, camel_key in LEGACY_FREQUENCY_FIELDS.items():
-            if legacy_key in changes:
-                legacy[camel_key] = changes[legacy_key]
-        if legacy:
-            frequency_payload = legacy
     if frequency_payload is not None:
         rule.frequency = _apply_plan_frequency(plan_tier, frequency_payload)
     if "extras" in changes and isinstance(changes["extras"], dict):
@@ -1059,7 +1042,7 @@ def _evaluate_rule(
     rule: AlertRule,
     now: datetime,
 ) -> _RuleEvaluationResult:
-    condition = rule.condition or {}
+    condition = rule.trigger or {}
     plan = compile_trigger(
         condition,
         default_window_minutes=rule.window_minutes,
@@ -1123,7 +1106,6 @@ def serialize_alert(rule: AlertRule) -> Dict[str, Any]:
         "planTier": rule.plan_tier,
         "status": rule.status,
         "trigger": rule.trigger,
-        "condition": rule.trigger,
         "triggerType": rule.trigger_type,
         "filters": rule.filters or {},
         "state": rule.state or {},

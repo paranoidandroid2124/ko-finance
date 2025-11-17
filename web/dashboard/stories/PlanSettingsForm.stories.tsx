@@ -30,6 +30,7 @@ const defaultPayload: PlanContextPayload = {
     evidenceInlinePdf: false,
     evidenceDiff: false,
     timelineFull: true,
+    reportsEventExport: true,
   },
   memoryFlags: {
     watchlist: true,

@@ -31,7 +31,7 @@ from services.daily_brief_service import (
     resolve_daily_brief_paths,
 )
 from services.plan_service import PlanContext
-from web.deps import get_plan_context, require_plan_feature
+from web.deps import require_plan_feature
 from web.quota_guard import enforce_quota
 
 router = APIRouter(prefix="/reports", tags=["Reports"])

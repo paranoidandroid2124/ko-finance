@@ -128,7 +128,7 @@ def build_event_study_report_payload(
             EventSummary.cap_bucket.label("cap_bucket"),
             func.max(EventSummary.asof).label("max_asof"),
         )
-        .filter(EventSummary.window == window_label, EventSummary.scope == scope, EventSummary.cap_bucket.in_(target_caps))
+        .filter(EventSummary.window_key == window_label, EventSummary.scope == scope, EventSummary.cap_bucket.in_(target_caps))
     )
     if normalized_types:
         latest_subquery = latest_subquery.filter(EventSummary.event_type.in_(normalized_types))
@@ -144,7 +144,7 @@ def build_event_study_report_payload(
                 EventSummary.asof == latest_subquery.c.max_asof,
             ),
         )
-        .filter(EventSummary.window == window_label, EventSummary.scope == scope, EventSummary.cap_bucket.in_(target_caps))
+        .filter(EventSummary.window_key == window_label, EventSummary.scope == scope, EventSummary.cap_bucket.in_(target_caps))
         .order_by(EventSummary.event_type.asc())
     )
     if normalized_types:

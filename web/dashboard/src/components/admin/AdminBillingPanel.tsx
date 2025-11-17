@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import { CreditCard } from "lucide-react";
 
 import { PlanSummaryCard } from "@/components/plan/PlanSummaryCard";
@@ -59,7 +60,7 @@ export function AdminBillingPanel({ compact = false }: AdminBillingPanelProps) {
           가격표 보기
         </Link>
         <Link
-          href="/onboarding"
+          href={"/onboarding" as Route}
           className="inline-flex items-center rounded-lg border border-border-light px-3 py-1.5 font-semibold text-text-primaryLight transition hover:bg-border-light/40 dark:border-border-dark dark:text-text-primaryDark"
         >
           플랜 변경

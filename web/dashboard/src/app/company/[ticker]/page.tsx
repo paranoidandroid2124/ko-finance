@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -28,6 +29,8 @@ const TABS = [
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
+
+const BOARDS_ROUTE = "/boards" as Route;
 
 type TimelineItem = {
   id: string;
@@ -287,7 +290,7 @@ const sectorName = useMemo(() => {
               <div className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
                 <div className="flex items-center justify-between">
                   <h2 className="text-base font-semibold text-text-primaryLight dark:text-text-primaryDark">관련 워치리스트</h2>
-                  <Link href="/boards" className="text-xs font-semibold text-primary hover:underline dark:text-primary.dark">
+                  <Link href={BOARDS_ROUTE} className="text-xs font-semibold text-primary hover:underline dark:text-primary.dark">
                     보드 열기
                   </Link>
                 </div>
@@ -308,7 +311,7 @@ const sectorName = useMemo(() => {
                               최근 알림 {board.recentAlerts}건 · 종목 {board.tickers.length}개
                             </p>
                           </div>
-                          <Link href={`/boards/${board.id}`} className="text-xs font-semibold text-primary hover:underline dark:text-primary.dark">
+                          <Link href={`/boards/${board.id}` as Route} className="text-xs font-semibold text-primary hover:underline dark:text-primary.dark">
                             보기
                           </Link>
                         </div>
@@ -343,13 +346,14 @@ const sectorName = useMemo(() => {
                         <p className="mt-1 text-xs text-text-secondaryLight dark:text-text-secondaryDark">{item.summary}</p>
                       ) : null}
                       {item.url ? (
-                        <Link
+                        <a
                           href={item.url}
                           target="_blank"
+                          rel="noopener noreferrer"
                           className="mt-2 inline-flex text-xs font-semibold text-primary hover:underline dark:text-primary.dark"
                         >
                           원문 보기
-                        </Link>
+                        </a>
                       ) : null}
                     </li>
                   ))}

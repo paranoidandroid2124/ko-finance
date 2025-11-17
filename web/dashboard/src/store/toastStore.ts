@@ -16,7 +16,17 @@ export type ToastDescriptor = {
   onAction?: () => void;
 };
 
-export type ToastInput = Omit<ToastDescriptor, 'id'> & { id?: string };
+export type ToastInput = {
+  id?: string;
+  title?: string;
+  message?: string;
+  description?: string;
+  intent?: ToastIntent;
+  duration?: number;
+  actionLabel?: string;
+  actionHref?: string;
+  onAction?: () => void;
+};
 
 type ToastStoreState = {
   toasts: ToastDescriptor[];
@@ -29,10 +39,11 @@ export const useToastStore = create<ToastStoreState>((set, _get) => ({
   toasts: [],
   show: (toast) => {
     const id = toast.id ?? nanoid();
+    const resolvedMessage = toast.message ?? toast.description ?? toast.title ?? "알림을 표시합니다.";
     const descriptor: ToastDescriptor = {
       id,
       title: toast.title,
-      message: toast.message,
+      message: resolvedMessage,
       intent: toast.intent ?? 'info',
       duration: toast.duration ?? 5000,
       actionLabel: toast.actionLabel,

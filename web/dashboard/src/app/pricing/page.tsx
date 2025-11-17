@@ -128,15 +128,15 @@ const PlanCard = ({ tier, isFeatured }: PlanCardProps) => {
 };
 
 export default function PricingPage() {
-  const { data, isLoading, error, refetch } = usePlanCatalog();
+  const { catalog, loading, error, refetch } = usePlanCatalog();
 
   const tiers: PlanCatalogTier[] = useMemo(() => {
-    const all = data?.tiers ?? [];
+    const all = catalog?.tiers ?? [];
     if (FEATURE_STARTER_ENABLED) {
       return all;
     }
     return all.filter((tier) => tier.tier !== "starter");
-  }, [data]);
+  }, [catalog]);
 
   return (
     <AppShell>
@@ -148,7 +148,7 @@ export default function PricingPage() {
         </p>
       </section>
 
-      {isLoading && (
+      {loading && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {Array.from({ length: 3 }).map((_, index) => (
             <SkeletonBlock key={index} className="h-96 rounded-3xl" />
@@ -156,7 +156,7 @@ export default function PricingPage() {
         </div>
       )}
 
-      {!isLoading && error && (
+      {!loading && error && (
         <ErrorState
           title="플랜 정보를 불러오지 못했어요."
           description="네트워크 상태를 확인한 뒤 다시 시도해 주세요."
@@ -171,7 +171,7 @@ export default function PricingPage() {
         />
       )}
 
-      {!isLoading && !error && (
+      {!loading && !error && (
         <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {tiers.map((tier) => (
             <PlanCard key={tier.tier} tier={tier} isFeatured={tier.tier === "pro"} />

@@ -6,7 +6,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from schemas.api.plan import PlanTier, PlanMemoryFlagsSchema
+from core.plan_constants import PlanTier
+from schemas.api.plan import PlanMemoryFlagsSchema
 PromptChannel = Literal["chat", "rag", "self_check"]
 
 

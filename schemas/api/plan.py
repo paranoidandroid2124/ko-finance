@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-PlanTier = Literal["free", "starter", "pro", "enterprise"]
+from core.plan_constants import PlanTier
 
 
 class PlanQuotaSchema(BaseModel):
@@ -43,7 +43,7 @@ class PlanMemoryFlagsSchema(BaseModel):
 
 
 class PlanTrialStateSchema(BaseModel):
-    tier: PlanTier = Field(default="pro", description="Trial tier that will be applied while active.")
+    tier: PlanTier = Field(default=PlanTier.PRO, description="Trial tier that will be applied while active.")
     startsAt: Optional[str] = Field(default=None, description="ISO timestamp when the trial started.")
     endsAt: Optional[str] = Field(default=None, description="ISO timestamp when the trial is scheduled to end.")
     durationDays: Optional[int] = Field(default=None, description="Configured trial length in days.")
@@ -203,7 +203,7 @@ class PlanCatalogUpdateRequest(BaseModel):
 
 
 class PlanTrialStartRequest(BaseModel):
-    tier: PlanTier = Field(default="pro", description="Trial tier to activate.")
+    tier: PlanTier = Field(default=PlanTier.PRO, description="Trial tier to activate.")
     durationDays: Optional[int] = Field(
         default=None,
         description="Override trial duration. Defaults to configured duration when omitted.",

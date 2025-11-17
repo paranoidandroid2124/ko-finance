@@ -111,7 +111,7 @@ class EventSummary(Base):
     __tablename__ = "event_summary"
     asof = Column(Date, primary_key=True)
     event_type = Column(String, primary_key=True)
-    window = Column(String, primary_key=True)
+    window_key = Column(String, primary_key=True)
     scope = Column(String, primary_key=True, default="market")
     cap_bucket = Column(String, primary_key=True, default="ALL")
     filters = Column(JSONB, nullable=True)

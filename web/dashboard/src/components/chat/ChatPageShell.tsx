@@ -77,7 +77,7 @@ export function ChatPageShell({ controller }: ChatPageShellProps) {
         />
         <ChatStreamPane
           sessionTitle={stream.title}
-          contextSummary={stream.contextSummary}
+          contextSummary={stream.contextSummary ?? null}
           hasContextBanner={stream.hasContextBanner}
           isFilingContext={stream.isFilingContext}
           filingReferenceId={stream.filingReferenceId ?? undefined}
@@ -137,4 +137,3 @@ function QuotaNotice({ message, planLabel, limit, resetText, onRedirect, onDismi
     </div>
   );
 }
-

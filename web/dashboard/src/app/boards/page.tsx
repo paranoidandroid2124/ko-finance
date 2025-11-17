@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import { AppShell } from "@/components/layout/AppShell";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -73,7 +74,7 @@ export default function BoardsPage() {
             {boards.map((board) => (
               <Link
                 key={board.id}
-                href={`/boards/${encodeURIComponent(board.id)}`}
+                href={`/boards/${encodeURIComponent(board.id)}` as Route}
                 className="rounded-2xl border border-border-light bg-background-cardLight p-5 shadow-card transition hover:-translate-y-1.5 hover:border-primary hover:shadow-lg dark:border-border-dark dark:bg-background-cardDark"
               >
                 <div className="flex items-center justify-between gap-3">

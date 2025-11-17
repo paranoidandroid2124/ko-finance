@@ -18,7 +18,7 @@ def _sample_rule(name: str = "Watchlist Radar") -> AlertRule:
         id=uuid.uuid4(),
         plan_tier="pro",
         name=name,
-        condition={"type": "news", "tickers": ["0001"], "scope": "watchlist"},
+        trigger={"type": "news", "tickers": ["0001"], "scope": "watchlist"},
         extras={"category": "watch"},
         channels=[],
     )
@@ -151,7 +151,7 @@ def test_collect_watchlist_alerts_aggregates_summary() -> None:
 def test_collect_watchlist_alerts_filters_by_channel_and_event_type() -> None:
     news_rule = _sample_rule()
     filing_rule = _sample_rule(name="Filing Radar")
-    filing_rule.condition = {"type": "filing", "tickers": ["0003"], "scope": "watchlist"}
+    filing_rule.trigger = {"type": "filing", "tickers": ["0003"], "scope": "watchlist"}
     filing_rule.extras = {"tags": ["FILING"], "category": "watch"}
 
     slack_delivery = _sample_delivery(news_rule, "0001", channel="slack")
@@ -348,7 +348,7 @@ def test_dispatch_watchlist_digest(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         watchlist_service,
         "collect_watchlist_alerts",
-        lambda db, window_minutes, limit, owner_filters=None: sample_payload,
+        lambda db, window_minutes, limit, owner_filters=None, **_: sample_payload,
     )
 
     def fake_dispatch(channel: str, message: str, target=None, *, targets=None, metadata=None, template=None):

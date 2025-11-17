@@ -1,9 +1,10 @@
 BEGIN;
 
--- Rename legacy fallback slug to the new default.
+-- Rename legacy fallback slug to the new default (when safe).
 UPDATE sectors
 SET slug = 'others'
-WHERE slug = 'misc';
+WHERE slug = 'misc'
+  AND NOT EXISTS (SELECT 1 FROM sectors WHERE slug = 'others');
 
 -- Upsert the expanded taxonomy (slug -> label).
 WITH sector_data (slug, name) AS (

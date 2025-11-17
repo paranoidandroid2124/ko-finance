@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { notFound } from "next/navigation";
 
 import type { NotebookShareAccessResponse } from "@/lib/notebookApi";
 import { NotebookApiError, resolveNotebookShare } from "@/lib/notebookApi";
@@ -10,6 +11,10 @@ type SharePageProps = {
 };
 
 export default function NotebookSharePublicPage({ params }: SharePageProps) {
+  if (process.env.NEXT_PUBLIC_ENABLE_LABS !== "true") {
+    notFound();
+  }
+
   const [password, setPassword] = useState("");
   const [access, setAccess] = useState<NotebookShareAccessResponse | null>(null);
   const [loading, setLoading] = useState(false);

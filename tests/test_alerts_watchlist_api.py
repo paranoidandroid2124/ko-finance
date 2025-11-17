@@ -140,7 +140,7 @@ def test_watchlist_rule_detail_endpoint(watchlist_api_client, monkeypatch: pytes
             "windowMinutes": 60,
             "cooldownMinutes": 30,
             "maxTriggersPerDay": 20,
-            "condition": {
+            "trigger": {
                 "type": "news",
                 "tickers": ["0001"],
                 "categories": ["공시"],

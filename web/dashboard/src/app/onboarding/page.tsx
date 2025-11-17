@@ -247,7 +247,7 @@ export default function OnboardingWizardPage() {
           id: "onboarding/payment/pending",
           title: "결제가 아직 완료되지 않았습니다.",
           message: `현재 상태: ${payload.status}`,
-          intent: "default",
+          intent: "info",
         });
       }
     } catch (error) {

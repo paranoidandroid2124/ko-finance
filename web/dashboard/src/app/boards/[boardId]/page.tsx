@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import type { Route } from "next";
 import { AppShell } from "@/components/layout/AppShell";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -25,6 +26,7 @@ const sentimentColor = (value?: number | null) => {
 export default function BoardDetailPage() {
   const params = useParams<{ boardId: string }>();
   const router = useRouter();
+  const boardsRoute = "/boards" as Route;
   const boardId = params?.boardId ?? "";
   const { data, isLoading, isError, refetch } = useBoardDetail(boardId);
 
@@ -77,7 +79,7 @@ export default function BoardDetailPage() {
           action={
             <button
               type="button"
-              onClick={() => router.push("/boards")}
+              onClick={() => router.push(boardsRoute)}
               className="rounded-lg border border-border-light px-3 py-1 text-sm font-semibold text-text-primaryLight hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-primaryDark"
             >
               목록으로 돌아가기
@@ -204,9 +206,14 @@ export default function BoardDetailPage() {
                       <span className={sentimentColor(event.sentiment)}>감성 {event.sentiment.toFixed(2)}</span>
                     ) : null}
                     {event.url ? (
-                      <Link href={event.url} target="_blank" className="font-semibold text-primary hover:underline dark:text-primary.dark">
+                      <a
+                        href={event.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold text-primary hover:underline dark:text-primary.dark"
+                      >
                         자세히 보기
-                      </Link>
+                      </a>
                     ) : null}
                   </div>
                 </li>

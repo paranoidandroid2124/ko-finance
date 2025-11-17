@@ -3,12 +3,14 @@
 import clsx from "classnames";
 import { useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import type { Route } from "next";
 import { logEvent } from "@/lib/telemetry";
 import { getPlanBadgeTone, getPlanIcon, getPlanIconTone, getPlanLabel } from "@/lib/planTier";
 import { isTierAtLeast, nextTier, type PlanTier, usePlanTier } from "@/store/planStore";
 import { usePlanTrialCta } from "@/hooks/usePlanTrialCta";
 import { usePlanCatalog } from "@/hooks/usePlanCatalog";
 import { resolvePlanMarketingCopy } from "@/lib/planContext";
+import { getPlanUpgradePath } from "@/config/planConfig";
 
 type PlanLockProps = {
   requiredTier: PlanTier;
@@ -60,7 +62,7 @@ export function PlanLock({
 
   const defaultUpgrade = useCallback(
     (tier: PlanTier) => {
-      router.push(`/settings?panel=plan&tier=${tier}`);
+      router.push(getPlanUpgradePath(tier) as Route);
     },
     [router],
   );

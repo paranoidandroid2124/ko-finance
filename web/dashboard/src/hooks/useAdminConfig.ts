@@ -15,7 +15,6 @@ import {
   generateAlertSampleMetadata,
   fetchOpsRunHistory,
   fetchOpsSchedules,
-  fetchAlertPresetUsage,
   fetchRagConfig,
   fetchRagReindexHistory,
   fetchRagReindexQueue,

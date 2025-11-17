@@ -141,3 +141,4 @@ web/dashboard/storybook-static/
 web/admin-dashboard/.next/
 web/admin-dashboard/node_modules/
 web/admin-dashboard/out/
+*.tsbuildinfo

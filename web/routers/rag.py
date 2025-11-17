@@ -1730,7 +1730,6 @@ def query_rag_stream(
             return StreamingResponse(intent_stream(), media_type="text/event-stream")
 
         judge_result = llm_service.assess_query_risk(question)
-        judge_decision = (judge_result.get("decision") or "unknown") if judge_result else "unknown"
         rag_mode = (judge_result.get("rag_mode") or "vector") if judge_result else "vector"
 
         filters_v2 = RagQueryFiltersSchema(
@@ -1982,21 +1981,21 @@ def query_rag_stream(
 
                 snapshot_author = None
                 if user_id:
-                snapshot_author = str(user_id)
-            elif session.user_id:
-                snapshot_author = str(session.user_id)
-            if snapshot_payload:
-                _enqueue_evidence_snapshot(
-                    snapshot_payload,
-                    author=snapshot_author,
-                    trace_id=trace_id,
-                    org_id=org_id or session.org_id,
-                    user_id=user_id or session.user_id,
-                )
+                    snapshot_author = str(user_id)
+                elif session.user_id:
+                    snapshot_author = str(session.user_id)
+                if snapshot_payload:
+                    _enqueue_evidence_snapshot(
+                        snapshot_payload,
+                        author=snapshot_author,
+                        trace_id=trace_id,
+                        org_id=org_id or session.org_id,
+                        user_id=user_id or session.user_id,
+                    )
 
-                db.commit()
-                if needs_summary:
-                    chat_service.enqueue_session_summary(session.id)
+                    db.commit()
+                    if needs_summary:
+                        chat_service.enqueue_session_summary(session.id)
 
                 yield json.dumps(
                     {

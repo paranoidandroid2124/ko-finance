@@ -222,8 +222,8 @@ def _extract_rule_tags(rule: AlertRule) -> List[str]:
 
 
 def _extract_rule_tickers(rule: AlertRule) -> List[str]:
-    condition = getattr(rule, "condition", {}) or {}
-    raw_tickers = condition.get("tickers") or []
+    trigger_payload = getattr(rule, "trigger", {}) or {}
+    raw_tickers = trigger_payload.get("tickers") or []
     tickers: List[str] = []
     if isinstance(raw_tickers, (list, tuple, set)):
         seen: Set[str] = set()
@@ -332,8 +332,8 @@ def _summarize_watchlist_rows(
         delivery_channel = str(getattr(delivery, "channel", "") or "unknown").lower()
         delivery_status = str(getattr(delivery, "status", "") or "unknown").lower()
         delivery_error = getattr(delivery, "error_message", None)
-        condition = getattr(rule, "condition", {}) or {}
-        event_type = str(condition.get("type") or "filing").lower()
+        trigger_payload = getattr(rule, "trigger", {}) or {}
+        event_type = str(trigger_payload.get("type") or "filing").lower()
         rule_tags = _extract_rule_tags(rule)
         rule_tickers = _extract_rule_tickers(rule)
         rule_error_count = int(getattr(rule, "error_count", 0) or 0)
@@ -428,12 +428,13 @@ def _coerce_identifier(value: Optional[Any]) -> Optional[str]:
 def _resolve_watchlist_subject(
     tenant_id: Optional[str],
     user_id_hint: Optional[str],
-    owner_filters: Mapping[str, Optional[Any]],
+    owner_filters: Optional[Mapping[str, Optional[Any]]],
 ) -> Tuple[Optional[str], Optional[str]]:
+    filters = owner_filters or {}
     metadata_tenant = _coerce_identifier(tenant_id) or _coerce_identifier(
-        owner_filters.get("org_id") or owner_filters.get("tenant_id")
+        filters.get("org_id") or filters.get("tenant_id")
     )
-    metadata_user = _coerce_identifier(user_id_hint) or _coerce_identifier(owner_filters.get("user_id"))
+    metadata_user = _coerce_identifier(user_id_hint) or _coerce_identifier(filters.get("user_id"))
     if not metadata_tenant and metadata_user:
         metadata_tenant = metadata_user
     if not metadata_user and metadata_tenant:
@@ -509,7 +510,7 @@ def _maybe_capture_watchlist_memory(
     session_id: Optional[str],
     tenant_id: Optional[str],
     user_id_hint: Optional[str],
-    owner_filters: Mapping[str, Optional[Any]],
+    owner_filters: Optional[Mapping[str, Optional[Any]]] = None,
 ) -> None:
     if not MEMORY_SERVICE.is_enabled(
         plan_memory_enabled=plan_memory_enabled,
@@ -741,13 +742,13 @@ def collect_watchlist_rule_detail(
     if not is_watchlist_rule(rule):
         raise ValueError("watchlist.rule_not_watchlist")
 
-    condition_raw = getattr(rule, "condition", {}) or {}
-    condition_detail = {
-        "type": str(condition_raw.get("type") or "filing"),
-        "tickers": _string_list(condition_raw.get("tickers")),
-        "categories": _string_list(condition_raw.get("categories")),
-        "sectors": _string_list(condition_raw.get("sectors")),
-        "minSentiment": condition_raw.get("minSentiment"),
+    trigger_raw = getattr(rule, "trigger", {}) or {}
+    trigger_detail = {
+        "type": str(trigger_raw.get("type") or "filing"),
+        "tickers": _string_list(trigger_raw.get("tickers")),
+        "categories": _string_list(trigger_raw.get("categories")),
+        "sectors": _string_list(trigger_raw.get("sectors")),
+        "minSentiment": trigger_raw.get("minSentiment"),
     }
 
     channels_raw = getattr(rule, "channels", []) or []
@@ -847,7 +848,7 @@ def collect_watchlist_rule_detail(
         "windowMinutes": int(getattr(rule, "window_minutes", 0) or 0),
         "cooldownMinutes": int(getattr(rule, "cooldown_minutes", 0) or 0),
         "maxTriggersPerDay": getattr(rule, "max_triggers_per_day", None),
-        "condition": condition_detail,
+        "trigger": trigger_detail,
         "channels": channel_details,
         "extras": extras,
         "lastTriggeredAt": _iso(getattr(rule, "last_triggered_at", None)),

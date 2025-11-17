@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import type { Route } from "next";
 import {
   useSearchResults,
   type SearchResult,
@@ -187,7 +188,7 @@ export function useSearchController(): UseSearchControllerValue {
       }
       nextFilters.sectors.forEach((sector) => nextParams.append("sector", sector));
       const qs = nextParams.toString();
-      router.replace(qs ? `/search?${qs}` : "/search");
+      router.replace((qs ? `/search?${qs}` : "/search") as Route);
     },
     [router],
   );

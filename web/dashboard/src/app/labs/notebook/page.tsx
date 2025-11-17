@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { notFound } from "next/navigation";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { NotebookWorkspace } from "@/components/notebook/NotebookWorkspace";
@@ -31,6 +32,10 @@ import {
 import { toast } from "@/store/toastStore";
 
 export default function NotebookLabPage() {
+  if (process.env.NEXT_PUBLIC_ENABLE_LABS !== "true") {
+    notFound();
+  }
+
   const [notebooks, setNotebooks] = useState<NotebookSummary[]>([]);
   const [activeNotebook, setActiveNotebook] = useState<NotebookDetailResponse | null>(null);
   const [shares, setShares] = useState<NotebookShare[]>([]);

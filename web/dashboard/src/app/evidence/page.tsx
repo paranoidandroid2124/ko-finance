@@ -12,8 +12,8 @@ import { usePlanUpgrade } from "@/hooks/usePlanUpgrade";
 
 export default function EvidenceWorkspacePage() {
   const searchParams = useSearchParams();
-  const traceId = searchParams.get("traceId");
-  const urnId = searchParams.get("urnId");
+  const traceId = searchParams?.get("traceId");
+  const urnId = searchParams?.get("urnId");
   const planTier = usePlanTier();
   const { requestUpgrade } = usePlanUpgrade();
   const { data, isLoading, isError, error } = useEvidenceWorkspace(traceId, urnId);

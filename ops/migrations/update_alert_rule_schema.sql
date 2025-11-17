@@ -6,18 +6,25 @@ ALTER TABLE alert_rules
     ADD COLUMN IF NOT EXISTS frequency JSONB NOT NULL DEFAULT '{}'::jsonb,
     ADD COLUMN IF NOT EXISTS cooled_until TIMESTAMPTZ NULL;
 
--- Backfill new columns from legacy fields when present.
-UPDATE alert_rules
-SET
-    trigger = COALESCE(condition, '{}'::jsonb),
-    frequency = jsonb_build_object(
-        'evaluationIntervalMinutes', COALESCE(evaluation_interval_minutes, 5),
-        'windowMinutes', COALESCE(window_minutes, 60),
-        'cooldownMinutes', COALESCE(cooldown_minutes, 60),
-        'maxTriggersPerDay', max_triggers_per_day
-    ),
-    cooled_until = throttle_until
-WHERE trigger = '{}'::jsonb OR frequency = '{}'::jsonb;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'alert_rules' AND column_name = 'condition'
+    ) THEN
+        UPDATE alert_rules
+        SET
+            trigger = COALESCE(condition, '{}'::jsonb),
+            frequency = jsonb_build_object(
+                'evaluationIntervalMinutes', COALESCE(evaluation_interval_minutes, 5),
+                'windowMinutes', COALESCE(window_minutes, 60),
+                'cooldownMinutes', COALESCE(cooldown_minutes, 60),
+                'maxTriggersPerDay', max_triggers_per_day
+            ),
+            cooled_until = throttle_until
+        WHERE trigger = '{}'::jsonb OR frequency = '{}'::jsonb;
+    END IF;
+END $$;
 
 ALTER TABLE alert_rules
     DROP COLUMN IF EXISTS condition,

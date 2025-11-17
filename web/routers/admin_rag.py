@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import HTTPException, Query, status
 from fastapi.responses import FileResponse
 
 import llm.llm_service as llm_service
@@ -31,12 +31,11 @@ from services import admin_rag_service, event_brief_service, reindex_sla_service
 from services.admin_audit import append_audit_log
 from services.evidence_package import PackageResult, make_evidence_bundle
 from core.logging import get_logger
-from web.deps_admin import require_admin_session
+from web.routers.admin_utils import create_admin_router
 
-router = APIRouter(
+router = create_admin_router(
     prefix="/admin/rag",
     tags=["Admin RAG"],
-    dependencies=[Depends(require_admin_session)],
 )
 
 _AUDIT_DIR = Path("uploads") / "admin"

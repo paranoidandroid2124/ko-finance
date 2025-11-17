@@ -38,7 +38,7 @@ from services.notebook_service import (
 )
 from services.plan_service import PlanContext
 from web.deps import require_plan_feature
-from web.deps_rbac import RbacState, get_rbac_state, require_org_role
+from web.deps_rbac import RbacState, require_org_role
 
 router = APIRouter(prefix="/notebooks", tags=["Research Notebook"])
 DEFAULT_LIMIT = 25

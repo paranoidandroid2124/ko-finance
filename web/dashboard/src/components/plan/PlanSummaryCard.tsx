@@ -3,8 +3,9 @@
 import clsx from "classnames";
 import { useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import type { Route } from "next";
 
-import { usePlanStore } from "@/store/planStore";
+import { usePlanContext } from "@/store/planStore";
 import { getTrialCountdownLabel } from "@/lib/trialUtils";
 import { usePlanUpgrade } from "@/hooks/usePlanUpgrade";
 import { logEvent } from "@/lib/telemetry";
@@ -15,6 +16,7 @@ import { usePlanCatalog } from "@/hooks/usePlanCatalog";
 import { resolvePlanMarketingCopy } from "@/lib/planContext";
 import { usePlanTrialCta } from "@/hooks/usePlanTrialCta";
 import { PLAN_ENTITLEMENT_LABELS } from "@/constants/planMetadata";
+import { useToastStore } from "@/store/toastStore";
 
 const friendlyEntitlement = (entitlement: string) => PLAN_ENTITLEMENT_LABELS[entitlement] ?? entitlement;
 
@@ -46,15 +48,14 @@ type PlanSummaryCardProps = {
 
 export function PlanSummaryCard({ className }: PlanSummaryCardProps) {
   const router = useRouter();
-  const { planTier, expiresAt, entitlements, quota, loading, initialized, error } = usePlanStore((state) => ({
-    planTier: state.planTier,
-    expiresAt: state.expiresAt,
-    entitlements: state.entitlements,
-    quota: state.quota,
-    loading: state.loading,
-    initialized: state.initialized,
-    error: state.error,
-  }));
+  const pushToast = useToastStore((state) => state.show);
+  const pushRoute = useCallback(
+    (href: string) => {
+      router.push(href as Route);
+    },
+    [router],
+  );
+  const { planTier, expiresAt, entitlements, quota, loading, initialized, error } = usePlanContext();
   const { catalog } = usePlanCatalog();
   const { requestUpgrade, isPreparing } = usePlanUpgrade();
   const { trial, trialActive, trialAvailable, trialDurationDays, trialStarting, startTrialCta } = usePlanTrialCta();
@@ -194,7 +195,7 @@ export function PlanSummaryCard({ className }: PlanSummaryCardProps) {
                 <button
                   type="button"
                   className="rounded-lg border border-white/60 bg-white/10 px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
-                  onClick={() => router.push("/settings?panel=plan&tier=pro")}
+                  onClick={() => pushRoute("/settings?panel=plan&tier=pro")}
                 >
                   플랜 관리
                 </button>

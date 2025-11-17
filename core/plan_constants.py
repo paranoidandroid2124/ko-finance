@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Literal, Sequence
+from enum import Enum
+from typing import Sequence
 
-PlanTier = Literal["free", "starter", "pro", "enterprise"]
 
-SUPPORTED_PLAN_TIERS: Sequence[str] = ("free", "starter", "pro", "enterprise")
+class PlanTier(str, Enum):
+    FREE = "free"
+    STARTER = "starter"
+    PRO = "pro"
+    ENTERPRISE = "enterprise"
+
+    def __str__(self) -> str:  # pragma: no cover - convenience
+        return self.value
+
+
+SUPPORTED_PLAN_TIERS: Sequence[PlanTier] = tuple(PlanTier)
 
 __all__ = ["PlanTier", "SUPPORTED_PLAN_TIERS"]

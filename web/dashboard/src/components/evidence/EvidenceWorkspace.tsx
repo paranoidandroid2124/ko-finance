@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { EvidencePanel, type EvidencePanelItem, type PlanTier } from "@/components/evidence/EvidencePanel";
 import { useEvidenceWorkspaceStore } from "@/store/evidenceWorkspaceStore";
 import { EvidenceDetailPanel } from "@/components/evidence/EvidenceDetailPanel";
+import { EvidenceLayout } from "@/components/evidence/EvidenceLayout";
 
 type EvidenceWorkspaceProps = {
   planTier: PlanTier;
@@ -56,24 +57,26 @@ export function EvidenceWorkspace({
   }, [evidence, pdfUrl, pdfDownloadUrl, diffEnabled, diffActive, diffRemoved, selectedUrnId, setEvidence]);
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,0.45fr)_minmax(0,0.55fr)] xl:grid-cols-[minmax(0,0.4fr)_minmax(0,0.6fr)]">
-      <EvidencePanel
-        planTier={planTier}
-        status={evidenceStatus === "ready" && evidenceItems.length === 0 ? "empty" : evidenceStatus}
-        items={evidenceItems}
-        selectedUrnId={selectedEvidenceUrn}
-        inlinePdfEnabled={false}
-        pdfUrl={undefined}
-        pdfDownloadUrl={storePdfDownloadUrl}
-        diffEnabled={storeDiffEnabled}
-        diffActive={storeDiffActive}
-        onSelectEvidence={(urnId) => selectEvidence(urnId)}
-        onHoverEvidence={(urnId) => hoverEvidence(urnId)}
-        onToggleDiff={toggleDiff}
-        removedItems={removedEvidence}
-        onRequestUpgrade={onRequestUpgrade}
-      />
-      <EvidenceDetailPanel pdfUrl={storePdfUrl ?? pdfUrl} pdfDownloadUrl={storePdfDownloadUrl ?? pdfDownloadUrl} />
-    </div>
+    <EvidenceLayout
+      list={
+        <EvidencePanel
+          planTier={planTier}
+          status={evidenceStatus === "ready" && evidenceItems.length === 0 ? "empty" : evidenceStatus}
+          items={evidenceItems}
+          selectedUrnId={selectedEvidenceUrn}
+          inlinePdfEnabled={false}
+          pdfUrl={undefined}
+          pdfDownloadUrl={storePdfDownloadUrl}
+          diffEnabled={storeDiffEnabled}
+          diffActive={storeDiffActive}
+          onSelectEvidence={(urnId) => selectEvidence(urnId)}
+          onHoverEvidence={(urnId) => hoverEvidence(urnId)}
+          onToggleDiff={toggleDiff}
+          removedItems={removedEvidence}
+          onRequestUpgrade={onRequestUpgrade}
+        />
+      }
+      detail={<EvidenceDetailPanel pdfUrl={storePdfUrl ?? pdfUrl} pdfDownloadUrl={storePdfDownloadUrl ?? pdfDownloadUrl} />}
+    />
   );
 }

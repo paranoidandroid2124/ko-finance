@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+import hashlib
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 from pydantic import ValidationError
 from sqlalchemy import select, tuple_
@@ -69,6 +70,64 @@ def _normalize_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def _build_signature(payload: Dict[str, Any]) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def compute_snapshot_hash(payload: Mapping[str, Any]) -> str:
+    """Generate a stable hash for the given evidence payload."""
+
+    normalized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def save_evidence_snapshot(
+    db: Session,
+    *,
+    urn_id: str,
+    payload: Mapping[str, Any],
+    author: Optional[str] = None,
+    process: Optional[str] = None,
+    org_id: Optional[uuid.UUID] = None,
+    user_id: Optional[uuid.UUID] = None,
+) -> Optional[EvidenceSnapshot]:
+    """
+    Persist an evidence snapshot if it represents a new version.
+
+    Returns the newly-created snapshot when stored, otherwise ``None`` when a duplicate is detected.
+    """
+
+    if not urn_id:
+        return None
+
+    stored_payload = dict(payload)
+    snapshot_hash = compute_snapshot_hash(stored_payload)
+    existing = (
+        db.query(EvidenceSnapshot)
+        .filter(EvidenceSnapshot.urn_id == urn_id, EvidenceSnapshot.snapshot_hash == snapshot_hash)
+        .first()
+    )
+    if existing:
+        return None
+
+    latest = (
+        db.query(EvidenceSnapshot)
+        .filter(EvidenceSnapshot.urn_id == urn_id)
+        .order_by(EvidenceSnapshot.updated_at.desc())
+        .first()
+    )
+
+    snapshot = EvidenceSnapshot(
+        urn_id=urn_id,
+        snapshot_hash=snapshot_hash,
+        previous_snapshot_hash=latest.snapshot_hash if latest else None,
+        diff_type="created" if latest is None else "updated",
+        payload=stored_payload,
+        author=author,
+        process=process,
+        org_id=org_id,
+        user_id=user_id,
+    )
+    db.add(snapshot)
+    return snapshot
 
 
 def _safe_uuid(value: Any) -> Optional[uuid.UUID]:

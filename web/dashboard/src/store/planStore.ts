@@ -1,6 +1,7 @@
 'use client';
 
 import { create } from 'zustand';
+import { shallow } from 'zustand/shallow';
 import { logEvent } from '@/lib/telemetry';
 import { resolveApiBase } from '@/lib/apiBase';
 import { fetchWithAuth } from '@/lib/fetchWithAuth';
@@ -583,6 +584,26 @@ export const usePlanTrialRequestState = () =>
     trialStarting: state.trialStarting,
     trialError: state.trialError,
   }));
+export const selectPlanContext = (state: PlanStoreState) => ({
+  planTier: state.planTier,
+  entitlements: state.entitlements,
+  featureFlags: state.featureFlags,
+  memoryFlags: state.memoryFlags,
+  quota: state.quota,
+  expiresAt: state.expiresAt,
+  updatedAt: state.updatedAt,
+  updatedBy: state.updatedBy,
+  changeNote: state.changeNote,
+  checkoutRequested: state.checkoutRequested,
+  trial: state.trial,
+  trialStarting: state.trialStarting,
+  trialError: state.trialError,
+  initialized: state.initialized,
+  loading: state.loading,
+  error: state.error,
+});
+export type PlanContextState = ReturnType<typeof selectPlanContext>;
+export const usePlanContext = () => usePlanStore(selectPlanContext, shallow);
 export { planTierRank, isTierAtLeast, nextTier } from '@/store/planStore/helpers';
 export type {
   PlanTier,

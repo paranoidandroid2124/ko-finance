@@ -13,7 +13,7 @@ import {
   useOpsSchedules,
   useTriggerOpsSchedule,
 } from "@/hooks/useAdminConfig";
-import { formatKoreanDateTime } from "@/lib/datetime";
+import { formatDateTime } from "@/lib/date";
 import type { ToastInput } from "@/store/toastStore";
 
 type BadgePreset = {
@@ -143,7 +143,7 @@ export function AdminOpsSchedulesPanel({ adminActor, toast }: AdminOpsSchedulesP
         {schedulesData?.jobs?.length ? (
           schedulesData.jobs.map((job) => {
             const statusBadge = resolveBadge(job.status, SCHEDULE_STATUS_BADGES);
-            const nextRunLabel = job.nextRunAt ? `다음 실행: ${formatKoreanDateTime(job.nextRunAt, { fallback: "시간 정보 없음" })}` : "다음 실행: 미정";
+            const nextRunLabel = job.nextRunAt ? `다음 실행: ${formatDateTime(job.nextRunAt, { fallback: "시간 정보 없음" })}` : "다음 실행: 미정";
             const isJobPending = triggerSchedule.isPending && pendingJobId === job.id;
             return (
               <div
@@ -222,7 +222,7 @@ export function AdminOpsSchedulesPanel({ adminActor, toast }: AdminOpsSchedulesP
                     </span>
                   </div>
                   <p className="text-text-secondaryLight dark:text-text-secondaryDark">
-                    {formatKoreanDateTime(run.startedAt, { fallback: "시간 정보 없음" })} · 요청자: {run.actor ?? "—"}
+                    {formatDateTime(run.startedAt, { fallback: "시간 정보 없음" })} · 요청자: {run.actor ?? "—"}
                   </p>
                   {run.note ? (
                     <p className="text-text-tertiaryLight dark:text-text-tertiaryDark">메모: {run.note}</p>

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Mapping, Sequence, Dict
+from typing import Optional, List, Mapping, Sequence, Dict, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
@@ -11,6 +11,7 @@ from core.env import env_int
 from core.logging import get_logger
 from database import get_db
 from schemas.api.alerts import (
+    AlertChannelSchema,
     AlertChannelSchemaResponse,
     AlertEventMatchResponse,
     AlertRuleCreateRequest,
@@ -353,8 +354,6 @@ def update_rule(
     changes = payload.model_dump(exclude_unset=True)
     if payload.trigger is not None:
         changes["trigger"] = payload.trigger.model_dump()
-    elif payload.condition is not None:
-        changes["condition"] = payload.condition.model_dump()
     if payload.frequency is not None:
         changes["frequency"] = payload.frequency.model_dump()
     if payload.channels is not None:

@@ -10,7 +10,7 @@ import { EventMatchList } from "@/components/watchlist/EventMatchList";
 import { useWatchlistRadar, useAlertEventMatches } from "@/hooks/useAlerts";
 import { useAlertPresetUsage } from "@/hooks/useAdminConfig";
 import type { AlertEventMatch, WatchlistRadarItem } from "@/lib/alertsApi";
-import { formatKoreanDateTime } from "@/lib/datetime";
+import { formatDateTime } from "@/lib/date";
 import type { ToastInput } from "@/store/toastStore";
 
 const WINDOW_OPTIONS = [
@@ -67,7 +67,7 @@ export function AdminOpsWatchlistPanel({ adminActor: _adminActor, toast }: Admin
   const summary = data?.summary;
   const items = data?.items ?? EMPTY_ITEMS;
   const generatedAtLabel =
-    formatKoreanDateTime(data?.generatedAt ?? null, { includeSeconds: true }) ?? "생성 시각 미상";
+    formatDateTime(data?.generatedAt, { includeSeconds: true, fallback: "생성 시각 미상" });
   const eventMatches = eventMatchesData?.matches ?? [];
 
   const numberFormatter = useMemo(() => new Intl.NumberFormat("ko-KR"), []);
@@ -227,7 +227,7 @@ export function AdminOpsWatchlistPanel({ adminActor: _adminActor, toast }: Admin
               </p>
               {presetUsageData?.presets?.[0]?.lastUsedAt ? (
                 <p className="text-xs text-text-tertiaryLight dark:text-text-tertiaryDark">
-                  최근 실행: {formatKoreanDateTime(presetUsageData.presets[0].lastUsedAt, { includeSeconds: false })}
+                  최근 실행: {formatDateTime(presetUsageData.presets[0].lastUsedAt, { includeTime: false })}
                 </p>
               ) : null}
             </div>
@@ -306,7 +306,7 @@ export function AdminOpsWatchlistPanel({ adminActor: _adminActor, toast }: Admin
                     <span className="font-semibold text-text-primaryLight dark:text-text-primaryDark">
                       {item.ruleName ?? "이름 없는 룰"}
                     </span>
-                    <span>{formatKoreanDateTime(item.deliveredAt, { includeSeconds: true }) ?? "시간 미상"}</span>
+                    <span>{formatDateTime(item.deliveredAt, { includeSeconds: true, fallback: "시간 미상" })}</span>
                   </div>
                   <div className="mt-1 space-y-1 text-text-secondaryLight dark:text-text-secondaryDark">
                     <p>{item.ticker ? `${item.ticker} · ${item.company ?? "기업 미상"}` : "티커 없음"}</p>

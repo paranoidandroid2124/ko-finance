@@ -8,23 +8,17 @@ from schemas.api.alerts import (
 )
 
 
-def test_create_request_hydrates_trigger_and_frequency_from_legacy_fields() -> None:
+def test_create_request_populates_defaults() -> None:
     payload = AlertRuleCreateRequest(
         name="My Alert",
         channels=[],
-        evaluationIntervalMinutes=15,
-        windowMinutes=10,
-        cooldownMinutes=5,
-        maxTriggersPerDay=7,
     )
     assert payload.trigger is not None
     assert payload.trigger.type == "filing"
     assert payload.frequency is not None
-    assert payload.frequency.evaluationIntervalMinutes == 15
-    # Window is clamped to evaluation interval minimum.
-    assert payload.frequency.windowMinutes == 15
-    assert payload.frequency.cooldownMinutes == 5
-    assert payload.frequency.maxTriggersPerDay == 7
+    assert payload.frequency.evaluationIntervalMinutes == 5
+    assert payload.frequency.windowMinutes == 60
+    assert payload.frequency.cooldownMinutes == 60
 
 
 def test_create_request_respects_new_trigger_and_frequency_payloads() -> None:

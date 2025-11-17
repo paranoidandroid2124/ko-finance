@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { resolveApiBase } from "@/lib/apiBase";
-import { formatKoreanDateTime } from "@/lib/datetime";
+import { formatDateTime } from "@/lib/date";
 
 export type FilingSentimentFilter = "all" | "positive" | "negative";
 
@@ -162,7 +162,7 @@ const toListItem = (item: ApiFilingBrief): FilingListItem => {
     company: item.corp_name || item.ticker || "미확인 기업",
     title: item.report_name || item.title || "제목 미정",
     type: categoryLabel || item.report_name || item.title || "분류 없음",
-    filedAt: formatKoreanDateTime(item.filed_at, { fallback: "날짜 미상", keepInvalid: false }),
+    filedAt: formatDateTime(item.filed_at, { fallback: "날짜 미상" }),
     sentiment: item.sentiment ?? deriveSentiment(item.analysis_status, item.category),
     sentimentReason: item.sentiment_reason ?? undefined,
   };

@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { notFound } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Search, Sparkles } from "lucide-react";
 
@@ -49,6 +50,10 @@ const formatNullablePercent = (value?: number | null) => (value == null ? "—" 
 const formatInteger = (value: number) => new Intl.NumberFormat("ko-KR").format(value);
 
 export default function EventStudyLabPage() {
+  if (process.env.NEXT_PUBLIC_ENABLE_LABS !== "true") {
+    notFound();
+  }
+
   const [searchInput, setSearchInput] = useState("");
   const [eventTypes, setEventTypes] = useState<EventType[]>(["BUYBACK", "DIVIDEND"]);
   const [markets, setMarkets] = useState<Market[]>(["KOSPI", "KOSDAQ"]);

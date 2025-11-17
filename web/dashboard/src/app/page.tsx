@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { Route } from "next";
 import { AppShell } from "@/components/layout/AppShell";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { AlertFeed } from "@/components/ui/AlertFeed";
@@ -30,6 +31,7 @@ const EVENT_SEVERITY_CLASS: Record<string, string> = {
 };
 
 const HELP_CENTER_URL = "https://docs.kfinance.co/help";
+const ENABLE_LABS = process.env.NEXT_PUBLIC_ENABLE_LABS === "true";
 
 const formatRelativeTime = (value?: string | null) => {
   if (!value) {
@@ -59,6 +61,12 @@ const formatNumber = (value: number) => new Intl.NumberFormat("ko-KR").format(va
 
 export default function DashboardPage() {
   const router = useRouter();
+  const pushRoute = useCallback(
+    (href: string) => {
+      router.push(href as Route);
+    },
+    [router],
+  );
   const { data, isLoading, isError } = useDashboardOverview();
   const [searchInput, setSearchInput] = useState("");
   const reportsEventExportEnabled = usePlanStore((state) => state.featureFlags.reportsEventExport);
@@ -145,7 +153,7 @@ export default function DashboardPage() {
       params.set("q", trimmed);
     }
     const query = params.toString();
-    router.push(query ? `/search?${query}` : "/search");
+    pushRoute(query ? `/search?${query}` : "/search");
   };
 
   const handleAlertSelect = (alert: (typeof alerts)[number]) => {
@@ -157,7 +165,7 @@ export default function DashboardPage() {
       window.open(target, "_blank", "noopener,noreferrer");
       return;
     }
-    router.push(target as Parameters<typeof router.push>[0]);
+    pushRoute(target);
   };
 
   const renderQuickLinks = () => {
@@ -174,7 +182,7 @@ export default function DashboardPage() {
           <button
             key={`${link.type}-${link.href}`}
             type="button"
-            onClick={() => router.push(link.href)}
+            onClick={() => pushRoute(link.href)}
             className="rounded-full border border-border-light px-3 py-1 text-xs font-semibold text-text-secondaryLight transition hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary.dark dark:hover:text-primary.dark"
           >
             {link.label}
@@ -193,7 +201,7 @@ export default function DashboardPage() {
           action={
             <button
               type="button"
-              onClick={() => router.push("/watchlist")}
+              onClick={() => pushRoute("/watchlist")}
               className="inline-flex items-center justify-center rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white shadow hover:bg-primary/90 dark:bg-primary.dark dark:hover:bg-primary.dark/90"
             >
               워치리스트 만들기
@@ -207,12 +215,12 @@ export default function DashboardPage() {
     return (
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {cards.map((item) => (
-          <WatchlistSummaryCard key={item.ruleId} item={item} onOpen={() => router.push(item.detailUrl ?? "/watchlist")} />
+          <WatchlistSummaryCard key={item.ruleId} item={item} onOpen={() => pushRoute(item.detailUrl ?? "/watchlist")} />
         ))}
         {watchlists.length > cards.length ? (
           <button
             type="button"
-            onClick={() => router.push("/watchlist")}
+            onClick={() => pushRoute("/watchlist")}
             className="flex flex-col items-start justify-between rounded-2xl border border-dashed border-border-light px-4 py-4 text-left text-sm text-text-secondaryLight transition hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary.dark dark:hover:text-primary.dark"
           >
             <p className="text-xs font-semibold uppercase tracking-wide text-text-tertiaryLight dark:text-text-tertiaryDark">More</p>
@@ -256,9 +264,9 @@ export default function DashboardPage() {
               </span>
             </div>
             {event.targetUrl ? (
-              <button
-                type="button"
-                onClick={() => router.push(event.targetUrl!)}
+                <button
+                  type="button"
+                  onClick={() => pushRoute(event.targetUrl!)}
                 className="mt-2 text-xs font-semibold text-primary hover:underline dark:text-primary.dark"
               >
                 공시 보기
@@ -320,37 +328,39 @@ export default function DashboardPage() {
                   감시 중인 기업과 새롭게 감지된 이벤트를 한 화면에서 확인하세요.
                 </p>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {heroStats.map((stat) => (
-                  <HeroStatCard key={stat.label} {...stat} />
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={() => router.push("/watchlist")}
-                  className="rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white shadow hover:bg-primary/90 dark:bg-primary.dark dark:hover:bg-primary.dark/90"
-                >
-                  워치리스트 관리
-                </button>
-            <button
-              type="button"
-              onClick={() => router.push("/labs/event-study")}
-              className="rounded-full border border-border-light/80 px-4 py-2 text-sm font-semibold text-text-secondaryLight transition hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary.dark dark:hover:text-primary.dark"
-            >
-              이벤트 스터디 보기
-            </button>
-            {reportsEventExportEnabled ? (
-              <EventStudyExportButton
-                buildParams={buildDashboardExportParams}
-                variant="secondary"
-                size="sm"
-                className="rounded-full"
-              >
-                PDF 내보내기
-              </EventStudyExportButton>
-            ) : null}
-          </div>
+               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                 {heroStats.map((stat) => (
+                   <HeroStatCard key={stat.label} {...stat} />
+                 ))}
+               </div>
+               <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => pushRoute("/watchlist")}
+                   className="rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white shadow hover:bg-primary/90 dark:bg-primary.dark dark:hover:bg-primary.dark/90"
+                 >
+                   워치리스트 관리
+                 </button>
+                 {ENABLE_LABS ? (
+                    <button
+                      type="button"
+                      onClick={() => pushRoute("/labs/event-study")}
+                     className="rounded-full border border-border-light/80 px-4 py-2 text-sm font-semibold text-text-secondaryLight transition hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary.dark dark:hover:text-primary.dark"
+                   >
+                     이벤트 스터디 보기
+                   </button>
+                 ) : null}
+                 {reportsEventExportEnabled ? (
+                   <EventStudyExportButton
+                     buildParams={buildDashboardExportParams}
+                     variant="secondary"
+                     size="sm"
+                     className="rounded-full"
+                   >
+                     PDF 내보내기
+                   </EventStudyExportButton>
+                 ) : null}
+               </div>
             </div>
           </div>
           <div className="rounded-3xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
@@ -359,7 +369,7 @@ export default function DashboardPage() {
               <button
                 type="button"
                 className="text-xs font-semibold text-primary hover:underline dark:text-primary.dark"
-                onClick={() => router.push("/search")}
+                onClick={() => pushRoute("/search")}
               >
                 전체 보기
               </button>
@@ -368,7 +378,7 @@ export default function DashboardPage() {
               value={searchInput}
               onChange={setSearchInput}
               onSubmit={handleSearchSubmit}
-              onOpenCommand={() => router.push("/search")}
+              onOpenCommand={() => pushRoute("/search")}
               isLoading={false}
             />
             <div className="mt-4">{renderQuickLinks()}</div>
@@ -475,7 +485,7 @@ export default function DashboardPage() {
             <button
               type="button"
               className="text-xs font-semibold text-primary hover:underline dark:text-primary.dark"
-              onClick={() => router.push("/watchlist")}
+              onClick={() => pushRoute("/watchlist")}
             >
               Watchlist 전체 보기
             </button>
@@ -538,7 +548,7 @@ export default function DashboardPage() {
                 <button
                   type="button"
                   className="text-xs font-semibold text-primary hover:underline dark:text-primary.dark"
-                  onClick={() => router.push("/watchlist")}
+                  onClick={() => pushRoute("/watchlist")}
                 >
                   Alert Center
                 </button>
@@ -559,7 +569,7 @@ export default function DashboardPage() {
                 <button
                   type="button"
                   className="text-xs font-semibold text-primary hover:underline dark:text-primary.dark"
-                  onClick={() => router.push("/search?tab=news")}
+                  onClick={() => pushRoute("/search?tab=news")}
                 >
                   더보기
                 </button>

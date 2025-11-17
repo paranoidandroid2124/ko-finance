@@ -70,6 +70,7 @@ export type PlanCatalogTier = {
   price: PlanCatalogPrice;
   ctaLabel: string;
   ctaHref: string;
+  upgradePath?: string | null;
   features: PlanCatalogFeature[];
   imageUrl?: string | null;
   supportNote?: string | null;

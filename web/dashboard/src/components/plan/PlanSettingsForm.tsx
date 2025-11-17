@@ -5,6 +5,7 @@ import clsx from "classnames";
 
 import {
   usePlanStore,
+  usePlanContext,
   type PlanContextUpdateInput,
   type PlanMemoryFlags,
   type PlanQuota,
@@ -17,6 +18,8 @@ import { useTossCheckout } from "@/hooks/useTossCheckout";
 import { planTierLabel } from "@/constants/planPricing";
 import { LIGHTMEM_FLAG_OPTIONS, type LightMemFlagKey } from "@/constants/lightmemFlags";
 import { getTrialCountdownLabel } from "@/lib/trialUtils";
+import { PLAN_TIERS, PLAN_TIER_CONFIG } from "@/config/planConfig";
+import { formatDateTime } from "@/lib/date";
 
 type FormState = {
   planTier: PlanTier;
@@ -29,28 +32,11 @@ type FormState = {
   triggerCheckout: boolean;
 };
 
-const PLAN_TIER_OPTIONS: Array<{ value: PlanTier; label: string; helper: string }> = [
-  {
-    value: "free",
-    label: "Free",
-    helper: "처음 둘러보는 파워를 위한 맛보기 플랜이에요.",
-  },
-  {
-    value: "starter",
-    label: "Starter",
-    helper: "워치리스트·RAG 자동화를 가볍게 시작하는 경량 유료 플랜입니다.",
-  },
-  {
-    value: "pro",
-    label: "Pro",
-    helper: "자동화와 알림 채널을 한층 넓혀 줄 옵션이에요.",
-  },
-  {
-    value: "enterprise",
-    label: "Enterprise",
-    helper: "맞춤 한도와 전담 지원이 필요한 파트너를 위한 플랜이에요.",
-  },
-];
+const PLAN_TIER_OPTIONS: Array<{ value: PlanTier; label: string; helper: string }> = PLAN_TIERS.map((tier) => ({
+  value: tier,
+  label: PLAN_TIER_CONFIG[tier].title,
+  helper: PLAN_TIER_CONFIG[tier].tagline,
+}));
 
 const ENTITLEMENT_OPTIONS: Array<{ value: string; label: string; helper: string }> = [
   {
@@ -90,23 +76,6 @@ const ENTITLEMENT_OPTIONS: Array<{ value: string; label: string; helper: string 
   },
 ];
 
-const formatKoreanDateTime = (iso: string | null | undefined) => {
-  if (!iso) {
-    return "아직 저장 이력이 없어요.";
-  }
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) {
-    return "저장 시점을 확인 중이에요.";
-  }
-  return new Intl.DateTimeFormat("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(parsed);
-};
-
 const normalizeNumberInput = (value: string): number | null => {
   if (!value.trim()) {
     return null;
@@ -138,20 +107,8 @@ export function PlanSettingsForm({ className }: PlanSettingsFormProps) {
     updatedBy,
     changeNote,
     checkoutRequested,
-    saving,
-    saveError,
-    savePlan,
-    startTrial,
-  } = usePlanStore((state) => ({
-    planTier: state.planTier,
-    expiresAt: state.expiresAt ?? "",
-    entitlements: state.entitlements,
-    memoryFlags: state.memoryFlags,
-    quota: state.quota,
-    updatedAt: state.updatedAt ?? null,
-    updatedBy: state.updatedBy ?? "",
-    changeNote: state.changeNote ?? "",
-    checkoutRequested: state.checkoutRequested,
+  } = usePlanContext();
+  const { saving, saveError, savePlan, startTrial } = usePlanStore((state) => ({
     saving: state.saving,
     saveError: state.saveError,
     savePlan: state.savePlan,
@@ -164,29 +121,34 @@ export function PlanSettingsForm({ className }: PlanSettingsFormProps) {
 
   const [form, setForm] = useState<FormState>({
     planTier,
-    expiresAt,
+    expiresAt: expiresAt ?? "",
     entitlements,
     memoryFlags: { ...memoryFlags },
     quota: { ...quota },
-    updatedBy,
-    changeNote,
+    updatedBy: updatedBy ?? "",
+    changeNote: changeNote ?? "",
     triggerCheckout: false,
   });
 
   useEffect(() => {
     setForm({
       planTier,
-      expiresAt,
+      expiresAt: expiresAt ?? "",
       entitlements,
       memoryFlags: { ...memoryFlags },
       quota: { ...quota },
-      updatedBy,
-      changeNote,
+      updatedBy: updatedBy ?? "",
+      changeNote: changeNote ?? "",
       triggerCheckout: false,
     });
   }, [planTier, expiresAt, entitlements, memoryFlags, quota, updatedBy, changeNote]);
 
-  const lastSavedLabel = useMemo(() => formatKoreanDateTime(updatedAt), [updatedAt]);
+  const lastSavedLabel = useMemo(() => {
+    if (!updatedAt) {
+      return "아직 저장 이력이 없어요.";
+    }
+    return formatDateTime(updatedAt, { fallback: "저장 시점을 확인 중이에요." });
+  }, [updatedAt]);
   const trialActive = Boolean(trial?.active);
   const trialAvailable = Boolean(trial && !trial.active && !trial.used);
   const trialDurationDays = trial?.durationDays ?? 7;

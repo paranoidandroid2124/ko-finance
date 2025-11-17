@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 import { useTossWebhookAudit } from "@/hooks/useAdminQuickActions";
 import { useAdminSession } from "@/hooks/useAdminSession";
 import { requestTossWebhookReplay } from "@/lib/adminApi";
-import { formatKoreanDateTime } from "@/lib/datetime";
+import { formatDateTime } from "@/lib/date";
 import { useToastStore } from "@/store/toastStore";
 
 const RESULT_TONE: Record<string, string> = {
@@ -173,7 +173,7 @@ export function TossWebhookAuditPanel() {
                   className="border-t border-border-light text-sm text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark"
                 >
                   <td className="px-3 py-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-                    {formatKoreanDateTime(entry.loggedAt, { fallback: "기록 없음" })}
+                    {formatDateTime(entry.loggedAt, { fallback: "기록 없음" })}
                   </td>
                   <td className="px-3 py-2">
                     <span className={clsx("inline-flex rounded-full px-2 py-0.5 text-xs font-semibold", badgeTone)}>

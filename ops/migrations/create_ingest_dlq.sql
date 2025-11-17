@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS ingest_dead_letters (
 );
 
 ALTER TABLE ingest_dead_letters
+    DROP CONSTRAINT IF EXISTS chk_ingest_dead_letters_retries_nonnegative;
+
+ALTER TABLE ingest_dead_letters
     ADD CONSTRAINT chk_ingest_dead_letters_retries_nonnegative
     CHECK (retries >= 0);
 
@@ -37,4 +40,3 @@ CREATE INDEX IF NOT EXISTS idx_ingest_dead_letters_receipt
 
 CREATE INDEX IF NOT EXISTS idx_ingest_dead_letters_task
     ON ingest_dead_letters (task_name);
-

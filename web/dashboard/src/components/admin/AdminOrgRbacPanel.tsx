@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import type { Route } from "next";
 import { Loader2, ShieldCheck, Users } from "lucide-react";
 
 import { resolveApiBase } from "@/lib/apiBase";
@@ -128,7 +129,7 @@ export function AdminOrgRbacPanel({ compact = false }: AdminOrgRbacPanelProps) {
       </div>
       <div className="mt-4 flex flex-wrap gap-2 text-sm">
         <Link
-          href="/onboarding"
+          href={"/onboarding" as Route}
           className="inline-flex items-center rounded-lg border border-border-light px-3 py-1.5 font-semibold text-text-primaryLight transition hover:bg-border-light/40 dark:border-border-dark dark:text-text-primaryDark"
         >
           온보딩 페이지 열기

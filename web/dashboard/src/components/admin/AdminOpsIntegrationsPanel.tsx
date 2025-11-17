@@ -17,7 +17,7 @@ import type {
   AdminOpsLangfuseConfig,
   AdminOpsLangfuseEnvironment,
 } from "@/lib/adminApi";
-import { formatKoreanDateTime } from "@/lib/datetime";
+import { formatDateTime } from "@/lib/date";
 import type { ToastInput } from "@/store/toastStore";
 
 type ExternalApiDraft = {
@@ -597,7 +597,7 @@ export function AdminOpsIntegrationsPanel({ adminActor, toast }: AdminOpsIntegra
           />
         </label>
         <p className="mt-2 text-[11px] text-text-tertiaryLight dark:text-text-tertiaryDark">
-          최근 회전 시각: {formatKoreanDateTime(apiDraft.langfuse.lastRotatedAt, { fallback: "기록 없음" })}
+          최근 회전 시각: {formatDateTime(apiDraft.langfuse.lastRotatedAt, { fallback: "기록 없음" })}
         </p>
         {apiDraft.langfuse.rotationHistory.length > 0 ? (
           <div className="mt-2 space-y-1 rounded-lg bg-background-base/40 p-2 text-[11px] text-text-secondaryLight dark:bg-background-cardDark/40 dark:text-text-secondaryDark">
@@ -605,7 +605,7 @@ export function AdminOpsIntegrationsPanel({ adminActor, toast }: AdminOpsIntegra
             <ul className="space-y-1">
               {apiDraft.langfuse.rotationHistory.slice(0, 5).map((entry, idx) => (
                 <li key={`${entry.rotatedAt}-${idx}`} className="flex flex-wrap items-center gap-2">
-                  <span>{formatKoreanDateTime(entry.rotatedAt, { fallback: "기록 없음" })}</span>
+                  <span>{formatDateTime(entry.rotatedAt, { fallback: "기록 없음" })}</span>
                   <span className="text-text-tertiaryLight dark:text-text-tertiaryDark">by {entry.actor}</span>
                   {entry.note ? (
                     <span className="text-text-tertiaryLight dark:text-text-tertiaryDark">({entry.note})</span>
@@ -718,7 +718,7 @@ export function AdminOpsIntegrationsPanel({ adminActor, toast }: AdminOpsIntegra
                 </label>
               </div>
               <p className="mt-2 text-[11px] text-text-tertiaryLight dark:text-text-tertiaryDark">
-                최근 회전 시각: {formatKoreanDateTime(external.lastRotatedAt, { fallback: "기록 없음" })}
+                최근 회전 시각: {formatDateTime(external.lastRotatedAt, { fallback: "기록 없음" })}
               </p>
               {external.rotationHistory.length > 0 ? (
                 <div className="mt-2 space-y-1 rounded-lg bg-background-base/40 p-2 text-[11px] text-text-secondaryLight dark:bg-background-cardDark/40 dark:text-text-secondaryDark">
@@ -726,7 +726,7 @@ export function AdminOpsIntegrationsPanel({ adminActor, toast }: AdminOpsIntegra
                   <ul className="space-y-1">
                     {external.rotationHistory.slice(0, 3).map((entry, historyIndex) => (
                       <li key={`${entry.rotatedAt}-${historyIndex}`} className="flex flex-wrap items-center gap-2">
-                        <span>{formatKoreanDateTime(entry.rotatedAt, { fallback: "기록 없음" })}</span>
+                        <span>{formatDateTime(entry.rotatedAt, { fallback: "기록 없음" })}</span>
                         <span className="text-text-tertiaryLight dark:text-text-tertiaryDark">by {entry.actor}</span>
                         {entry.note ? (
                           <span className="text-text-tertiaryLight dark:text-text-tertiaryDark">({entry.note})</span>

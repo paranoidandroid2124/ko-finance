@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-import hashlib
 import json
 import time
 from dataclasses import dataclass
@@ -42,7 +41,6 @@ from models.news import NewsObservation, NewsSignal, NewsWindowAggregate
 from models.ingest_dead_letter import IngestDeadLetter
 from services.memory.offline_pipeline import run_long_term_update
 from services.memory.health import lightmem_health_summary
-from models.evidence import EvidenceSnapshot
 from models.summary import Summary
 from parse.pdf_parser import extract_chunks
 from parse.xml_parser import extract_chunks_from_xml
@@ -66,6 +64,7 @@ from services import (
     watchlist_service,
     watchlist_digest_schedule_service,
 )
+from services.evidence_service import save_evidence_snapshot
 from services.ingest_errors import FatalIngestError, TransientIngestError
 import services.lightmem_gate as lightmem_gate
 from services.lightmem_config import DIGEST_RATE_LIMIT_PER_MINUTE
@@ -144,11 +143,6 @@ class StageSkip(Exception):
         self.reason = reason
 
 
-def _snapshot_hash(payload: Dict[str, Any]) -> str:
-    normalized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-
 # Sentiment aliases for summaries
 _SENTIMENT_ALIASES: Dict[str, str] = {
     "positive": "positive",
@@ -173,58 +167,6 @@ def _safe_uuid(value: Any) -> Optional[uuid.UUID]:
     except (ValueError, TypeError, AttributeError):
         return None
     return None
-
-
-def _persist_evidence_snapshot(
-    db: Session,
-    *,
-    urn_id: str,
-    evidence_payload: Dict[str, Any],
-    author: Optional[str],
-    process: Optional[str],
-    org_id: Optional[uuid.UUID],
-    user_id: Optional[uuid.UUID],
-) -> Optional[Dict[str, Any]]:
-    if not urn_id:
-        return None
-
-    snapshot_hash = _snapshot_hash(evidence_payload)
-    existing = (
-        db.query(EvidenceSnapshot)
-        .filter(
-            EvidenceSnapshot.urn_id == urn_id,
-            EvidenceSnapshot.snapshot_hash == snapshot_hash,
-        )
-        .first()
-    )
-    if existing:
-        return None
-
-    latest = (
-        db.query(EvidenceSnapshot)
-        .filter(EvidenceSnapshot.urn_id == urn_id)
-        .order_by(desc(EvidenceSnapshot.updated_at))
-        .first()
-    )
-
-    diff_type = "created" if latest is None else "updated"
-    snapshot = EvidenceSnapshot(
-        urn_id=urn_id,
-        snapshot_hash=snapshot_hash,
-        previous_snapshot_hash=latest.snapshot_hash if latest else None,
-        diff_type=diff_type,
-        payload=evidence_payload,
-        author=author,
-        process=process,
-        org_id=org_id,
-        user_id=user_id,
-    )
-    db.add(snapshot)
-    return {
-        "urn_id": urn_id,
-        "snapshot_hash": snapshot_hash,
-        "diff_type": diff_type,
-    }
 
 
 def _count_text_characters(chunks: Iterable[Dict[str, Any]], *, source: Optional[str] = None) -> int:
@@ -2257,17 +2199,23 @@ def snapshot_evidence_diff(payload: Dict[str, Any]) -> Dict[str, Any]:
             if not isinstance(item, dict):
                 continue
             urn_id = item.get("urn_id")
-            result = _persist_evidence_snapshot(
+            snapshot = save_evidence_snapshot(
                 db,
                 urn_id=str(urn_id or ""),
-                evidence_payload=item,
+                payload=item,
                 author=author,
                 process=process,
                 org_id=owner_org_id,
                 user_id=owner_user_id,
             )
-            if result:
-                stored.append(result)
+            if snapshot:
+                stored.append(
+                    {
+                        "urn_id": snapshot.urn_id,
+                        "snapshot_hash": snapshot.snapshot_hash,
+                        "diff_type": snapshot.diff_type,
+                    }
+                )
         db.commit()
         logger.info(
             "Evidence diff snapshots stored (trace=%s, count=%d).",

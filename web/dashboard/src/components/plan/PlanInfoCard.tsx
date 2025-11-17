@@ -2,7 +2,7 @@
 
 import clsx from "classnames";
 import type { ReactNode } from "react";
-import { PLAN_DESCRIPTIONS } from "@/constants/planMetadata";
+import { PLAN_TIER_CONFIG } from "@/config/planConfig";
 import type { PlanTier } from "@/store/planStore/types";
 
 type PlanInfoCardProps = {
@@ -15,7 +15,7 @@ type PlanInfoCardProps = {
 };
 
 export function PlanInfoCard({ title, description, loading = false, className, children, planTier }: PlanInfoCardProps) {
-  const fallbackDescription = planTier ? PLAN_DESCRIPTIONS[planTier] : undefined;
+  const fallbackDescription = planTier ? PLAN_TIER_CONFIG[planTier]?.description ?? undefined : undefined;
   const body = description ?? fallbackDescription;
 
   return (
@@ -39,4 +39,3 @@ export function PlanInfoCard({ title, description, loading = false, className, c
     </div>
   );
 }
-

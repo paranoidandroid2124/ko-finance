@@ -3,12 +3,14 @@
 import { useMemo, useState } from "react";
 import clsx from "clsx";
 import Link from "next/link";
+import type { Route } from "next";
 import { AlertTriangle, Sparkles, Clock3, ShieldCheck, Mail, Copy, PhoneCall } from "lucide-react";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { PlanLock } from "@/components/ui/PlanLock";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ListState } from "@/components/ui/ListState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import {
   useAlertRules,
@@ -25,6 +27,7 @@ import {
   type AlertPlanInfo,
 } from "@/lib/alertsApi";
 import { logEvent } from "@/lib/telemetry";
+import { formatDateTime, formatRelativeTime } from "@/lib/date";
 import { useToastStore } from "@/store/toastStore";
 
 type PresetBundle = {
@@ -42,7 +45,7 @@ export default function AlertCenterPage() {
   } = useAlertEventMatches({ limit: 15 });
   const [presetDialog, setPresetDialog] = useState<AlertRulePreset | null>(null);
 
-  const showToast = useToastStore((state) => state.pushToast);
+  const showToast = useToastStore((state) => state.show);
 
   const plan = data?.plan;
   const rules = data?.items ?? [];
@@ -68,14 +71,14 @@ export default function AlertCenterPage() {
   }, [presets]);
 
   if (error instanceof ApiError) {
+    const isPlanGuard = error.status === 402 || error.code?.startsWith("plan.");
     return (
       <AppShell>
-        <PlanLock
-          title="Alert Center"
-          description={error.message}
-          buttonLabel="플랜 보기"
-          buttonHref="/pricing"
-        />
+        {isPlanGuard ? (
+          <PlanLock requiredTier="pro" title="Alert Center" description={error.message} />
+        ) : (
+          <ErrorState title="Alert Center" description={error.message} />
+        )}
       </AppShell>
     );
   }
@@ -92,21 +95,24 @@ export default function AlertCenterPage() {
             ctaLabel="워치리스트로 이동"
             ctaHref="/watchlist"
           />
-          {isLoading ? (
-            <SkeletonBlock className="mt-4 h-40 rounded-2xl" />
-          ) : rules.length === 0 ? (
-            <EmptyState
-              title="활성화된 알림 룰이 없어요"
-              description="프리셋을 선택하거나 워치리스트에서 직접 알림을 만들어 보세요."
-              action={<Link href="/watchlist" className="text-primary underline">워치리스트 열기</Link>}
-            />
-          ) : (
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <ListState
+            className="mt-4"
+            state={isLoading ? "loading" : rules.length === 0 ? "empty" : "ready"}
+            skeleton={<SkeletonBlock className="h-40 rounded-2xl" />}
+            emptyTitle="활성화된 알림 룰이 없어요"
+            emptyDescription="프리셋을 선택하거나 워치리스트에서 직접 알림을 만들어 보세요."
+            emptyAction={
+              <Link href="/watchlist" className="text-primary underline">
+                워치리스트 열기
+              </Link>
+            }
+          >
+            <div className="grid gap-4 md:grid-cols-2">
               {rules.map((rule) => (
                 <RuleCard key={rule.id} rule={rule} />
               ))}
             </div>
-          )}
+          </ListState>
         </section>
 
         <section className="rounded-3xl border border-border-light bg-background-cardLight p-6 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
@@ -114,16 +120,19 @@ export default function AlertCenterPage() {
             title="Starter / Pro 프리셋"
             description="플랜에 맞춰 튜닝된 DSL 조합입니다. 채널만 지정하면 바로 룰을 만들 수 있어요."
           />
-          {isLoading && !bundles.length ? (
-            <SkeletonBlock className="mt-4 h-48 rounded-2xl" />
-          ) : bundles.length === 0 ? (
-            <EmptyState
-              title="사용 가능한 프리셋이 없습니다"
-              description="플랜을 업그레이드하면 추천 룰 묶음을 사용할 수 있어요."
-              action={<Link href="/pricing" className="text-primary underline">플랜 보기</Link>}
-            />
-          ) : (
-            <div className="mt-4 space-y-6">
+          <ListState
+            className="mt-4"
+            state={isLoading && !bundles.length ? "loading" : bundles.length === 0 ? "empty" : "ready"}
+            skeleton={<SkeletonBlock className="h-48 rounded-2xl" />}
+            emptyTitle="사용 가능한 프리셋이 없습니다"
+            emptyDescription="플랜을 업그레이드하면 추천 룰 묶음을 사용할 수 있어요."
+            emptyAction={
+              <Link href="/pricing" className="text-primary underline">
+                플랜 보기
+              </Link>
+            }
+          >
+            <div className="space-y-6">
               {bundles.map((bundle) => (
                 <div key={bundle.key} className="space-y-3 rounded-2xl border border-border-light p-4 dark:border-border-dark">
                   <div className="flex items-center justify-between">
@@ -190,7 +199,7 @@ export default function AlertCenterPage() {
                 </div>
               ))}
             </div>
-          )}
+          </ListState>
         </section>
 
         <section className="rounded-3xl border border-border-light bg-background-cardLight p-6 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
@@ -221,15 +230,16 @@ export default function AlertCenterPage() {
             showToast({
               id: `preset-${presetDialog.id}`,
               title: "프리셋 알림이 생성되었어요",
-              tone: "positive",
+              message: `"${presetDialog.name}" DSL 룰이 활성화되었습니다.`,
+              intent: "success",
             });
           }}
           onSubmitError={(message) =>
             showToast({
               id: `preset-${presetDialog.id}-error`,
               title: "프리셋 생성에 실패했어요",
-              description: message,
-              tone: "negative",
+              message: message ?? "잠시 후 다시 시도해 주세요.",
+              intent: "error",
             })
           }
         />
@@ -262,7 +272,7 @@ function HeroSection({ plan, totalRules }: { plan?: AlertPlanInfo; totalRules: n
             <MetricPill
               icon={<Clock3 className="h-4 w-4" />}
               label="다음 평가"
-              value={plan?.nextEvaluationAt ? formatKoreanDate(plan.nextEvaluationAt) : "예정 없음"}
+              value={formatDateTime(plan?.nextEvaluationAt, { fallback: "예정 없음" })}
             />
           </div>
         </div>
@@ -307,17 +317,19 @@ function MetricPill({
   );
 }
 
+type SectionHeaderProps = {
+  title: string;
+  description: string;
+  ctaLabel?: string;
+  ctaHref?: Route;
+};
+
 function SectionHeader({
   title,
   description,
   ctaLabel,
   ctaHref,
-}: {
-  title: string;
-  description: string;
-  ctaLabel?: string;
-  ctaHref?: string;
-}) {
+}: SectionHeaderProps) {
   return (
     <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
       <div>
@@ -373,9 +385,14 @@ function RuleCard({ rule }: { rule: AlertRule }) {
             #{ticker}
           </span>
         ))}
-        {rule.trigger.keywords?.slice(0, 3).map((keyword) => (
-          <span key={`${rule.id}-${keyword}`} className="rounded-full bg-border-light/60 px-2 py-0.5 dark:bg-border-dark/50">
-            {keyword}
+        {rule.trigger.categories?.slice(0, 3).map((category) => (
+          <span key={`${rule.id}-category-${category}`} className="rounded-full bg-border-light/60 px-2 py-0.5 dark:bg-border-dark/50">
+            {category}
+          </span>
+        ))}
+        {rule.trigger.sectors?.slice(0, 2).map((sector) => (
+          <span key={`${rule.id}-sector-${sector}`} className="rounded-full bg-border-light/60 px-2 py-0.5 dark:bg-border-dark/50">
+            {sector}
           </span>
         ))}
       </div>
@@ -389,38 +406,36 @@ function RecentEventList({ matches }: { matches: AlertEventMatch[] }) {
   }
   return (
     <div className="mt-4 divide-y divide-border-light rounded-2xl border border-border-light dark:divide-border-dark dark:border-border-dark">
-      {matches.map((match) => (
-        <div key={match.eventId} className="flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">
-              {match.ruleName}
-              {match.ticker ? <span className="ml-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">{match.ticker}</span> : null}
-            </p>
-            <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-              {match.eventType?.toUpperCase()} · {match.corpName ?? "N/A"}
+      {matches.map((match) => {
+        const relativeMatchedAt = formatRelativeTime(match.matchedAt, { fallback: "시각 미상" });
+        const absoluteMatchedAt = formatDateTime(match.matchedAt, {
+          fallback: "시각 미상",
+          includeSeconds: true,
+        });
+        return (
+          <div
+            key={match.eventId}
+            className="flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div>
+              <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">
+                {match.ruleName}
+                {match.ticker ? (
+                  <span className="ml-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">{match.ticker}</span>
+                ) : null}
+              </p>
+              <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                {match.eventType?.toUpperCase()} · {match.corpName ?? "N/A"}
+              </p>
+            </div>
+            <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark" title={absoluteMatchedAt}>
+              {relativeMatchedAt}
             </p>
           </div>
-          <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-            {match.matchedAt ? formatKoreanDate(match.matchedAt) : "—"}
-          </p>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
-}
-
-function formatKoreanDate(value: string) {
-  try {
-    const date = new Date(value);
-    return new Intl.DateTimeFormat("ko-KR", {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(date);
-  } catch {
-    return value;
-  }
 }
 
 type PresetDialogProps = {

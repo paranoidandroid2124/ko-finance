@@ -6,25 +6,18 @@ import logging
 import uuid
 from pathlib import Path
 from datetime import date
-from typing import List, Optional, Sequence
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models.event_study import EventRecord, EventStudyResult, EventSummary
-from models.filing import Filing
 from schemas.api.event_study import (
     EventStudyEventDetail,
-    EventStudyEventItem,
     EventStudyEventsResponse,
     EventStudyExportRequest,
     EventStudyExportResponse,
     EventStudyMetricsResponse,
-    EventStudyPoint,
-    EventStudySeriesPoint,
-    EventStudySummaryItem,
     EventStudySummaryResponse,
     EventStudyWindowListResponse,
 )
@@ -37,152 +30,6 @@ from web.deps import require_plan_feature
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/event-study", tags=["Event Study"])
-
-
-def _normalize_str_list(values: Optional[List[str]]) -> List[str]:
-    cleaned: List[str] = []
-    for value in values or []:
-        if not isinstance(value, str):
-            continue
-        stripped = value.strip()
-        if stripped:
-            cleaned.append(stripped.upper())
-    return cleaned
-
-
-def _normalize_single_value(value: Optional[str]) -> Optional[str]:
-    if not isinstance(value, str):
-        return None
-    stripped = value.strip()
-    if not stripped:
-        return None
-    return stripped.upper()
-
-
-def _window_key(start: int, end: int) -> str:
-    return f"[{start},{end}]"
-
-
-def _to_float(value: Optional[float]) -> Optional[float]:
-    if value is None:
-        return None
-    return float(value)
-
-
-def _convert_points(rows: Optional[Sequence[dict]], metric_key: str) -> List[EventStudyPoint]:
-    points: List[EventStudyPoint] = []
-    for entry in rows or []:
-        t = entry.get("t")
-        if t is None:
-            continue
-        value = entry.get(metric_key)
-        if value is None:
-            continue
-        try:
-            points.append(EventStudyPoint(t=int(t), value=float(value)))
-        except (TypeError, ValueError):
-            continue
-    return points
-
-
-def _fetch_event_rows(
-    db: Session,
-    *,
-    limit: int,
-    offset: int,
-    window_end: int,
-    event_types: Optional[Sequence[str]],
-    ticker: Optional[str],
-    markets: Optional[Sequence[str]],
-    cap_buckets: Optional[Sequence[str]],
-    start_date: Optional[date],
-    end_date: Optional[date],
-    search_query: Optional[str],
-) -> EventStudyEventsResponse:
-    base_query = (
-        db.query(EventRecord, Filing.market)
-        .outerjoin(Filing, Filing.receipt_no == EventRecord.rcept_no)
-    )
-    if event_types:
-        base_query = base_query.filter(EventRecord.event_type.in_(event_types))
-    if ticker:
-        base_query = base_query.filter(EventRecord.ticker == ticker)
-    if start_date:
-        base_query = base_query.filter(EventRecord.event_date >= start_date)
-    if end_date:
-        base_query = base_query.filter(EventRecord.event_date <= end_date)
-    if markets:
-        base_query = base_query.filter(Filing.market.in_(markets))
-    if cap_buckets:
-        base_query = base_query.filter(EventRecord.cap_bucket.in_(cap_buckets))
-    if search_query:
-        like_term = f"%{search_query}%"
-        base_query = base_query.filter(
-            or_(
-                EventRecord.corp_name.ilike(like_term),
-                EventRecord.ticker.ilike(like_term),
-            )
-        )
-
-    total = base_query.count()
-    rows = (
-        base_query.order_by(EventRecord.event_date.desc(), EventRecord.rcept_no.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
-
-    receipt_nos = [row.EventRecord.rcept_no for row in rows]
-    caar_map: dict[str, Optional[float]] = {}
-    peak_map: dict[str, Tuple[float, int]] = {}
-    if receipt_nos:
-        all_series = (
-            db.query(EventStudyResult)
-            .filter(EventStudyResult.rcept_no.in_(receipt_nos))
-            .all()
-        )
-        for series_row in all_series:
-            key = series_row.rcept_no
-            if series_row.t == window_end:
-                caar_map[key] = _to_float(series_row.car)
-            if series_row.ar is None:
-                continue
-            current_abs = abs(float(series_row.ar))
-            existing = peak_map.get(key)
-            if existing is None or current_abs > existing[0]:
-                peak_map[key] = (current_abs, series_row.t)
-
-    events: List[EventStudyEventItem] = []
-    for record, market in rows:
-        peak_day = peak_map.get(record.rcept_no, (None, None))[1] if record.rcept_no in peak_map else None
-        events.append(
-            EventStudyEventItem(
-                receipt_no=record.rcept_no,
-                corp_code=record.corp_code,
-                corp_name=record.corp_name,
-                ticker=record.ticker,
-                event_type=record.event_type,
-                market=market,
-                event_date=record.event_date,
-                amount=_to_float(record.amount),
-                ratio=_to_float(record.ratio),
-                method=record.method,
-                score=_to_float(record.score),
-                caar=caar_map.get(record.rcept_no),
-                aar_peak_day=peak_day,
-                viewer_url=record.source_url,
-                cap_bucket=(record.cap_bucket or None),
-                market_cap=_to_float(record.market_cap),
-            )
-        )
-
-    return EventStudyEventsResponse(
-        total=total,
-        limit=limit,
-        offset=offset,
-        window_end=window_end,
-        events=events,
-    )
 
 
 @router.get("/windows", response_model=EventStudyWindowListResponse)
@@ -223,70 +70,17 @@ def get_event_study_summary(
     if start >= end:
         raise HTTPException(status_code=400, detail="start must be less than end")
 
-    window = _window_key(start, end)
-    normalized_types = _normalize_str_list(event_types)
-    normalized_caps = _normalize_str_list(cap_buckets)
-    target_caps = normalized_caps or ["ALL"]
+    normalized_types = event_study_service.normalize_str_list(event_types)
+    normalized_caps = event_study_service.normalize_str_list(cap_buckets)
 
-    latest_subquery = (
-        db.query(
-            EventSummary.event_type.label("event_type"),
-            EventSummary.cap_bucket.label("cap_bucket"),
-            func.max(EventSummary.asof).label("max_asof"),
-        )
-        .filter(EventSummary.window == window, EventSummary.scope == scope, EventSummary.cap_bucket.in_(target_caps))
-    )
-    if normalized_types:
-        latest_subquery = latest_subquery.filter(EventSummary.event_type.in_(normalized_types))
-    latest_subquery = latest_subquery.group_by(EventSummary.event_type, EventSummary.cap_bucket).subquery()
-
-    query = (
-        db.query(EventSummary)
-        .join(
-            latest_subquery,
-            and_(
-                EventSummary.event_type == latest_subquery.c.event_type,
-                EventSummary.cap_bucket == latest_subquery.c.cap_bucket,
-                EventSummary.asof == latest_subquery.c.max_asof,
-            ),
-        )
-        .filter(EventSummary.window == window, EventSummary.scope == scope, EventSummary.cap_bucket.in_(target_caps))
-        .order_by(EventSummary.event_type.asc())
-    )
-    if normalized_types:
-        query = query.filter(EventSummary.event_type.in_(normalized_types))
-
-    rows: Sequence[EventSummary] = query.all()
-
-    items: List[EventStudySummaryItem] = []
-    for row in rows:
-        if significance is not None and row.p_value is not None and float(row.p_value) > significance:
-            continue
-        items.append(
-            EventStudySummaryItem(
-                event_type=row.event_type,
-                scope=row.scope,
-                cap_bucket=row.cap_bucket,
-                window=row.window,
-                as_of=row.asof,
-                n=row.n,
-                hit_rate=_to_float(row.hit_rate) or 0.0,
-                mean_caar=_to_float(row.mean_caar) or 0.0,
-                ci_lo=_to_float(row.ci_lo) or 0.0,
-                ci_hi=_to_float(row.ci_hi) or 0.0,
-                p_value=_to_float(row.p_value) or 1.0,
-                aar=_convert_points(row.aar, "aar"),
-                caar=_convert_points(row.caar, "caar"),
-                dist=row.dist or [],
-            )
-        )
-
-    return EventStudySummaryResponse(
+    return event_study_service.summarize_event_window(
+        db,
         start=start,
         end=end,
         scope=scope,
         significance=significance,
-        results=items,
+        event_types=normalized_types or None,
+        cap_buckets=normalized_caps or None,
     )
 
 
@@ -307,15 +101,15 @@ def get_event_study_metrics(
     db: Session = Depends(get_db),
     _: PlanContext = Depends(require_plan_feature("timeline.full")),
 ) -> EventStudyMetricsResponse:
-    normalized_type = _normalize_single_value(event_type)
-    normalized_ticker = _normalize_single_value(ticker)
+    normalized_type = event_study_service.normalize_single_value(event_type)
+    normalized_ticker = event_study_service.normalize_single_value(ticker)
     if not normalized_type:
         raise HTTPException(status_code=400, detail="eventType is required")
     if not normalized_ticker:
         raise HTTPException(status_code=400, detail="ticker is required")
 
-    normalized_caps = _normalize_str_list(cap_buckets)
-    normalized_markets = _normalize_str_list(markets)
+    normalized_caps = event_study_service.normalize_str_list(cap_buckets)
+    normalized_markets = event_study_service.normalize_str_list(markets)
     search_query = search.strip() if isinstance(search, str) and search.strip() else None
 
     preset = event_study_service.resolve_window_preset(db, window_key)
@@ -335,7 +129,7 @@ def get_event_study_metrics(
     if not summary:
         raise HTTPException(status_code=404, detail="No events matched the requested filters")
 
-    events_response = _fetch_event_rows(
+    events_response = event_study_service.fetch_event_rows(
         db,
         limit=limit,
         offset=offset,
@@ -365,8 +159,8 @@ def get_event_study_metrics(
         ci_lo=summary.ci_lo,
         ci_hi=summary.ci_hi,
         p_value=summary.p_value,
-        aar=_convert_points(summary.aar, "aar"),
-        caar=_convert_points(summary.caar, "caar"),
+        aar=event_study_service.convert_points(summary.aar, "aar"),
+        caar=event_study_service.convert_points(summary.caar, "caar"),
         dist=summary.dist,
         events=events_response,
     )
@@ -387,12 +181,12 @@ def list_event_study_events(
     db: Session = Depends(get_db),
     _: PlanContext = Depends(require_plan_feature("timeline.full")),
 ) -> EventStudyEventsResponse:
-    normalized_types = _normalize_str_list(event_types)
-    normalized_markets = _normalize_str_list(markets)
-    normalized_cap_buckets = _normalize_str_list(cap_buckets)
+    normalized_types = event_study_service.normalize_str_list(event_types)
+    normalized_markets = event_study_service.normalize_str_list(markets)
+    normalized_cap_buckets = event_study_service.normalize_str_list(cap_buckets)
     search_query = search.strip() if isinstance(search, str) and search.strip() else None
 
-    return _fetch_event_rows(
+    return event_study_service.fetch_event_rows(
         db,
         limit=limit,
         offset=offset,
@@ -419,50 +213,16 @@ def get_event_detail(
     if start >= end:
         raise HTTPException(status_code=400, detail="start must be less than end")
 
-    event = db.get(EventRecord, receipt_no)
-    if not event:
+    detail = event_study_service.load_event_detail(
+        db,
+        receipt_no=receipt_no,
+        start=start,
+        end=end,
+    )
+    if not detail:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    filing = db.query(Filing).filter(Filing.receipt_no == receipt_no).first()
-
-    series_rows = (
-        db.query(EventStudyResult)
-        .filter(
-            EventStudyResult.rcept_no == receipt_no,
-            EventStudyResult.t >= start,
-            EventStudyResult.t <= end,
-        )
-        .order_by(EventStudyResult.t.asc())
-        .all()
-    )
-    series = [
-        EventStudySeriesPoint(
-            t=row.t,
-            ar=_to_float(row.ar),
-            car=_to_float(row.car),
-        )
-        for row in series_rows
-    ]
-
-    viewer_url = event.source_url
-    if not viewer_url and filing and filing.urls:
-        viewer_url = filing.urls.get("viewer")
-
-    return EventStudyEventDetail(
-        receipt_no=event.rcept_no,
-        corp_code=event.corp_code,
-        corp_name=event.corp_name,
-        ticker=event.ticker,
-        event_type=event.event_type,
-        event_date=event.event_date,
-        market=filing.market if filing else None,
-        scope="market",
-        window=_window_key(start, end),
-        viewer_url=viewer_url,
-        cap_bucket=event.cap_bucket,
-    market_cap=_to_float(event.market_cap),
-        series=series,
-    )
+    return detail
 
 
 def _optional_path(path: Optional[Path]) -> Optional[str]:

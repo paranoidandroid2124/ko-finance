@@ -7,7 +7,7 @@ from pathlib import Path
 import difflib
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 
 from llm import guardrails, llm_service
@@ -33,6 +33,7 @@ from schemas.api.admin import (
 from services import admin_llm_store
 from services.admin_audit import append_audit_log
 from web.deps_admin import require_admin_session, AdminSession
+from web.routers.admin_utils import create_admin_router
 
 
 def _build_guardrail_diff_lines(original: str, sanitized: str) -> List[Dict[str, str]]:
@@ -54,10 +55,9 @@ def _build_guardrail_diff_lines(original: str, sanitized: str) -> List[Dict[str,
             break
     return result
 
-router = APIRouter(
+router = create_admin_router(
     prefix="/admin/llm",
     tags=["Admin LLM"],
-    dependencies=[Depends(require_admin_session)],
 )
 
 _AUDIT_DIR = Path("uploads") / "admin"

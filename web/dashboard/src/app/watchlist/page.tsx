@@ -48,7 +48,7 @@ import {
   type WatchlistRuleChannelSummary,
   type WatchlistRuleDetail,
 } from "@/lib/alertsApi";
-import { formatKoreanDateTime } from "@/lib/datetime";
+import { formatDateTime } from "@/lib/date";
 import { useToastStore } from "@/store/toastStore";
 import { usePlanStore } from "@/store/planStore";
 import { buildEventStudyExportParams } from "@/lib/eventStudyExport";
@@ -207,8 +207,8 @@ type WatchlistDigestItemProps = {
 };
 
 const WatchlistDigestItem = ({ item, onSelect, isSelected = false }: WatchlistDigestItemProps) => {
-  const deliveredAt = formatKoreanDateTime(item.deliveredAt, { includeSeconds: true });
-  const eventTime = formatKoreanDateTime(item.eventTime ?? null, {
+  const deliveredAt = formatDateTime(item.deliveredAt, { includeSeconds: true });
+  const eventTime = formatDateTime(item.eventTime, {
     fallback: "발생 시각 미상",
   });
   const deliveryStatus = (item.deliveryStatus ?? "").toLowerCase();
@@ -730,7 +730,7 @@ export default function WatchlistRadarPage() {
   const numberFormatter = useMemo(() => new Intl.NumberFormat("ko-KR"), []);
   const summary = data?.summary;
   const items = data?.items ?? EMPTY_ITEMS;
-  const generatedAt = formatKoreanDateTime(data?.generatedAt ?? null, { includeSeconds: true });
+  const generatedAt = formatDateTime(data?.generatedAt, { includeSeconds: true, fallback: "생성 시각 미상" });
   const generatedAtLabel = generatedAt ?? "생성 시각 미상";
   const alertPlanInfo = alertRulesData?.plan ?? null;
   const eventMatches = eventMatchesData?.matches ?? [];
@@ -927,7 +927,7 @@ export default function WatchlistRadarPage() {
           ? {
               key: "customWindow",
               label: "기간",
-              value: `${formatKoreanDateTime(customWindow.start, { includeSeconds: false }) ?? "시작 미지정"} ~ ${formatKoreanDateTime(customWindow.end, { includeSeconds: false }) ?? "현재"}`,
+              value: `${formatDateTime(customWindow.start, { includeTime: false, fallback: "시작 미지정" })} ~ ${formatDateTime(customWindow.end, { includeTime: false, fallback: "현재" })}`,
               onRemove: () => {
                 handleCustomWindowChange(null, null);
                 handleWindowMinutesChange(defaultWindowMinutes);
@@ -976,10 +976,8 @@ export default function WatchlistRadarPage() {
     }
     return `${effectiveWindowMinutes}분`;
   })();
-  const windowStartLabel =
-    formatKoreanDateTime(summary?.windowStart ?? null, { includeSeconds: false }) ?? "시작 미상";
-  const windowEndLabel =
-    formatKoreanDateTime(summary?.windowEnd ?? null, { includeSeconds: false }) ?? "현재";
+  const windowStartLabel = formatDateTime(summary?.windowStart, { includeTime: false, fallback: "시작 미상" });
+  const windowEndLabel = formatDateTime(summary?.windowEnd, { includeTime: false, fallback: "현재" });
 
   const handleOpenWizard = () => {
     setWizardMode("create");
@@ -1697,7 +1695,7 @@ export default function WatchlistRadarPage() {
               <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">전송 현황</p>
               <p className="mt-1">
                 {lastDispatchedAt
-                  ? `마지막 전송: ${formatKoreanDateTime(lastDispatchedAt, { includeSeconds: true })}`
+                  ? `마지막 전송: ${formatDateTime(lastDispatchedAt, { includeSeconds: true })}`
                   : "아직 전송한 기록이 없습니다."}
               </p>
               {lastResults && lastResults.length > 0 ? (

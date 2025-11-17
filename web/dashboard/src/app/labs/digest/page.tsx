@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { notFound } from "next/navigation";
 import clsx from "clsx";
 import { RefreshCw } from "lucide-react";
 
@@ -17,6 +18,10 @@ const TIMEFRAME_OPTIONS: Array<{ value: "daily" | "weekly"; label: string }> = [
 ];
 
 export default function DigestLabPage() {
+  if (process.env.NEXT_PUBLIC_ENABLE_LABS !== "true") {
+    notFound();
+  }
+
   const [timeframe, setTimeframe] = useState<"daily" | "weekly">("daily");
   const { data, isLoading, isFetching, isError, refetch } = useDigestPreview({ timeframe });
 

@@ -135,45 +135,25 @@ class AlertFrequencySchema(BaseModel):
 class AlertRuleCreateRequest(BaseModel):
     name: str = Field(..., max_length=120, description="Alert rule title.")
     description: Optional[str] = Field(default=None, description="Optional description/note.")
-    trigger: Optional[AlertTriggerSchema] = Field(default=None, description="Structured trigger definition.")
-    frequency: Optional[AlertFrequencySchema] = Field(default=None, description="Evaluation/cooldown settings.")
-    condition: Optional[AlertTriggerSchema] = Field(
-        default=None, description="[Deprecated] Legacy trigger payload."
+    trigger: AlertTriggerSchema = Field(default_factory=AlertTriggerSchema, description="Structured trigger definition.")
+    frequency: AlertFrequencySchema = Field(
+        default_factory=AlertFrequencySchema,
+        description="Evaluation/cooldown settings applied to the trigger.",
     )
     channels: List[AlertChannelSchema] = Field(default_factory=list)
     messageTemplate: Optional[str] = Field(default=None, description="Optional message template (Python format style).")
-    evaluationIntervalMinutes: Optional[int] = Field(default=None, ge=1, le=1440, description="[Deprecated] Evaluation interval.")
-    windowMinutes: Optional[int] = Field(default=None, ge=5, le=1440, description="[Deprecated] Window length.")
-    cooldownMinutes: Optional[int] = Field(default=None, ge=0, le=1440, description="[Deprecated] Cooldown minutes.")
-    maxTriggersPerDay: Optional[int] = Field(default=None, ge=1, le=200, description="Daily trigger cap.")
     extras: Dict[str, str] = Field(default_factory=dict, description="Additional metadata.")
-
-    @model_validator(mode="after")
-    def _ensure_trigger_and_frequency(self) -> "AlertRuleCreateRequest":
-        if self.trigger is None:
-            self.trigger = self.condition or AlertTriggerSchema()
-        if self.frequency is None:
-            self.frequency = AlertFrequencySchema(
-                evaluationIntervalMinutes=self.evaluationIntervalMinutes or 5,
-                windowMinutes=self.windowMinutes or 60,
-                cooldownMinutes=self.cooldownMinutes if self.cooldownMinutes is not None else 60,
-                maxTriggersPerDay=self.maxTriggersPerDay,
-            )
-        return self
 
 
 class AlertRuleUpdateRequest(BaseModel):
     name: Optional[str] = Field(default=None, max_length=120)
     description: Optional[str] = Field(default=None)
     trigger: Optional[AlertTriggerSchema] = Field(default=None, description="Structured trigger payload.")
-    condition: Optional[AlertTriggerSchema] = Field(default=None, description="[Deprecated] Legacy trigger field.")
-    frequency: Optional[AlertFrequencySchema] = Field(default=None, description="Updated evaluation/cooldown configuration.")
+    frequency: Optional[AlertFrequencySchema] = Field(
+        default=None, description="Updated evaluation/cooldown configuration."
+    )
     channels: Optional[List[AlertChannelSchema]] = Field(default=None)
     messageTemplate: Optional[str] = Field(default=None)
-    evaluationIntervalMinutes: Optional[int] = Field(default=None, ge=1, le=1440, description="[Deprecated]")
-    windowMinutes: Optional[int] = Field(default=None, ge=5, le=1440, description="[Deprecated]")
-    cooldownMinutes: Optional[int] = Field(default=None, ge=0, le=1440, description="[Deprecated]")
-    maxTriggersPerDay: Optional[int] = Field(default=None, ge=1, le=200, description="[Deprecated]")
     status: Optional[Literal["active", "paused", "archived"]] = Field(default=None)
     extras: Optional[Dict[str, str]] = Field(default=None)
 
@@ -216,7 +196,6 @@ class AlertRuleResponse(BaseModel):
     planTier: str
     status: str
     trigger: Dict[str, Any]
-    condition: Dict[str, Any]
     triggerType: str = Field(default="filing", description="정규화된 트리거 타입.")
     filters: Dict[str, Any] = Field(default_factory=dict, description="트리거에서 추출한 필터 값.")
     state: Dict[str, Any] = Field(default_factory=dict, description="최근 평가 상태/스로틀 메타데이터.")
@@ -371,7 +350,7 @@ class WatchlistDigestScheduleListResponse(BaseModel):
 
 class WatchlistDigestScheduleCreateRequest(BaseModel):
     label: str = Field(..., min_length=1, max_length=80)
-    timeOfDay: str = Field(..., regex=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    timeOfDay: str = Field(..., pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
     timezone: str = Field(default="Asia/Seoul", min_length=3, max_length=64)
     weekdaysOnly: bool = Field(default=True)
     windowMinutes: int = Field(default=1440, ge=5, le=7 * 24 * 60)
@@ -383,7 +362,7 @@ class WatchlistDigestScheduleCreateRequest(BaseModel):
 
 class WatchlistDigestScheduleUpdateRequest(BaseModel):
     label: Optional[str] = Field(default=None, min_length=1, max_length=80)
-    timeOfDay: Optional[str] = Field(default=None, regex=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    timeOfDay: Optional[str] = Field(default=None, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
     timezone: Optional[str] = Field(default=None, min_length=3, max_length=64)
     weekdaysOnly: Optional[bool] = None
     windowMinutes: Optional[int] = Field(default=None, ge=5, le=7 * 24 * 60)
@@ -438,7 +417,7 @@ class WatchlistRuleDetail(BaseModel):
     windowMinutes: int
     cooldownMinutes: int
     maxTriggersPerDay: Optional[int] = None
-    condition: WatchlistRuleConditionDetail
+    trigger: WatchlistRuleConditionDetail
     channels: List[WatchlistRuleChannelSummary] = Field(default_factory=list)
     extras: Dict[str, Any] = Field(default_factory=dict)
     lastTriggeredAt: Optional[str] = None

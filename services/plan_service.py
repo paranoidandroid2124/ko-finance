@@ -65,7 +65,7 @@ class PlanMemoryFlags:
 class PlanTrialState:
     """Representation of the optional trial period."""
 
-    tier: PlanTier = "pro"
+    tier: PlanTier = PlanTier.PRO
     duration_days: int = 7
     started_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
@@ -154,7 +154,7 @@ class PlanContext:
         if not (self.trial_tier or self.trial_active or self.trial_used):
             return None
         return {
-            "tier": self.trial_tier or "pro",
+            "tier": self.trial_tier or PlanTier.PRO,
             "startsAt": self.trial_starts_at.isoformat() if self.trial_starts_at else None,
             "endsAt": self.trial_ends_at.isoformat() if self.trial_ends_at else None,
             "durationDays": self.trial_duration_days,
@@ -189,13 +189,13 @@ def _base_quota_for_tier(tier: PlanTier) -> PlanQuota:
     )
 
 
-def _normalize_plan_tier(value: Optional[str]) -> PlanTier:
+def _normalize_plan_tier(value: Optional[str | PlanTier]) -> PlanTier:
     if not value:
-        return "free"
-    lowered = value.strip().lower()
+        return PlanTier.FREE
+    lowered = str(value).strip().lower()
     if lowered in SUPPORTED_PLAN_TIERS:
-        return lowered
-    return "free"
+        return PlanTier(lowered)
+    return PlanTier.FREE
 
 
 def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -708,7 +708,7 @@ def list_plan_presets() -> Sequence[Mapping[str, Any]]:
 def start_plan_trial(
     *,
     updated_by: Optional[str],
-    target_tier: PlanTier = "pro",
+    target_tier: PlanTier = PlanTier.PRO,
     duration_days: Optional[int] = None,
 ) -> PlanContext:
     """Activate the Pro trial window if it's available."""

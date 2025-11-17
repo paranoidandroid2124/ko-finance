@@ -6,6 +6,7 @@ import {
   EvidenceWorkspaceResponsePayload,
   EvidenceTableCellPayload,
   fetchEvidenceWorkspace,
+  EvidenceAnchorPayload,
 } from "@/lib/evidenceApi";
 import type {
   EvidencePanelItem,
@@ -25,22 +26,27 @@ type MappedWorkspace = {
   diffEnabled: boolean;
 };
 
+const toPdfRect = (
+  rect?: EvidenceAnchorPayload["pdf_rect"],
+): EvidenceAnchor["pdfRect"] => {
+  if (!rect) {
+    return null;
+  }
+  const { page, x, y, width, height } = rect;
+  if (page == null || x == null || y == null || width == null || height == null) {
+    return null;
+  }
+  return { page, x, y, width, height };
+};
+
 const toEvidenceAnchor = (anchor?: EvidenceWorkspaceItemPayload["anchor"]): EvidenceAnchor | undefined => {
   if (!anchor) {
     return undefined;
   }
   return {
     paragraphId: anchor.paragraph_id ?? undefined,
-    pdfRect: anchor.pdf_rect
-      ? {
-          page: anchor.pdf_rect.page ?? undefined,
-          x: anchor.pdf_rect.x ?? undefined,
-          y: anchor.pdf_rect.y ?? undefined,
-          width: anchor.pdf_rect.width ?? undefined,
-          height: anchor.pdf_rect.height ?? undefined,
-        }
-      : undefined,
-    similarity: anchor.similarity ?? undefined,
+    pdfRect: toPdfRect(anchor.pdf_rect),
+    similarity: undefined,
   };
 };
 
@@ -55,6 +61,24 @@ const toSelfCheck = (
     score: payload.score ?? null,
     explanation: payload.explanation ?? null,
   };
+};
+
+const parseReliability = (
+  value?: string | null,
+): EvidencePanelItem["sourceReliability"] => {
+  if (value === "high" || value === "medium" || value === "low") {
+    return value;
+  }
+  return null;
+};
+
+const parseDiffType = (
+  value?: string | null,
+): EvidencePanelItem["diffType"] => {
+  if (value === "created" || value === "updated" || value === "unchanged" || value === "removed") {
+    return value;
+  }
+  return undefined;
 };
 
 const toDocumentMeta = (payload?: EvidenceWorkspaceItemPayload["document"]): EvidenceDocumentMeta | null => {
@@ -118,15 +142,15 @@ const mapEvidenceItem = (payload: EvidenceWorkspaceItemPayload): EvidencePanelIt
     pageNumber: payload.page_number ?? undefined,
     anchor: toEvidenceAnchor(payload.anchor),
     selfCheck: toSelfCheck(payload.self_check),
-    sourceReliability: payload.source_reliability ?? undefined,
+    sourceReliability: parseReliability(payload.source_reliability),
     createdAt: payload.created_at ?? undefined,
-    diffType: payload.diff_type ?? undefined,
+    diffType: parseDiffType(payload.diff_type),
     diffChangedFields: payload.diff_changed_fields ?? undefined,
     previousQuote: payload.previous_quote ?? undefined,
     previousSection: payload.previous_section ?? undefined,
     previousPageNumber: payload.previous_page_number ?? undefined,
     previousAnchor: toEvidenceAnchor(payload.previous_anchor),
-    previousSourceReliability: payload.previous_source_reliability ?? undefined,
+    previousSourceReliability: parseReliability(payload.previous_source_reliability),
     previousSelfCheck: toSelfCheck(payload.previous_self_check),
     documentTitle: payload.document_title ?? documentMeta?.title ?? undefined,
     documentUrl,

@@ -54,14 +54,15 @@ from services.google_id_token import (
 )
 from services.payments.toss_webhook_audit import read_recent_webhook_entries
 from services.payments.toss_webhook_replay import replay_toss_webhook_event
-from services.plan_service import PlanContext, update_plan_context
+from services.plan_service import update_plan_context
 from services.plan_serializers import serialize_plan_context
 from services import sso_provider_service
 from services.sso_provider_cache import invalidate_provider_cache
 from web.deps_admin import AdminSession, load_admin_token_map, require_admin_session
+from web.routers.admin_utils import create_admin_router
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
-protected_router = APIRouter(tags=["Admin"], dependencies=[Depends(require_admin_session)])
+protected_router = create_admin_router(prefix="", tags=["Admin"])
 
 _AUDIT_DIR = Path("uploads") / "admin"
 _ALLOWED_EMAILS = {

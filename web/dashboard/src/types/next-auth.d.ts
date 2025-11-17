@@ -46,3 +46,19 @@ declare module "next-auth" {
     orgId?: string;
   }
 }
+
+declare module "next-auth/jwt" {
+  interface JWT {
+    sub?: string;
+    plan?: "free" | "starter" | "pro" | "enterprise";
+    role?: "user" | "admin";
+    accessToken?: string;
+    refreshToken?: string;
+    sessionId?: string;
+    sessionToken?: string;
+    accessTokenExpires?: number | null;
+    error?: string;
+    onboardingRequired?: boolean;
+    orgId?: string;
+  }
+}

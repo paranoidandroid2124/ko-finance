@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 import os
 import uuid
 from pathlib import Path as FilePath
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import HTTPException, Path, Query, status
 from fastapi.responses import FileResponse
 
 from schemas.api.admin import (
@@ -41,12 +41,11 @@ from schemas.api.admin import (
     AdminOpsQuickActionRequest,
     AdminOpsQuickActionResponse,
     AdminAlertPresetUsageResponse,
-    PromptChannel,
 )
 from services import admin_ops_service
 from services.admin_audit import append_audit_log
 from services.alerts import summarize_preset_usage
-from web.deps_admin import require_admin_session
+from web.routers.admin_utils import create_admin_router
 from web.routers.admin_rag import _perform_reindex
 
 try:
@@ -59,10 +58,9 @@ try:
 except Exception:  # pragma: no cover
     worker_app = None
 
-router = APIRouter(
+router = create_admin_router(
     prefix="/admin/ops",
     tags=["Admin Ops"],
-    dependencies=[Depends(require_admin_session)],
 )
 
 _AUDIT_DIR = FilePath("uploads") / "admin"

@@ -18,7 +18,7 @@ import {
   useUpdateOpsAlertChannels,
 } from "@/hooks/useAdminConfig";
 import type { AdminOpsAlertChannel, AdminOpsAlertChannelPreviewResult } from "@/lib/adminApi";
-import { formatKoreanDateTime } from "@/lib/datetime";
+import { formatDateTime } from "@/lib/date";
 import type { ToastInput } from "@/store/toastStore";
 
 type AlertChannelDraft = {
@@ -825,9 +825,9 @@ export function AdminAlertChannelsPanel({ adminActor, toast }: AdminAlertChannel
 
               <div className="rounded-lg bg-background-base/60 p-3 text-[11px] text-text-secondaryLight dark:bg-background-cardDark/60 dark:text-text-secondaryDark">
                 <div className="flex flex-wrap gap-x-4 gap-y-1">
-                  <span>등록: {formatKoreanDateTime(original?.createdAt, { fallback: "기록 없음" })}</span>
-                  <span>최근 수정: {formatKoreanDateTime(original?.updatedAt, { fallback: "기록 없음" })}</span>
-                  <span>비활성화: {formatKoreanDateTime(original?.disabledAt, { fallback: "기록 없음" })}</span>
+                  <span>등록: {formatDateTime(original?.createdAt, { fallback: "기록 없음" })}</span>
+                  <span>최근 수정: {formatDateTime(original?.updatedAt, { fallback: "기록 없음" })}</span>
+                  <span>비활성화: {formatDateTime(original?.disabledAt, { fallback: "기록 없음" })}</span>
                 </div>
                 {original?.disabledNote ? (
                   <p className="mt-1 text-text-tertiaryLight dark:text-text-tertiaryDark">

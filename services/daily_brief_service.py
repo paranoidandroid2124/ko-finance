@@ -265,8 +265,8 @@ def _summarize_alerts(session: Session, *, start: datetime, end: datetime) -> Di
         channel_counter[channel] += 1
         status_counter[status] += 1
 
-        condition = rule.condition if isinstance(rule.condition, dict) else {}
-        event_type = str(condition.get("type") or "filing").lower()
+        trigger_payload = rule.trigger if isinstance(rule.trigger, dict) else {}
+        event_type = str(trigger_payload.get("type") or "filing").lower()
         event_type_counter[event_type] += 1
         if event_type == "news":
             news_delivery_count += 1

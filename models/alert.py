@@ -71,15 +71,6 @@ class AlertRule(Base):
     # ------------------------------------------------------------------
 
     @property
-    def condition(self) -> Dict[str, object]:
-        trigger_payload = self.trigger or {}
-        return trigger_payload if isinstance(trigger_payload, dict) else {}
-
-    @condition.setter
-    def condition(self, value: Optional[Dict[str, object]]) -> None:
-        self.trigger = value or {}
-
-    @property
     def throttle_until(self) -> Optional[datetime]:
         return self.cooled_until
 

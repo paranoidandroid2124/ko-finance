@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 
 import { useDispatchWatchlistDigest, useWatchlistRuleDetail } from "@/hooks/useAlerts";
-import { formatKoreanDateTime } from "@/lib/datetime";
+import { formatDateTime } from "@/lib/date";
 import type { WatchlistRadarItem, WatchlistRuleChannelSummary } from "@/lib/alertsApi";
 import { useToastStore } from "@/store/toastStore";
 
@@ -269,7 +269,7 @@ export function WatchlistDetailPanel({ item, onClose }: WatchlistDetailPanelProp
             </span>
             <span className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
               최근 전송 시각:{" "}
-              {formatKoreanDateTime(item.deliveredAt, { includeSeconds: true }) ?? "알 수 없음"}
+              {formatDateTime(item.deliveredAt, { includeSeconds: true, fallback: "알 수 없음" })}
             </span>
             <span className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
               총 전송 {totalDeliveries}건 · 실패 {failedDeliveries}건
@@ -462,7 +462,7 @@ export function WatchlistDetailPanel({ item, onClose }: WatchlistDetailPanelProp
                               <span>{STATUS_LABEL[status] ?? "상태 알 수 없음"}</span>
                             </div>
                             <div className="flex items-center gap-2">
-                              <span>{formatKoreanDateTime(log.deliveredAt, { includeSeconds: true })}</span>
+                              <span>{formatDateTime(log.deliveredAt, { includeSeconds: true })}</span>
                               {status === "failed" && canRetry ? (
                                 <button
                                   type="button"
@@ -492,7 +492,7 @@ export function WatchlistDetailPanel({ item, onClose }: WatchlistDetailPanelProp
                                       {event.ticker ?? "종목 미상"}
                                     </span>
                                     <span>
-                                      {formatKoreanDateTime(event.eventTime, { includeSeconds: false }) ??
+                                      {formatDateTime(event.eventTime, { includeSeconds: false }) ??
                                         "발생 시각 미상"}
                                     </span>
                                   </div>

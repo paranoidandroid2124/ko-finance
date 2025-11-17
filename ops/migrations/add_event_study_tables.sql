@@ -56,7 +56,7 @@ CREATE INDEX IF NOT EXISTS idx_event_study_t ON event_study (t);
 CREATE TABLE IF NOT EXISTS event_summary (
     asof DATE NOT NULL,
     event_type TEXT NOT NULL,
-    window TEXT NOT NULL,
+    window_key TEXT NOT NULL,
     scope TEXT NOT NULL DEFAULT 'market',
     filters JSONB,
     n INTEGER NOT NULL,
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS event_summary (
     ci_hi NUMERIC,
     p_value NUMERIC,
     dist JSONB,
-    PRIMARY KEY (asof, event_type, window, scope)
+    PRIMARY KEY (asof, event_type, window_key, scope)
 );
 
 CREATE INDEX IF NOT EXISTS idx_event_summary_event_type ON event_summary (event_type);

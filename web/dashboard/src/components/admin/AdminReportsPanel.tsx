@@ -6,7 +6,7 @@ import { CalendarDays, Download, FileText, Loader2, RefreshCw } from "lucide-rea
 
 import { useDailyBriefRuns, useGenerateDailyBrief } from "@/hooks/useReports";
 import { ApiError, buildDailyBriefDownloadUrl } from "@/lib/reportsApi";
-import { formatKoreanDateTime } from "@/lib/datetime";
+import { formatDateTime } from "@/lib/date";
 import { useToastStore } from "@/store/toastStore";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -121,7 +121,7 @@ export function AdminReportsPanel() {
                     <div className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">{run.channel}</div>
                   </td>
                   <td className="px-4 py-3 text-text-secondaryLight dark:text-text-secondaryDark">
-                    {formatKoreanDateTime(run.generatedAt, { includeSeconds: true })}
+                    {formatDateTime(run.generatedAt, { includeSeconds: true })}
                   </td>
                   <td className="px-4 py-3">
                     {hasPdf ? (

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
-from schemas.api.plan import PlanTier
+from core.plan_constants import PlanTier
 
 
 class OnboardingCtaSchema(BaseModel):

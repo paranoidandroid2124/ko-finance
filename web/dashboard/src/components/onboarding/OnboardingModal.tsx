@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import type { Route } from "next";
 import { useSession } from "next-auth/react";
 import { CheckCircle2, Sparkles, X } from "lucide-react";
 
@@ -30,7 +31,7 @@ export function OnboardingModal() {
   }, [needsOnboarding, content, fetchContent, loading]);
 
   const handleStartWizard = () => {
-    router.push("/onboarding");
+    router.push("/onboarding" as Route);
     markDismissed();
   };
 

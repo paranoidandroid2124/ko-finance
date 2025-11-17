@@ -8,7 +8,7 @@ import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAlertPresetUsage } from "@/hooks/useAdminConfig";
-import { formatKoreanDateTime } from "@/lib/datetime";
+import { formatDateTime } from "@/lib/date";
 
 const WINDOW_OPTIONS = [
   { label: "최근 7일", value: 7 },
@@ -25,7 +25,7 @@ export function AdminAlertPresetUsagePanel() {
   const topPreset = data?.presets?.[0];
   const topBundle = data?.bundles?.[0];
   const generatedAtLabel =
-    formatKoreanDateTime(data?.generatedAt ?? null, { includeSeconds: true }) ?? "집계 시각 미상";
+    formatDateTime(data?.generatedAt, { includeSeconds: true, fallback: "집계 시각 미상" });
 
   const planTotals = useMemo(() => {
     if (!data?.planTotals) {
@@ -101,7 +101,7 @@ export function AdminAlertPresetUsagePanel() {
               <p className="mt-2 text-sm text-text-secondaryLight dark:text-text-secondaryDark">
                 {numberFormatter.format(topPreset?.count ?? 0)}회 생성 · 최근{" "}
                 {topPreset?.lastUsedAt
-                  ? formatKoreanDateTime(topPreset.lastUsedAt, { includeSeconds: false })
+                  ? formatDateTime(topPreset.lastUsedAt, { includeTime: false })
                   : "기록 없음"}
               </p>
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
@@ -160,7 +160,7 @@ export function AdminAlertPresetUsagePanel() {
                     </td>
                     <td className="px-4 py-2 text-text-secondaryLight dark:text-text-secondaryDark">
                       {preset.lastUsedAt
-                        ? formatKoreanDateTime(preset.lastUsedAt, { includeSeconds: false })
+                        ? formatDateTime(preset.lastUsedAt, { includeTime: false })
                         : "기록 없음"}
                     </td>
                   </tr>

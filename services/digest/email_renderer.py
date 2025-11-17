@@ -11,7 +11,7 @@ from core.logging import get_logger
 
 logger = get_logger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = REPO_ROOT / "templates" / "digest"
 
 _EMAIL_ENV: Optional[Environment] = None

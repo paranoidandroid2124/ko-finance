@@ -33,7 +33,10 @@ import {
 import { usePlanTier, usePlanStore } from '@/store/planStore';
 import type { PlanTier } from "@/store/planStore/types";
 import { useToastStore } from '@/store/toastStore';
-import { PLAN_TIER_LABELS } from "@/constants/planMetadata";
+import { PLAN_TIER_CONFIG } from "@/config/planConfig";
+
+const isPlanTier = (value: string | undefined): value is PlanTier =>
+  value === 'free' || value === 'starter' || value === 'pro' || value === 'enterprise';
 
 export type ChatQuotaNotice = {
   message: string;
@@ -458,8 +461,8 @@ export function useChatController(): ChatController {
   const [chatQuotaNotice, setChatQuotaNotice] = useState<ChatQuotaNotice | null>(null);
   const quotaNoticeLimit = chatQuotaNotice?.limit ?? chatDailyLimit ?? null;
   const quotaPlanLabel = useMemo(() => {
-    const key = (chatQuotaNotice?.planTier ?? planTier) ?? 'free';
-    return PLAN_TIER_LABELS[key] ?? PLAN_TIER_LABELS.free;
+    const key: PlanTier = isPlanTier(chatQuotaNotice?.planTier) ? chatQuotaNotice!.planTier! : planTier ?? 'free';
+    return PLAN_TIER_CONFIG[key]?.title ?? PLAN_TIER_CONFIG.free.title;
   }, [chatQuotaNotice, planTier]);
   const quotaResetText = useMemo(() => {
     if (!chatQuotaNotice?.resetAt) {

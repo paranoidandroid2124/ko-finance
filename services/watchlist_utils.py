@@ -26,7 +26,7 @@ def is_watchlist_rule(rule: AlertRule) -> bool:
                     return True
 
     condition: Mapping[str, Any] = {}
-    raw_condition = getattr(rule, "condition", None)
+    raw_condition = getattr(rule, "trigger", None)
     if isinstance(raw_condition, Mapping):
         condition = raw_condition
 

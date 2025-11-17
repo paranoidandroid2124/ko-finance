@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional, Sequence, cast
 
+from core.plan_constants import PlanTier
 from schemas.api.plan import (
     PlanCatalogResponse,
     PlanCatalogTierSchema,
@@ -14,7 +15,6 @@ from schemas.api.plan import (
     PlanPresetSchema,
     PlanQuotaSchema,
     PlanTrialStateSchema,
-    PlanTier,
 )
 from services.plan_service import PlanContext
 

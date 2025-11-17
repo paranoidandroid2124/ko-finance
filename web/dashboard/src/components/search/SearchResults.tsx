@@ -4,6 +4,8 @@ import { Lock } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
+import { ListState } from "@/components/ui/ListState";
+import { formatDateTime, formatRelativeTime } from "@/lib/date";
 import { planTierLabel } from "@/constants/planPricing";
 import { nextTier, usePlanTier } from "@/store/planStore";
 import type {
@@ -111,62 +113,74 @@ export function SearchResults({
         })}
       </nav>
 
-      {isLoading && filtered.length === 0 ? (
-        <SkeletonBlock lines={8} />
-      ) : filtered.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border-light p-6 text-sm text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
-          현재 탭에 표시할 결과가 없습니다. 다른 키워드나 탭을 선택해 보세요.
-        </div>
-      ) : (
+      <ListState
+        state={filtered.length === 0 ? (isLoading ? "loading" : "empty") : "ready"}
+        skeleton={<SkeletonBlock lines={8} />}
+        emptyTitle="검색 결과가 없어요"
+        emptyDescription="현재 탭에 표시할 결과가 없습니다. 다른 키워드나 탭을 선택해 보세요."
+      >
         <div className="grid gap-4 md:grid-cols-2">
-          {filtered.map((result) => (
-            <article
-              key={result.id}
-              className="flex flex-col gap-4 rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card transition-motion-medium hover:-translate-y-1.5 hover:shadow-lg dark:border-border-dark dark:bg-background-cardDark"
-            >
-              <header className="flex items-start justify-between gap-3">
-                <div className="space-y-1">
-                  <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">{result.title}</p>
-                  <div className="flex flex-wrap gap-2 text-[11px] uppercase tracking-wide text-text-secondaryLight dark:text-text-secondaryDark">
-                    <span className="rounded border border-border-light px-2 py-0.5 dark:border-border-dark">{result.category}</span>
-                    {result.filedAt ? <span>{result.filedAt}</span> : null}
-                    {result.latestIngestedAt ? <span>업데이트 {result.latestIngestedAt}</span> : null}
+          {filtered.map((result) => {
+            const filedAtLabel = result.filedAt
+              ? formatDateTime(result.filedAt, { dateStyle: "medium", includeTime: false })
+              : null;
+            const updatedRelative = result.latestIngestedAt
+              ? formatRelativeTime(result.latestIngestedAt, { fallback: "방금" })
+              : null;
+            const updatedAbsolute = result.latestIngestedAt
+              ? formatDateTime(result.latestIngestedAt, { includeSeconds: true })
+              : null;
+            return (
+              <article
+                key={result.id}
+                className="flex flex-col gap-4 rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card transition-motion-medium hover:-translate-y-1.5 hover:shadow-lg dark:border-border-dark dark:bg-background-cardDark"
+              >
+                <header className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">{result.title}</p>
+                    <div className="flex flex-wrap gap-2 text-[11px] uppercase tracking-wide text-text-secondaryLight dark:text-text-secondaryDark">
+                      <span className="rounded border border-border-light px-2 py-0.5 dark:border-border-dark">{result.category}</span>
+                      {filedAtLabel ? <span title={filedAtLabel}>{filedAtLabel}</span> : null}
+                      {updatedRelative ? (
+                        <span title={updatedAbsolute ?? undefined}>업데이트 {updatedRelative}</span>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-                {typeof result.sourceReliability === "number" ? (
-                  <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary dark:bg-primary/20 dark:text-primary">
-                    신뢰도 {(result.sourceReliability * 100).toFixed(0)}%
-                  </span>
+                  {typeof result.sourceReliability === "number" ? (
+                    <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary dark:bg-primary/20 dark:text-primary">
+                      신뢰도 {(result.sourceReliability * 100).toFixed(0)}%
+                    </span>
+                  ) : null}
+                </header>
+
+                {result.evidenceCounts ? (
+                  <div className="flex flex-wrap gap-2 text-[11px] text-text.secondaryLight dark:text-text-secondaryDark">
+                    {Object.entries(result.evidenceCounts)
+                      .filter(([, count]) => (count ?? 0) > 0)
+                      .map(([key, count]) => (
+                        <span key={key} className="rounded-full border border-border-light px-2 py-0.5 dark:border-border-dark">
+                          {badgeLabel(key)} · {count}
+                        </span>
+                      ))}
+                  </div>
                 ) : null}
-              </header>
 
-              {result.evidenceCounts ? (
-                <div className="flex flex-wrap gap-2 text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">
-                  {Object.entries(result.evidenceCounts)
-                    .filter(([, count]) => (count ?? 0) > 0)
-                    .map(([key, count]) => (
-                      <span key={key} className="rounded-full border border-border-light px-2 py-0.5 dark:border-border-dark">
-                        {badgeLabel(key)} · {count}
-                      </span>
-                    ))}
-                </div>
-              ) : null}
-
-              <footer className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="rounded-lg border border-border-light px-3 py-2 text-xs font-semibold text-text-secondaryLight transition-motion-fast hover:border-primary hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary dark:hover:text-primary"
-                >
-                  근거 보기
-                </button>
-                <LockedButton label="비교에 추가" isLocked={result.actions?.compareLocked} />
-                <LockedButton label="알림 설정" isLocked={result.actions?.alertLocked} />
-                <LockedButton label="내보내기" isLocked={result.actions?.exportLocked} />
-              </footer>
-            </article>
-          ))}
+                <footer className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-border-light px-3 py-2 text-xs font-semibold text-text-secondaryLight transition-motion-fast hover:border-primary hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary dark:hover:text-primary"
+                  >
+                    근거 보기
+                  </button>
+                  <LockedButton label="비교에 추가" isLocked={result.actions?.compareLocked} />
+                  <LockedButton label="알림 설정" isLocked={result.actions?.alertLocked} />
+                  <LockedButton label="내보내기" isLocked={result.actions?.exportLocked} />
+                </footer>
+              </article>
+            );
+          })}
         </div>
-      )}
+      </ListState>
 
       {canLoadMore ? (
         <div className="flex justify-center">

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import HTTPException, status
 from fastapi.responses import FileResponse
 
 from schemas.api.admin import (
@@ -14,12 +14,11 @@ from schemas.api.admin import (
     AdminUiUxSettingsUpdateRequest,
 )
 from services import admin_ui_service
-from web.deps_admin import require_admin_session
+from web.routers.admin_utils import create_admin_router
 
-router = APIRouter(
+router = create_admin_router(
     prefix="/admin/ui",
     tags=["Admin UI"],
-    dependencies=[Depends(require_admin_session)],
 )
 
 _AUDIT_DIR = Path("uploads") / "admin"
@@ -79,4 +78,3 @@ def download_ui_audit_log() -> FileResponse:
 
 
 __all__ = ["router"]
-

@@ -19,7 +19,7 @@ import {
   useUpdateWatchlistSchedule,
   useDeleteWatchlistSchedule,
 } from "@/hooks/useAlerts";
-import { formatKoreanDateTime } from "@/lib/datetime";
+import { formatDateTime } from "@/lib/date";
 import { logEvent } from "@/lib/telemetry";
 import type { WatchlistDigestSchedule, WatchlistDigestSchedulePayload } from "@/lib/alertsApi";
 import { useToastStore } from "@/store/toastStore";
@@ -51,7 +51,7 @@ export default function DigestPage() {
 
   const { data, isLoading, isFetching, isError, refetch } = useDigestPreview({ timeframe });
   const dispatchDigest = useDispatchWatchlistDigest();
-  const showToast = useToastStore((state) => state.pushToast);
+  const showToast = useToastStore((state) => state.show);
   const planMemoryFlags = usePlanStore((state) => state.memoryFlags);
   const {
     data: scheduleData,
@@ -74,6 +74,21 @@ export default function DigestPage() {
   const digestAllowed = Boolean(planMemoryFlags.digest);
   const schedules = scheduleData ?? [];
   const scheduleMutationPending = createSchedule.isPending || updateSchedule.isPending || deleteSchedule.isPending;
+  const scheduleToPayload = (
+    schedule: WatchlistDigestSchedule,
+    overrides: Partial<WatchlistDigestSchedulePayload> = {},
+  ): WatchlistDigestSchedulePayload => ({
+    label: schedule.label,
+    timeOfDay: schedule.timeOfDay,
+    timezone: schedule.timezone,
+    weekdaysOnly: schedule.weekdaysOnly,
+    windowMinutes: schedule.windowMinutes,
+    limit: schedule.limit,
+    slackTargets: schedule.slackTargets,
+    emailTargets: schedule.emailTargets,
+    enabled: schedule.enabled,
+    ...overrides,
+  });
 
   const handleDispatch = async () => {
     const normalizeList = (value: string) =>
@@ -87,18 +102,20 @@ export default function DigestPage() {
         slackTargets: normalizeList(slackTargets),
         emailTargets: normalizeList(emailTargets),
       });
+      const emailDelivered = result.results.find((entry) => entry.channel === "email")?.delivered ?? 0;
+      const slackDelivered = result.results.find((entry) => entry.channel === "slack")?.delivered ?? 0;
       showToast({
         id: "digest-dispatch-success",
         title: "Digest를 전송했어요",
-        description: `성공 ${result.results.find((entry) => entry.channel === "email")?.delivered ?? 0}건`,
-        tone: "positive",
+        message: `이메일 ${emailDelivered}건 · Slack ${slackDelivered}건 전송을 요청했습니다.`,
+        intent: "success",
       });
     } catch (error) {
       showToast({
         id: "digest-dispatch-error",
         title: "Digest 전송 실패",
-        description: error instanceof Error ? error.message : "잠시 후 다시 시도해 주세요.",
-        tone: "negative",
+        message: error instanceof Error ? error.message : "잠시 후 다시 시도해 주세요.",
+        intent: "error",
       });
     }
   };
@@ -110,6 +127,7 @@ export default function DigestPage() {
         showToast({
           id: `digest-schedule-${scheduleId}`,
           title: "Digest 스케줄이 업데이트됐어요",
+          message: "설정이 저장되었습니다.",
           intent: "success",
         });
       } else {
@@ -117,6 +135,7 @@ export default function DigestPage() {
         showToast({
           id: "digest-schedule-created",
           title: "새 Digest 스케줄을 만들었어요",
+          message: "첫 자동 발송을 기다려 주세요.",
           intent: "success",
         });
       }
@@ -126,7 +145,7 @@ export default function DigestPage() {
       showToast({
         id: "digest-schedule-error",
         title: "스케줄 저장 실패",
-        description: message,
+        message,
         intent: "error",
       });
     }
@@ -134,10 +153,11 @@ export default function DigestPage() {
 
   const handleToggleSchedule = async (schedule: WatchlistDigestSchedule, enabled: boolean) => {
     try {
-      await updateSchedule.mutateAsync({ id: schedule.id, payload: { enabled } });
+      await updateSchedule.mutateAsync({ id: schedule.id, payload: scheduleToPayload(schedule, { enabled }) });
       showToast({
         id: `digest-schedule-toggle-${schedule.id}`,
         title: enabled ? "스케줄을 다시 활성화했어요" : "스케줄을 일시 중지했어요",
+        message: enabled ? "다음 스케줄부터 자동 발송이 재개됩니다." : "자동 발송이 중지되었습니다.",
         intent: "info",
       });
     } catch (error) {
@@ -145,7 +165,7 @@ export default function DigestPage() {
       showToast({
         id: `digest-schedule-toggle-${schedule.id}-error`,
         title: "상태 변경 실패",
-        description: message,
+        message,
         intent: "error",
       });
     }
@@ -157,6 +177,7 @@ export default function DigestPage() {
       showToast({
         id: `digest-schedule-delete-${schedule.id}`,
         title: "스케줄을 삭제했어요",
+        message: "자동 발송 목록에서 제거되었습니다.",
         intent: "info",
       });
     } catch (error) {
@@ -164,7 +185,7 @@ export default function DigestPage() {
       showToast({
         id: `digest-schedule-delete-${schedule.id}-error`,
         title: "스케줄 삭제 실패",
-        description: message,
+        message,
         intent: "error",
       });
     }
@@ -263,10 +284,9 @@ export default function DigestPage() {
           />
           {!digestAllowed ? (
             <PlanLock
+              requiredTier="pro"
               title="Digest 기능은 Pro 이상 플랜에서 제공됩니다"
               description="Digest 메모리 기능을 활성화하려면 플랜을 업그레이드하세요."
-              buttonLabel="플랜 보기"
-              buttonHref="/pricing"
             />
           ) : (
             <>
@@ -326,10 +346,9 @@ export default function DigestPage() {
           />
           {!digestAllowed ? (
             <PlanLock
+              requiredTier="pro"
               title="Digest 기능은 Pro 이상 플랜에서 제공됩니다"
               description="스케줄 기능을 사용하려면 Digest 메모리 기능을 활성화해 주세요."
-              buttonLabel="플랜 보기"
-              buttonHref="/pricing"
             />
           ) : scheduleError ? (
             <ErrorState
@@ -441,8 +460,8 @@ type DigestScheduleCardProps = {
 };
 
 function DigestScheduleCard({ schedule, onEdit, onToggle, onDelete }: DigestScheduleCardProps) {
-  const nextRunLabel = formatKoreanDateTime(schedule.nextDispatchAt ?? null, { includeSeconds: false }) ?? "예정 없음";
-  const lastRunLabel = formatKoreanDateTime(schedule.lastDispatchedAt ?? null, { includeSeconds: false }) ?? "기록 없음";
+  const nextRunLabel = formatDateTime(schedule.nextDispatchAt, { includeSeconds: false, fallback: "예정 없음" });
+  const lastRunLabel = formatDateTime(schedule.lastDispatchedAt, { includeSeconds: false, fallback: "기록 없음" });
   const statusLabel =
     schedule.lastStatus === "failed" ? "전송 실패" : schedule.lastStatus === "success" ? "전송 완료" : "대기 중";
 

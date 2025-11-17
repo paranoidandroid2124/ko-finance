@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { CompanyFilingSummary, SummaryBlock } from "@/hooks/useCompanySnapshot";
-import { formatKoreanDateTime } from "@/lib/datetime";
+import { formatDateTime } from "@/lib/date";
 
 type RecentFilingsPanelProps = {
   filings: CompanyFilingSummary[];
@@ -52,7 +52,7 @@ export function RecentFilingsPanel({ filings, companyName }: RecentFilingsPanelP
         <h3 className="border-b border-border-light px-4 py-3 text-sm font-semibold dark:border-border-dark">최근 공시</h3>
         <div className="max-h-[420px] space-y-1 overflow-y-auto px-2 py-2">
           {filings.map((filing) => {
-            const filedAt = filing.filedAt ? formatKoreanDateTime(filing.filedAt) : "제출 시각 미상";
+            const filedAt = filing.filedAt ? formatDateTime(filing.filedAt) : "제출 시각 미상";
             const sentimentLabel = filing.sentiment?.toLowerCase() ?? "neutral";
             return (
               <button
@@ -92,7 +92,7 @@ export function RecentFilingsPanel({ filings, companyName }: RecentFilingsPanelP
                 </h3>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-                {selected.filedAt ? <span>{formatKoreanDateTime(selected.filedAt)}</span> : null}
+                {selected.filedAt ? <span>{formatDateTime(selected.filedAt)}</span> : null}
                 {selected.receiptNo ? <span>접수번호 {selected.receiptNo}</span> : null}
               </div>
               {selected.viewerUrl ? (

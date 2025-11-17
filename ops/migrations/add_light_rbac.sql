@@ -138,19 +138,34 @@ ALTER TABLE user_orgs
     DROP CONSTRAINT IF EXISTS user_org_members_pkey;
 
 ALTER TABLE user_orgs
+    DROP CONSTRAINT IF EXISTS pk_user_orgs;
+
+ALTER TABLE user_orgs
     ADD CONSTRAINT pk_user_orgs PRIMARY KEY (org_id, user_id);
+
+ALTER TABLE user_orgs
+    DROP CONSTRAINT IF EXISTS fk_user_orgs_org;
 
 ALTER TABLE user_orgs
     ADD CONSTRAINT fk_user_orgs_org
         FOREIGN KEY (org_id) REFERENCES orgs(id) ON DELETE CASCADE;
 
 ALTER TABLE user_orgs
+    DROP CONSTRAINT IF EXISTS fk_user_orgs_user;
+
+ALTER TABLE user_orgs
     ADD CONSTRAINT fk_user_orgs_user
         FOREIGN KEY (user_id) REFERENCES "users"(id) ON DELETE CASCADE;
 
 ALTER TABLE user_orgs
+    DROP CONSTRAINT IF EXISTS fk_user_orgs_role;
+
+ALTER TABLE user_orgs
     ADD CONSTRAINT fk_user_orgs_role
         FOREIGN KEY (role_key) REFERENCES org_roles(key) ON UPDATE CASCADE;
+
+ALTER TABLE user_orgs
+    DROP CONSTRAINT IF EXISTS fk_user_orgs_invited_by;
 
 ALTER TABLE user_orgs
     ADD CONSTRAINT fk_user_orgs_invited_by
