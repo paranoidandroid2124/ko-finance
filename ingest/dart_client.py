@@ -9,11 +9,17 @@ import os
 import time
 import zipfile
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
 import xmltodict
 from dotenv import load_dotenv
+
+try:  # pragma: no cover - dependency guard
+    import yaml
+except ImportError:  # pragma: no cover - dependency guard
+    yaml = None
 
 from services.ingest_errors import FatalIngestError, TransientIngestError
 
@@ -25,6 +31,7 @@ logger.setLevel(logging.INFO)
 DART_API_BASE = "https://opendart.fss.or.kr/api"
 CORP_CODE_URL = f"{DART_API_BASE}/corpCode.xml"
 DOCUMENT_URL = f"{DART_API_BASE}/document.xml"
+DS005_CATALOG_PATH = Path(__file__).resolve().parents[1] / "configs" / "ds005_endpoints.yaml"
 
 
 def _load_json_payload(text: str, *, context: str) -> Dict[str, Any]:
@@ -40,14 +47,45 @@ def _load_json_payload(text: str, *, context: str) -> Dict[str, Any]:
         raise FatalIngestError(f"{context} responded with invalid JSON.") from exc
 
 
-DS005_ENDPOINTS: Dict[str, str] = {
-    # Representative subset of DS005 endpoints. Extend as needed.
-    "capital_increase_mixed": "pifricDecsn.json",  # 유무상증자 결정
-    "merger": "cmpMgDecsn.json",  # 회사합병 결정
-    "business_suspension": "bsnSp.json",  # 영업정지
-    "treasury_stock_acquisition": "tsstkAqDecsn.json",  # 자기주식 취득 결정
-}
+def _load_ds005_catalog(path: Path) -> Dict[str, str]:
+    """Load DS005 endpoint metadata from the shared YAML catalog."""
+    if yaml is None:
+        logger.error("PyYAML is not installed; unable to load DS005 endpoint catalog.")
+        return {}
 
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        logger.error("DS005 catalog file %s does not exist.", path)
+        return {}
+
+    try:
+        entries = yaml.safe_load(raw) or []
+    except yaml.YAMLError as exc:  # pragma: no cover - parse guard
+        logger.error("Failed to parse DS005 catalog %s: %s", path, exc)
+        return {}
+
+    mapping: Dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        key = entry.get("key")
+        endpoint = entry.get("endpoint")
+        enabled = entry.get("enabled", True)
+        if not key or not endpoint or not enabled:
+            continue
+        if key in mapping:
+            logger.warning("Duplicate DS005 key %s encountered; keeping first value.", key)
+            continue
+        mapping[key] = endpoint
+    if not mapping:
+        logger.warning("DS005 catalog %s loaded zero enabled entries.", path)
+    else:
+        logger.info("Loaded %d DS005 endpoints from %s.", len(mapping), path)
+    return mapping
+
+
+DS005_ENDPOINTS: Dict[str, str] = _load_ds005_catalog(DS005_CATALOG_PATH)
 
 class DartClient:
     """Wrapper around DART OpenAPI endpoints used in M1 pipeline."""
@@ -308,11 +346,16 @@ class DartClient:
         Fetch DS005 (주요사항 보고) entries associated with a specific filing.
 
         OpenDART exposes DS005 data via multiple issue-specific endpoints rather than a single
-        majorissue.json feed. We therefore query a curated subset of endpoints and return the rows
-        whose rcept_no matches the filing's receipt number.
+        majorissue.json feed. Endpoints are defined in configs/ds005_endpoints.yaml so that the
+        list can be managed without code changes. We return the rows whose rcept_no matches the
+        filing's receipt number.
         """
         if not receipt_no:
             logger.debug("Skipping DS005 lookup because receipt_no is missing.")
+            return []
+
+        if not DS005_ENDPOINTS:
+            logger.warning("DS005 endpoint catalog is empty; skipping lookup.")
             return []
 
         target_date = receipt_date or datetime.utcnow()

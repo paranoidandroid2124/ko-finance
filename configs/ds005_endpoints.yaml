@@ -1,0 +1,180 @@
+﻿- catalog_no: 1
+  key: asset_transfer_misc_putback
+  kor_name: "자산양수도(기타), 풋백옵션"
+  endpoint: astInhtrfEtcPtbkOpt.json
+  enabled: true
+- catalog_no: 2
+  key: default_occurrence
+  kor_name: "부도발생"
+  endpoint: dfOcr.json
+  enabled: true
+- catalog_no: 3
+  key: business_suspension
+  kor_name: "영업정지"
+  endpoint: bsnSp.json
+  enabled: true
+- catalog_no: 4
+  key: rehabilitation_filing
+  kor_name: "회생절차 개시신청"
+  endpoint: ctrcvsBgrq.json
+  enabled: true
+- catalog_no: 5
+  key: dissolution_cause
+  kor_name: "해산사유 발생"
+  endpoint: dsRsOcr.json
+  enabled: true
+- catalog_no: 6
+  key: capital_increase_paid_in
+  kor_name: "유상증자 결정"
+  endpoint: piicDecsn.json
+  enabled: true
+- catalog_no: 7
+  key: capital_increase_bonus
+  kor_name: "무상증자 결정"
+  endpoint: fricDecsn.json
+  enabled: true
+- catalog_no: 8
+  key: capital_increase_combined
+  kor_name: "유무상증자 결정"
+  endpoint: pifricDecsn.json
+  enabled: true
+- catalog_no: 9
+  key: capital_reduction
+  kor_name: "감자 결정"
+  endpoint: crDecsn.json
+  enabled: true
+- catalog_no: 10
+  key: creditor_bank_management_start
+  kor_name: "채권은행 등의 관리절차 개시"
+  endpoint: bnkMngtPcbg.json
+  enabled: true
+- catalog_no: 11
+  key: litigation_filed
+  kor_name: "소송 등의 제기"
+  endpoint: lwstLg.json
+  enabled: true
+- catalog_no: 12
+  key: overseas_listing_decision
+  kor_name: "해외 증권시장 주권등 상장 결정"
+  endpoint: ovLstDecsn.json
+  enabled: true
+- catalog_no: 13
+  key: overseas_delisting_decision
+  kor_name: "해외 증권시장 주권등 상장폐지 결정"
+  endpoint: ovDlstDecsn.json
+  enabled: true
+- catalog_no: 14
+  key: overseas_listing
+  kor_name: "해외 증권시장 주권등 상장"
+  endpoint: ovLst.json
+  enabled: true
+- catalog_no: 15
+  key: overseas_delisting
+  kor_name: "해외 증권시장 주권등 상장폐지"
+  endpoint: ovDlst.json
+  enabled: true
+- catalog_no: 16
+  key: convertible_bond_issue
+  kor_name: "전환사채권 발행결정"
+  endpoint: cvbdIsDecsn.json
+  enabled: true
+- catalog_no: 17
+  key: bond_with_warrants_issue
+  kor_name: "신주인수권부사채권 발행결정"
+  endpoint: bdwtIsDecsn.json
+  enabled: true
+- catalog_no: 18
+  key: exchangeable_bond_issue
+  kor_name: "교환사채권 발행결정"
+  endpoint: exbdIsDecsn.json
+  enabled: true
+- catalog_no: 19
+  key: creditor_bank_management_stop
+  kor_name: "채권은행 등의 관리절차 중단"
+  endpoint: bnkMngtPcsp.json
+  enabled: true
+- catalog_no: 20
+  key: contingent_convertible_capital_issue
+  kor_name: "상각형 조건부자본증권 발행결정"
+  endpoint: wdCocobdIsDecsn.json
+  enabled: true
+- catalog_no: 21
+  key: treasury_stock_acquisition
+  kor_name: "자기주식 취득 결정"
+  endpoint: tsstkAqDecsn.json
+  enabled: true
+- catalog_no: 22
+  key: treasury_stock_disposal
+  kor_name: "자기주식 처분 결정"
+  endpoint: tsstkDpDecsn.json
+  enabled: true
+- catalog_no: 23
+  key: treasury_stock_trust_contract
+  kor_name: "자기주식취득 신탁계약 체결 결정"
+  endpoint: tsstkAqTrctrCnsDecsn.json
+  enabled: true
+- catalog_no: 24
+  key: treasury_stock_trust_termination
+  kor_name: "자기주식취득 신탁계약 해지 결정"
+  endpoint: tsstkAqTrctrCcDecsn.json
+  enabled: true
+- catalog_no: 25
+  key: business_acquisition
+  kor_name: "영업양수 결정"
+  endpoint: bsnInhDecsn.json
+  enabled: true
+- catalog_no: 26
+  key: business_disposal
+  kor_name: "영업양도 결정"
+  endpoint: bsnTrfDecsn.json
+  enabled: true
+- catalog_no: 27
+  key: tangible_asset_acquisition
+  kor_name: "유형자산 양수 결정"
+  endpoint: tgastInhDecsn.json
+  enabled: true
+- catalog_no: 28
+  key: tangible_asset_disposal
+  kor_name: "유형자산 양도 결정"
+  endpoint: tgastTrfDecsn.json
+  enabled: true
+- catalog_no: 29
+  key: equity_stake_acquisition
+  kor_name: "타법인 주식 및 출자증권 양수결정"
+  endpoint: otcprStkInvscrInhDecsn.json
+  enabled: true
+- catalog_no: 30
+  key: equity_stake_disposal
+  kor_name: "타법인 주식 및 출자증권 양도결정"
+  endpoint: otcprStkInvscrTrfDecsn.json
+  enabled: true
+- catalog_no: 31
+  key: equity_linked_bond_acquisition
+  kor_name: "주권 관련 사채권 양수 결정"
+  endpoint: stkrtbdInhDecsn.json
+  enabled: true
+- catalog_no: 32
+  key: equity_linked_bond_disposal
+  kor_name: "주권 관련 사채권 양도 결정"
+  endpoint: stkrtbdTrfDecsn.json
+  enabled: true
+- catalog_no: 33
+  key: merger
+  kor_name: "회사합병 결정"
+  endpoint: cmpMgDecsn.json
+  enabled: true
+- catalog_no: 34
+  key: company_split_decision
+  kor_name: "회사분할 결정"
+  endpoint: cmpDvDecsn.json
+  enabled: true
+- catalog_no: 35
+  key: split_merge_decision
+  kor_name: "회사분할합병 결정"
+  endpoint: cmpDvmgDecsn.json
+  enabled: true
+- catalog_no: 36
+  key: share_swap_transfer_decision
+  kor_name: "주식교환·이전 결정"
+  endpoint: stkExtrDecsn.json
+  enabled: true
