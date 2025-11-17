@@ -18,6 +18,7 @@ const mutateAsyncMock = vi.fn(async () => ({
     evidenceInlinePdf: false,
     evidenceDiff: false,
     timelineFull: false,
+    reportsEventExport: false,
   },
   quota: {
     chatRequestsPerDay: null,

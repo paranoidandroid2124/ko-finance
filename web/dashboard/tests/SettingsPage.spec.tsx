@@ -22,7 +22,7 @@ vi.mock("@/components/layout/AppShell", () => ({
 const mockedPlan: PlanContextPayload = {
   planTier: "pro",
   expiresAt: "2025-12-31T00:00:00+00:00",
-  entitlements: ["search.compare", "search.alerts", "search.export", "evidence.inline_pdf", "rag.core"],
+  entitlements: ["search.compare", "search.alerts", "search.export", "evidence.inline_pdf", "rag.core", "reports.event_export"],
   featureFlags: {
     searchCompare: true,
     searchAlerts: true,
@@ -31,6 +31,7 @@ const mockedPlan: PlanContextPayload = {
     evidenceInlinePdf: true,
     evidenceDiff: false,
     timelineFull: false,
+    reportsEventExport: true,
   },
   memoryFlags: {
     watchlist: true,

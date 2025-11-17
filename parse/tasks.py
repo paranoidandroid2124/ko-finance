@@ -109,7 +109,6 @@ from services.ingest_metrics import (
     record_error as ingest_record_error,
     record_result as ingest_record_result,
     record_retry as ingest_record_retry,
-    set_dlq_size,
 )
 
 logger = logging.getLogger(__name__)
@@ -243,19 +242,6 @@ def _ingest_retry_delay(attempt: int) -> int:
     return min(delay, INGEST_RETRY_MAX_SECONDS)
 
 
-def _refresh_dlq_metrics(db: Session) -> None:
-    try:
-        for status in ("pending", "requeued", "completed"):
-            count = (
-                db.query(IngestDeadLetter)
-                .filter(IngestDeadLetter.status == status)
-                .count()
-            )
-            set_dlq_size(status, count)
-    except Exception as exc:  # pragma: no cover - metrics best-effort
-        logger.debug("Failed to refresh DLQ gauge: %s", exc)
-
-
 def _retry_or_dead_letter(
     task,
     *,
@@ -320,19 +306,36 @@ def _handle_ingest_exception(
     if isinstance(exc, FatalIngestError):
         session = db or SessionLocal()
         try:
+            task_name = getattr(task, "name", "ingest-task")
+            retries = getattr(task.request, "retries", 0)
             letter = ingest_dlq_service.record_dead_letter(
                 session,
-                task_name=getattr(task, "name", "ingest-task"),
+                task_name=task_name,
                 payload=payload,
                 error=str(exc),
-                retries=getattr(task.request, "retries", 0),
+                retries=retries,
                 receipt_no=receipt_no,
                 corp_code=corp_code,
                 ticker=ticker,
             )
-            _refresh_dlq_metrics(session)
             if on_dead_letter:
                 on_dead_letter(letter)
+            try:
+                audit_ingest_event(
+                    action="ingest.dlq",
+                    target_id=receipt_no or str(letter.id),
+                    extra={
+                        "task": task_name,
+                        "dlq_id": str(letter.id),
+                        "retries": retries,
+                        "corp_code": corp_code,
+                        "ticker": ticker,
+                        "receipt_no": receipt_no,
+                        "payload": letter.payload,
+                    },
+                )
+            except Exception as audit_exc:  # pragma: no cover - audit best effort
+                logger.debug("Failed to record ingest DLQ audit entry: %s", audit_exc, exc_info=True)
         finally:
             if db is None:
                 session.close()

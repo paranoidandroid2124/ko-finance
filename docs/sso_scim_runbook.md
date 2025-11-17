@@ -4,30 +4,27 @@
 
 | Component | Endpoint | Notes |
 | --- | --- | --- |
-| **SAML 2.0** | `POST /api/v1/auth/saml/acs` + `GET /api/v1/auth/saml/metadata` | Accepts HTTP-POST bindings, asserts are parsed via attribute mapping (`AUTH_SAML_*`). |
-| **OIDC** | `GET /api/v1/auth/oidc/authorize` → `GET /api/v1/auth/oidc/callback` | Generates signed state + nonce (`AUTH_SSO_STATE_*`), exchanges code via provider token/userinfo endpoints. |
-| **SCIM v2 (Users/Groups)** | `/scim/v2/Users`, `/scim/v2/Groups` | Protected via `SCIM_BEARER_TOKEN`, maps resources to `users` / `orgs` / `user_orgs`. |
+| **SAML 2.0** | `POST /api/v1/auth/saml/{provider}/acs`, `GET /api/v1/auth/saml/{provider}/metadata` | Providers are created with `/api/v1/admin/sso/providers`; fallback `/api/v1/auth/saml/acs` uses the legacy env config. |
+| **OIDC** | `GET /api/v1/auth/oidc/{provider}/authorize` → `GET /api/v1/auth/oidc/callback` | State now carries `providerSlug`. Use the admin API to rotate client ids/secrets. |
+| **SCIM v2 (Users/Groups)** | `/scim/v2/Users`, `/scim/v2/Groups` | Bearer tokens are issued per provider via `/api/v1/admin/sso/providers/{id}/scim-tokens`. |
 
 ## 2. Configuration Checklist
 
 1. **State/nonce secrets**
    - `AUTH_SSO_STATE_SECRET` (or reuse `AUTH_JWT_SECRET`) – keep in 1Password.
    - `AUTH_SSO_STATE_TTL_SECONDS` default 600s; increase only if IdP latency >10m.
-2. **SAML Provider (per tenant)**
-   - `AUTH_SAML_SP_ENTITY_ID`, `AUTH_SAML_ACS_URL`, `AUTH_SAML_METADATA_URL`.
-   - Upload X.509 signing cert via `AUTH_SAML_SP_CERT` if IdP requires.
-   - Map attributes (email/name/orgSlug/role) using `AUTH_SAML_*_ATTRIBUTE`.
-   - Optional org auto-provision via `AUTH_SAML_AUTO_PROVISION_ORG=true`.
-3. **OIDC Provider**
-   - Set `AUTH_OIDC_*` endpoints plus `AUTH_OIDC_SCOPES`.
-   - Configure redirect URI (default `http://localhost:8000/api/v1/auth/oidc/callback`).
-   - Customize attribute → RBAC role via `AUTH_OIDC_ROLE_MAPPING`.
-4. **SCIM**
-   - Issue long-lived token in vault and set `SCIM_BEARER_TOKEN`.
-   - Bound page size with `SCIM_MAX_PAGE_SIZE` (default 100).
-   - Optional org auto-creation with `SCIM_AUTO_PROVISION_ORG=true`.
+2. **Provider registry**
+   - Call `POST /api/v1/admin/sso/providers` with the org slug, issuer, ACS/Authorize URLs, and attribute mapping. Repeat per tenant (use `slug` to identify).
+   - Upload certificates or client secrets via `POST /api/v1/admin/sso/providers/{id}/credentials`.
+   - Optional: auto-provision orgs by setting `autoProvisionOrgs=true` or overriding default plan/role per provider.
+3. **SCIM tokens**
+   - Generate per-provider tokens with `POST /api/v1/admin/sso/providers/{id}/scim-tokens`. Store the plaintext token securely (it is shown once).
+   - Use `GET /api/v1/admin/sso/providers/{id}/scim-tokens` to audit prefixes/expiry and rotate as needed.
+4. **Fallback / legacy**
+   - The old env-vars (`AUTH_SAML_*`, `AUTH_OIDC_*`, `SCIM_BEARER_TOKEN`) are still loaded as the “default” provider for small installs. Plan the migration by creating a matching provider via the admin API, then switching clients to `/auth/saml/{slug}` and `/auth/oidc/{slug}` endpoints.
 5. **Deployment**
-   - Document new env vars in `README.md` and run `docker compose down && docker compose up -d` whenever toggles change.
+   - Apply `20251115_create_sso_providers.sql` in every environment.
+   - Run `docker compose down && docker compose up -d` after adding new providers or rotating credentials so caches clear cleanly.
 
 ## 3. Pilot Status (Target: 3 Design Partners)
 
@@ -42,8 +39,8 @@
 ## 4. Rollback / Recovery
 
 1. **Disable login**
-   - Set `AUTH_SAML_ENABLED=false` or `AUTH_OIDC_ENABLED=false` and recycle containers.
-   - Rotate `SCIM_BEARER_TOKEN` if leaked; removing the value blocks provisioning immediately.
+   - Disable specific providers via `PATCH /api/v1/admin/sso/providers/{id}` (`enabled=false`) and recycle pods to flush caches.
+   - Revoke SCIM tokens via the admin API; removing the token immediately blocks provisioning.
 2. **User quarantine**
    - `DELETE /scim/v2/Users/{id}` → marks user inactive (sets `locked_until = 'infinity'`).
    - Remove org memberships manually via `DELETE FROM user_orgs WHERE user_id=...` if SCIM unavailable.
@@ -54,7 +51,7 @@
 ## 5. Observability
 
 - **Logs**: `audit_logs` (`source=rbac|auth|scim`) aggregated into Looker tile “RBAC/SSO”.
-- **Metrics**: add counters `sso.saml.login.success`, `sso.oidc.login.success`, `scim.users.provisioned`.
+- **Metrics**: `sso_login_total{protocol,provider,result}` and `scim_requests_total{provider,resource,method,result}` (available via `/metrics`).
 - **Alerts**:
   - SCIM 5xx rate >2/min for 5 minutes → page #ops-support.
   - RBAC shadow rate >1% while `RBAC_ENFORCE=false` → create incident.

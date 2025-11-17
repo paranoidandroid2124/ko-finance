@@ -24,19 +24,20 @@ const originalSetPlanFromServer = usePlanStore.getState().setPlanFromServer;
 const originalSavePlan = usePlanStore.getState().savePlan;
 
 describe("PlanSettingsForm", () => {
-  const defaultPayload: PlanContextPayload = {
+const defaultPayload: PlanContextPayload = {
     planTier: "pro",
     expiresAt: "2026-01-01T00:00:00+00:00",
     entitlements: ["search.compare", "search.alerts", "search.export", "rag.core"],
-    featureFlags: {
-      searchCompare: true,
-      searchAlerts: true,
-      searchExport: false,
-      ragCore: true,
-      evidenceInlinePdf: false,
-      evidenceDiff: false,
-      timelineFull: false,
-    },
+  featureFlags: {
+    searchCompare: true,
+    searchAlerts: true,
+    searchExport: false,
+    ragCore: true,
+    evidenceInlinePdf: false,
+    evidenceDiff: false,
+    timelineFull: false,
+    reportsEventExport: true,
+  },
     memoryFlags: {
       watchlist: true,
       digest: true,
@@ -68,6 +69,7 @@ describe("PlanSettingsForm", () => {
           evidenceInlinePdf: false,
           evidenceDiff: false,
           timelineFull: false,
+          reportsEventExport: false,
         },
         memoryFlags: {
           watchlist: false,

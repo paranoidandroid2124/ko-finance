@@ -36,10 +36,13 @@ from services.notebook_service import (
     NotebookShareRecord,
     NotebookShareView,
 )
+from services.plan_service import PlanContext
+from web.deps import require_plan_feature
 from web.deps_rbac import RbacState, get_rbac_state, require_org_role
 
 router = APIRouter(prefix="/notebooks", tags=["Research Notebook"])
 DEFAULT_LIMIT = 25
+NOTEBOOK_ENTITLEMENT = "collab.notebook"
 
 
 def _clean_query_list(values: Optional[List[str]]) -> List[str]:
@@ -137,6 +140,7 @@ def list_notebooks(
     limit: Optional[int] = Query(default=DEFAULT_LIMIT, ge=1, le=100),
     state: RbacState = Depends(require_org_role("viewer")),
     session: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature(NOTEBOOK_ENTITLEMENT)),
 ) -> NotebookListResponse:
     org_id = _require_org(state)
     tag_filter = _clean_query_list(tags)
@@ -157,6 +161,7 @@ def get_notebook_detail(
     entry_tags: Optional[List[str]] = Query(default=None, alias="entryTags"),
     state: RbacState = Depends(require_org_role("viewer")),
     session: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature(NOTEBOOK_ENTITLEMENT)),
 ) -> NotebookDetailResponse:
     org_id = _require_org(state)
     try:
@@ -180,6 +185,7 @@ def create_notebook(
     payload: NotebookCreateRequest,
     state: RbacState = Depends(require_org_role("editor")),
     session: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature(NOTEBOOK_ENTITLEMENT)),
 ) -> NotebookDetailResponse:
     org_id = _require_org(state)
     user_id = _require_user(state)
@@ -212,6 +218,7 @@ def update_notebook(
     payload: NotebookUpdateRequest,
     state: RbacState = Depends(require_org_role("editor")),
     session: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature(NOTEBOOK_ENTITLEMENT)),
 ) -> NotebookDetailResponse:
     org_id = _require_org(state)
     user_id = _require_user(state)
@@ -247,6 +254,7 @@ def delete_notebook(
     notebook_id: uuid.UUID,
     state: RbacState = Depends(require_org_role("editor")),
     session: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature(NOTEBOOK_ENTITLEMENT)),
 ) -> Response:
     org_id = _require_org(state)
     user_id = _require_user(state)
@@ -270,6 +278,7 @@ def create_entry(
     payload: NotebookEntryCreateRequest,
     state: RbacState = Depends(require_org_role("editor")),
     session: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature(NOTEBOOK_ENTITLEMENT)),
 ) -> NotebookEntryResponse:
     org_id = _require_org(state)
     user_id = _require_user(state)
@@ -306,6 +315,7 @@ def update_entry(
     payload: NotebookEntryUpdateRequest,
     state: RbacState = Depends(require_org_role("editor")),
     session: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature(NOTEBOOK_ENTITLEMENT)),
 ) -> NotebookEntryResponse:
     org_id = _require_org(state)
     user_id = _require_user(state)
@@ -341,6 +351,7 @@ def delete_entry(
     entry_id: uuid.UUID,
     state: RbacState = Depends(require_org_role("editor")),
     session: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature(NOTEBOOK_ENTITLEMENT)),
 ) -> Response:
     org_id = _require_org(state)
     user_id = _require_user(state)
@@ -363,6 +374,7 @@ def list_shares(
     notebook_id: uuid.UUID,
     state: RbacState = Depends(require_org_role("editor")),
     session: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature(NOTEBOOK_ENTITLEMENT)),
 ) -> NotebookShareListResponse:
     org_id = _require_org(state)
     try:
@@ -378,6 +390,7 @@ def create_share(
     payload: NotebookShareCreateRequest,
     state: RbacState = Depends(require_org_role("editor")),
     session: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature(NOTEBOOK_ENTITLEMENT)),
 ) -> NotebookShareResponse:
     org_id = _require_org(state)
     user_id = _require_user(state)
@@ -410,6 +423,7 @@ def revoke_share(
     share_id: uuid.UUID,
     state: RbacState = Depends(require_org_role("editor")),
     session: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature(NOTEBOOK_ENTITLEMENT)),
 ) -> NotebookShareResponse:
     org_id = _require_org(state)
     user_id = _require_user(state)

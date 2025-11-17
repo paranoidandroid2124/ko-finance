@@ -18,6 +18,7 @@ const defaultPlanPayload: PlanContextPayload = {
     evidenceInlinePdf: false,
     evidenceDiff: false,
     timelineFull: false,
+    reportsEventExport: false,
   },
   quota: {
     chatRequestsPerDay: 20,
@@ -54,15 +55,16 @@ describe("planStore", () => {
 
   it("merges feature flags and quota when hydrating from server payload", () => {
     const { setPlanFromServer } = usePlanStore.getState();
-    const mergedFlags: PlanFeatureFlags = {
-      searchCompare: false,
-      searchAlerts: false,
-      searchExport: true,
-      ragCore: true,
-      evidenceInlinePdf: false,
-      evidenceDiff: false,
-      timelineFull: true,
-    };
+  const mergedFlags: PlanFeatureFlags = {
+    searchCompare: false,
+    searchAlerts: false,
+    searchExport: true,
+    ragCore: true,
+    evidenceInlinePdf: false,
+    evidenceDiff: false,
+    timelineFull: true,
+    reportsEventExport: true,
+  };
     setPlanFromServer({
       planTier: "enterprise",
       expiresAt: "2026-02-01T00:00:00+00:00",
@@ -146,6 +148,7 @@ describe("planStore", () => {
         evidenceInlinePdf: true,
         evidenceDiff: false,
         timelineFull: false,
+        reportsEventExport: true,
       },
       memoryFlags: defaultPlanPayload.memoryFlags,
       quota: defaultPlanPayload.quota,

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+import uuid
+from pathlib import Path
 from datetime import date
 from typing import List, Optional, Sequence
 
@@ -16,13 +19,20 @@ from schemas.api.event_study import (
     EventStudyEventDetail,
     EventStudyEventItem,
     EventStudyEventsResponse,
+    EventStudyExportRequest,
+    EventStudyExportResponse,
     EventStudyPoint,
     EventStudySeriesPoint,
     EventStudySummaryItem,
     EventStudySummaryResponse,
 )
+from services import event_study_report, report_renderer
+from services.audit_log import record_audit_event
+from services.evidence_package import make_evidence_bundle
 from services.plan_service import PlanContext
 from web.deps import require_plan_feature
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/event-study", tags=["Event Study"])
 
@@ -302,6 +312,82 @@ def get_event_detail(
         window=_window_key(start, end),
         viewer_url=viewer_url,
         cap_bucket=event.cap_bucket,
-        market_cap=_to_float(event.market_cap),
+    market_cap=_to_float(event.market_cap),
         series=series,
+    )
+
+
+def _optional_path(path: Optional[Path]) -> Optional[str]:
+    if path is None:
+        return None
+    return str(path)
+
+
+@router.post("/export", response_model=EventStudyExportResponse)
+def export_event_study_report_endpoint(
+    request: EventStudyExportRequest,
+    *,
+    db: Session = Depends(get_db),
+    plan: PlanContext = Depends(require_plan_feature("reports.event_export")),
+    _: PlanContext = Depends(require_plan_feature("timeline.full")),
+) -> EventStudyExportResponse:
+    if request.window_start >= request.window_end:
+        raise HTTPException(status_code=400, detail="windowStart must be less than windowEnd")
+
+    payload = event_study_report.build_event_study_report_payload(
+        db,
+        window_start=request.window_start,
+        window_end=request.window_end,
+        scope=request.scope,
+        significance=request.significance,
+        event_types=request.event_types,
+        markets=request.markets,
+        cap_buckets=request.cap_buckets,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        search=request.search,
+        limit=request.limit,
+        requested_by=request.requested_by or plan.tier,
+    )
+
+    task_uuid = uuid.uuid4()
+    task_id = f"event-study::{task_uuid}"
+    pdf_temp_path = report_renderer.render_event_study_report(payload)
+
+    try:
+        bundle = make_evidence_bundle(
+            task_id=task_id,
+            pdf_path=pdf_temp_path,
+            brief_payload=payload,
+            pdf_filename="event_study_report.pdf",
+            payload_filename="event_study_report.json",
+        )
+    finally:
+        try:
+            pdf_temp_path.unlink(missing_ok=True)  # type: ignore[arg-type]
+        except OSError:
+            logger.debug("Failed to remove temporary PDF %s", pdf_temp_path)
+
+    try:
+        record_audit_event(
+            action="event_study.export",
+            source="event_study",
+            target_id=task_id,
+            extra={
+                "plan_tier": plan.tier,
+                "filters": request.model_dump(mode="json"),
+            },
+        )
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.debug("Event study export audit logging skipped: %s", exc, exc_info=True)
+
+    return EventStudyExportResponse(
+        task_id=task_id,
+        pdf_path=str(bundle.pdf_path),
+        pdf_object=bundle.pdf_object,
+        pdf_url=bundle.pdf_url,
+        package_path=_optional_path(bundle.zip_path),
+        package_object=bundle.zip_object,
+        package_url=bundle.zip_url,
+        manifest_path=_optional_path(bundle.manifest_path),
     )

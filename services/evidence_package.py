@@ -7,17 +7,31 @@ import os
 import shutil
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
+from core.env import env_int
 from core.logging import get_logger
 from services import storage_service
+from services.report_metrics import (
+    observe_bundle_cleanup,
+    set_bundle_directory_count,
+    set_bundle_retention_days,
+)
 
 logger = get_logger(__name__)
 
 _OUTPUT_ROOT = Path(os.getenv("EVENT_BRIEF_OUTPUT_DIR", "uploads/admin/event_briefs"))
 _PREFIX = os.getenv("EVENT_BRIEF_OBJECT_PREFIX", "event-briefs")
+_BUNDLE_RETENTION_DAYS = env_int("EVENT_BUNDLE_RETENTION_DAYS", 30, minimum=0)
+
+
+def _count_bundle_dirs(root: Path) -> int:
+    try:
+        return sum(1 for entry in root.iterdir() if entry.is_dir())
+    except OSError:
+        return 0
 
 
 @dataclass
@@ -31,11 +45,45 @@ class PackageResult:
     manifest_path: Path
 
 
+def _purge_expired_bundles(root: Path) -> None:
+    set_bundle_retention_days(_BUNDLE_RETENTION_DAYS)
+    if _BUNDLE_RETENTION_DAYS <= 0:
+        set_bundle_directory_count(_count_bundle_dirs(root))
+        return
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_BUNDLE_RETENTION_DAYS)
+    deleted = 0
+    failed = 0
+    for entry in root.iterdir():
+        if not entry.is_dir():
+            continue
+        try:
+            stat = entry.stat()
+        except OSError:
+            continue
+        # Zip bundles live inside timestamped directories; drop directories older than retention window.
+        modified = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+        if modified < cutoff:
+            try:
+                shutil.rmtree(entry)
+                logger.debug("Removed expired event bundle directory %s (mtime=%s).", entry, modified.isoformat())
+                deleted += 1
+            except OSError:  # pragma: no cover - cleanup best-effort
+                logger.warning("Failed to remove expired bundle directory %s.", entry, exc_info=True)
+                failed += 1
+    if deleted:
+        observe_bundle_cleanup("deleted", deleted)
+    if failed:
+        observe_bundle_cleanup("failed", failed)
+    set_bundle_directory_count(_count_bundle_dirs(root))
+
+
 def _ensure_output_dir() -> Path:
     try:
         _OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     except OSError as exc:  # pragma: no cover - filesystem guard
         logger.error("Failed to ensure event brief output directory: %s", exc, exc_info=True)
+    else:
+        _purge_expired_bundles(_OUTPUT_ROOT)
     return _OUTPUT_ROOT
 
 
@@ -57,9 +105,18 @@ def make_evidence_bundle(
     diff_payload: Optional[Mapping[str, Any]] = None,
     trace_payload: Optional[Mapping[str, Any]] = None,
     audit_payload: Optional[Mapping[str, Any]] = None,
+    pdf_filename: str = "event_brief.pdf",
+    payload_filename: str = "event_brief.json",
 ) -> PackageResult:
     """
     Persist the rendered PDF alongside JSON artefacts and package them into a ZIP archive.
+
+    Parameters
+    -------
+    pdf_filename:
+        Optional override for the filename stored inside the bundle (default: ``event_brief.pdf``).
+    payload_filename:
+        Optional override for the JSON payload filename (default: ``event_brief.json``).
 
     Returns
     -------
@@ -71,10 +128,10 @@ def make_evidence_bundle(
     output_dir = _ensure_output_dir() / base_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    target_pdf = output_dir / "event_brief.pdf"
+    target_pdf = output_dir / pdf_filename
     shutil.copy2(pdf_path, target_pdf)
 
-    brief_path = output_dir / "event_brief.json"
+    brief_path = output_dir / payload_filename
     _write_json(brief_path, brief_payload)
 
     if diff_payload:

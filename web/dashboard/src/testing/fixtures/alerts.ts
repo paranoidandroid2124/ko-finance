@@ -16,6 +16,7 @@ const baseFeatureFlags: PlanFeatureFlags = {
   evidenceInlinePdf: false,
   evidenceDiff: false,
   timelineFull: false,
+  reportsEventExport: false,
 };
 
 const baseQuota: PlanQuota = {
@@ -159,6 +160,7 @@ const makePlanContext = (tier: PlanTier): PlanContextPayload => {
   const searchAlerts = tier !== "free";
   const ragCore = tier !== "free";
   const timelineFull = tier === "enterprise";
+  const reportsEventExport = tier === "pro" || tier === "enterprise";
   const memoryFlags: PlanMemoryFlags = {
     watchlist: tier !== "free",
     digest: tier !== "free",
@@ -174,6 +176,7 @@ const makePlanContext = (tier: PlanTier): PlanContextPayload => {
       searchExport,
       ragCore,
       timelineFull,
+      reportsEventExport,
     },
     memoryFlags,
     quota: {

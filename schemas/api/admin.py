@@ -793,6 +793,124 @@ class AdminCredentialLoginRequest(AdminBaseModel):
     otp: Optional[str] = Field(default=None, description="TOTP 또는 일회용 MFA 코드.")
 
 
+class AdminSsoProviderSchema(AdminBaseModel):
+    id: str = Field(..., description="프로바이더 UUID.")
+    slug: str = Field(..., description="고유 슬러그.")
+    providerType: Literal["saml", "oidc"] = Field(..., description="프로바이더 타입(SAML/OIDC).")
+    displayName: str = Field(..., description="표시 이름.")
+    orgId: Optional[str] = Field(default=None, description="연결된 조직 UUID.")
+    issuer: Optional[str] = Field(default=None, description="IdP Issuer/Entity ID.")
+    audience: Optional[str] = Field(default=None, description="Audience 또는 Client ID.")
+    spEntityId: Optional[str] = Field(default=None, description="SP Entity ID (SAML).")
+    acsUrl: Optional[str] = Field(default=None, description="ACS URL (SAML).")
+    metadataUrl: Optional[str] = Field(default=None, description="메타데이터 URL.")
+    idpSsoUrl: Optional[str] = Field(default=None, description="IdP SSO URL.")
+    authorizationUrl: Optional[str] = Field(default=None, description="OIDC Authorize URL.")
+    tokenUrl: Optional[str] = Field(default=None, description="OIDC Token URL.")
+    userinfoUrl: Optional[str] = Field(default=None, description="OIDC Userinfo URL.")
+    redirectUri: Optional[str] = Field(default=None, description="Redirect URI.")
+    scopes: List[str] = Field(default_factory=list, description="OIDC scopes.")
+    attributeMapping: Dict[str, Any] = Field(default_factory=dict, description="클레임 매핑.")
+    defaultPlanTier: Optional[str] = Field(default=None, description="기본 플랜 티어.")
+    defaultRole: Optional[str] = Field(default=None, description="기본 RBAC 역할.")
+    defaultOrgSlug: Optional[str] = Field(default=None, description="자동 생성 시 사용할 org slug.")
+    autoProvisionOrgs: bool = Field(default=False, description="자동 워크스페이스 생성 여부.")
+    enabled: bool = Field(default=True, description="활성화 여부.")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="추가 메타데이터.")
+    createdAt: Optional[str] = Field(default=None, description="생성 시각.")
+    updatedAt: Optional[str] = Field(default=None, description="수정 시각.")
+    credentials: Dict[str, Optional[str]] = Field(default_factory=dict, description="마스킹된 자격증명.")
+
+
+class AdminSsoProviderListResponse(AdminBaseModel):
+    items: List[AdminSsoProviderSchema] = Field(default_factory=list, description="SSO 프로바이더 목록.")
+
+
+class AdminSsoProviderResponse(AdminBaseModel):
+    provider: AdminSsoProviderSchema = Field(..., description="단일 프로바이더 정보.")
+
+
+class AdminSsoProviderCreateRequest(AdminBaseModel):
+    slug: str = Field(..., description="프로바이더 고유 슬러그.")
+    providerType: Literal["saml", "oidc"] = Field(..., description="타입.")
+    displayName: str = Field(..., description="표시 이름.")
+    orgId: Optional[str] = Field(default=None, description="연결할 조직 ID.")
+    issuer: Optional[str] = Field(default=None, description="IdP Issuer.")
+    audience: Optional[str] = Field(default=None, description="Audience/Client ID.")
+    spEntityId: Optional[str] = Field(default=None, description="SP Entity ID.")
+    acsUrl: Optional[str] = Field(default=None, description="ACS URL.")
+    metadataUrl: Optional[str] = Field(default=None, description="메타데이터 URL.")
+    idpSsoUrl: Optional[str] = Field(default=None, description="IdP SSO URL.")
+    authorizationUrl: Optional[str] = Field(default=None, description="OIDC Authorize URL.")
+    tokenUrl: Optional[str] = Field(default=None, description="OIDC Token URL.")
+    userinfoUrl: Optional[str] = Field(default=None, description="OIDC Userinfo URL.")
+    redirectUri: Optional[str] = Field(default=None, description="Redirect URI.")
+    scopes: List[str] = Field(default_factory=list, description="OIDC scopes.")
+    attributeMapping: Dict[str, Any] = Field(default_factory=dict, description="클레임 매핑.")
+    defaultPlanTier: Optional[str] = Field(default=None, description="기본 플랜 티어.")
+    defaultRole: Optional[str] = Field(default="viewer", description="기본 RBAC 역할.")
+    defaultOrgSlug: Optional[str] = Field(default=None, description="기본 org slug.")
+    autoProvisionOrgs: bool = Field(default=False, description="워크스페이스 자동 생성.")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="추가 메타데이터.")
+
+
+class AdminSsoProviderUpdateRequest(AdminBaseModel):
+    displayName: Optional[str] = Field(default=None, description="표시 이름.")
+    issuer: Optional[str] = Field(default=None, description="IdP Issuer.")
+    audience: Optional[str] = Field(default=None, description="Audience/Client ID.")
+    spEntityId: Optional[str] = Field(default=None, description="SP Entity ID.")
+    acsUrl: Optional[str] = Field(default=None, description="ACS URL.")
+    metadataUrl: Optional[str] = Field(default=None, description="메타데이터 URL.")
+    idpSsoUrl: Optional[str] = Field(default=None, description="IdP SSO URL.")
+    authorizationUrl: Optional[str] = Field(default=None, description="OIDC Authorize URL.")
+    tokenUrl: Optional[str] = Field(default=None, description="OIDC Token URL.")
+    userinfoUrl: Optional[str] = Field(default=None, description="OIDC Userinfo URL.")
+    redirectUri: Optional[str] = Field(default=None, description="Redirect URI.")
+    scopes: Optional[List[str]] = Field(default=None, description="OIDC scopes.")
+    attributeMapping: Optional[Dict[str, Any]] = Field(default=None, description="클레임 매핑.")
+    defaultPlanTier: Optional[str] = Field(default=None, description="기본 플랜 티어.")
+    defaultRole: Optional[str] = Field(default=None, description="기본 RBAC 역할.")
+    defaultOrgSlug: Optional[str] = Field(default=None, description="기본 org slug.")
+    autoProvisionOrgs: Optional[bool] = Field(default=None, description="워크스페이스 자동 생성.")
+    metadata: Optional[Dict[str, Any]] = Field(default=None, description="추가 메타데이터.")
+    enabled: Optional[bool] = Field(default=None, description="활성화 여부.")
+
+
+class AdminSsoCredentialUpsertRequest(AdminBaseModel):
+    credentialType: str = Field(..., description="credential 종류(saml_idp_certificate 등).")
+    secretValue: str = Field(..., description="새로운 secret 값.")
+
+
+class AdminSsoCredentialResponse(AdminBaseModel):
+    credentialType: str = Field(..., description="credential 종류.")
+    maskedSecret: Optional[str] = Field(default=None, description="마스킹된 secret.")
+    version: int = Field(..., description="버전.")
+
+
+class AdminScimTokenSchema(AdminBaseModel):
+    id: str = Field(..., description="토큰 UUID.")
+    tokenPrefix: str = Field(..., description="첫 몇 글자 프리픽스.")
+    description: Optional[str] = Field(default=None, description="설명.")
+    createdBy: Optional[str] = Field(default=None, description="생성자.")
+    createdAt: str = Field(..., description="생성 시각.")
+    lastUsedAt: Optional[str] = Field(default=None, description="마지막 사용 시각.")
+    expiresAt: Optional[str] = Field(default=None, description="만료 시각.")
+    revokedAt: Optional[str] = Field(default=None, description="회수 시각.")
+
+
+class AdminScimTokenListResponse(AdminBaseModel):
+    items: List[AdminScimTokenSchema] = Field(default_factory=list, description="SCIM 토큰 목록.")
+
+
+class AdminScimTokenCreateRequest(AdminBaseModel):
+    description: Optional[str] = Field(default=None, description="설명.")
+    expiresAt: Optional[str] = Field(default=None, description="만료 시각(ISO8601).")
+
+
+class AdminScimTokenCreateResponse(AdminBaseModel):
+    token: str = Field(..., description="새로운 SCIM Bearer 토큰(이번 응답에서만 노출).")
+
+
 __all__ = [
     "AdminGuardrailEvaluateRequest",
     "AdminGuardrailEvaluateResponse",
@@ -861,6 +979,17 @@ __all__ = [
     "AdminSessionResponse",
     "AdminSessionRevokeResponse",
     "AdminCredentialLoginRequest",
+    "AdminSsoProviderSchema",
+    "AdminSsoProviderListResponse",
+    "AdminSsoProviderResponse",
+    "AdminSsoProviderCreateRequest",
+    "AdminSsoProviderUpdateRequest",
+    "AdminSsoCredentialUpsertRequest",
+    "AdminSsoCredentialResponse",
+    "AdminScimTokenSchema",
+    "AdminScimTokenListResponse",
+    "AdminScimTokenCreateRequest",
+    "AdminScimTokenCreateResponse",
     "AdminSystemPromptListResponse",
     "AdminSystemPromptSchema",
     "AdminSystemPromptUpdateRequest",

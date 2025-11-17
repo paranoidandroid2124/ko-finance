@@ -33,6 +33,7 @@ class PlanFeatureFlagsSchema(BaseModel):
     evidenceInlinePdf: bool = False
     evidenceDiff: bool = False
     timelineFull: bool = False
+    reportsEventExport: bool = False
 
 
 class PlanMemoryFlagsSchema(BaseModel):

@@ -110,3 +110,37 @@ class EventStudyEventDetail(BaseModel):
     series: List[EventStudySeriesPoint] = Field(default_factory=list)
     cap_bucket: Optional[str] = Field(default=None, serialization_alias="capBucket")
     market_cap: Optional[float] = Field(default=None, serialization_alias="marketCap")
+
+
+class EventStudyExportRequest(BaseModel):
+    """Request payload to generate a PDF report for the current filter set."""
+
+    window_start: int = Field(-5, alias="windowStart")
+    window_end: int = Field(20, alias="windowEnd")
+    scope: str = Field(default="market")
+    significance: float = Field(default=0.1, ge=0.0, le=1.0)
+    event_types: Optional[List[str]] = Field(default=None, alias="eventTypes")
+    markets: Optional[List[str]] = Field(default=None, alias="markets")
+    cap_buckets: Optional[List[str]] = Field(default=None, alias="capBuckets")
+    start_date: Optional[date] = Field(default=None, alias="startDate")
+    end_date: Optional[date] = Field(default=None, alias="endDate")
+    search: Optional[str] = None
+    limit: int = Field(default=50, ge=1, le=200)
+    requested_by: Optional[str] = Field(default=None, max_length=120, alias="requestedBy")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class EventStudyExportResponse(BaseModel):
+    """Response metadata describing stored report artefacts."""
+
+    task_id: str = Field(..., alias="taskId")
+    pdf_path: str = Field(..., alias="pdfPath")
+    pdf_object: Optional[str] = Field(default=None, alias="pdfObject")
+    pdf_url: Optional[str] = Field(default=None, alias="pdfUrl")
+    package_path: Optional[str] = Field(default=None, alias="packagePath")
+    package_object: Optional[str] = Field(default=None, alias="packageObject")
+    package_url: Optional[str] = Field(default=None, alias="packageUrl")
+    manifest_path: Optional[str] = Field(default=None, alias="manifestPath")
+
+    model_config = ConfigDict(populate_by_name=True)

@@ -139,6 +139,8 @@ class PlanContext:
             "evidence.diff": self.allows("evidence.diff"),
             "rag.core": self.allows("rag.core"),
             "timeline.full": self.allows("timeline.full"),
+            "collab.notebook": self.allows("collab.notebook"),
+            "reports.event_export": self.allows("reports.event_export"),
         }
 
     def memory_flags(self) -> Mapping[str, bool]:
@@ -256,6 +258,8 @@ def _feature_flags_from_entitlements(entitlements: Iterable[str]) -> Dict[str, b
         "evidence.diff": "evidence.diff" in ent_set,
         "rag.core": "rag.core" in ent_set,
         "timeline.full": "timeline.full" in ent_set,
+        "collab.notebook": "collab.notebook" in ent_set,
+        "reports.event_export": "reports.event_export" in ent_set,
     }
 
 

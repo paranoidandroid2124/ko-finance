@@ -13,7 +13,14 @@ type PlanState = {
   checkoutRequested: boolean;
 };
 
-const PRO_ENTITLEMENTS = ["search.compare", "search.alerts", "search.export", "evidence.inline_pdf", "rag.core"];
+const PRO_ENTITLEMENTS = [
+  "search.compare",
+  "search.alerts",
+  "search.export",
+  "evidence.inline_pdf",
+  "rag.core",
+  "reports.event_export",
+];
 const ENTERPRISE_ENTITLEMENTS = [
   "search.compare",
   "search.alerts",
@@ -22,6 +29,7 @@ const ENTERPRISE_ENTITLEMENTS = [
   "evidence.diff",
   "rag.core",
   "timeline.full",
+  "reports.event_export",
 ];
 
 const PLAN_FEATURE_FLAGS = (entitlements: string[]) => ({
@@ -32,6 +40,7 @@ const PLAN_FEATURE_FLAGS = (entitlements: string[]) => ({
   evidenceInlinePdf: entitlements.includes("evidence.inline_pdf"),
   evidenceDiff: entitlements.includes("evidence.diff"),
   timelineFull: entitlements.includes("timeline.full"),
+  reportsEventExport: entitlements.includes("reports.event_export"),
 });
 
 const PRO_QUOTA = {

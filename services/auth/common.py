@@ -10,15 +10,18 @@ import ipaddress
 import json
 import logging
 import secrets
+import textwrap
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 from urllib.parse import urlencode
 
 import httpx
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
+from lxml import etree
+from signxml import InvalidSignature, XMLVerifier
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from xmltodict import parse as parse_xml
@@ -83,6 +86,7 @@ _PASSWORD_HASHER = PasswordHasher(
 
 _SSO_STATE_SECRET = env_str("AUTH_SSO_STATE_SECRET") or env_str("AUTH_JWT_SECRET") or env_str("AUTH_SECRET") or secrets.token_urlsafe(32)
 _SSO_STATE_TTL_SECONDS = env_int("AUTH_SSO_STATE_TTL_SECONDS", 600, minimum=60)
+_SAML_CLOCK_SKEW_SECONDS = env_int("AUTH_SAML_CLOCK_SKEW_SECONDS", 120, minimum=0)
 _PLAN_TIERS = {"free", "pro", "enterprise"}
 _FOR_UPDATE = " FOR UPDATE" if IS_POSTGRES else ""
 _USER_ROLES = {"user", "admin"}
@@ -848,9 +852,9 @@ def logout_session(
             )
 
 
-def generate_saml_metadata() -> str:
+def generate_saml_metadata(config_override: Optional[SamlProviderConfig] = None) -> str:
     """Return SP metadata XML for IdP configuration."""
-    config = _SAML_CONFIG
+    config = config_override or _SAML_CONFIG
     if not (config.enabled and config.sp_entity_id and config.acs_url):
         raise AuthServiceError("auth.saml_disabled", "SAML 서비스가 비활성화되어 있습니다.", 404)
     cert_block = ""
@@ -881,15 +885,17 @@ def consume_saml_assertion(
     saml_response: str,
     relay_state: Optional[str],
     context: RequestContext,
+    config_override: Optional[SamlProviderConfig] = None,
 ) -> LoginResult:
     """Handle SAMLResponse POSTs from the IdP."""
-    config = _SAML_CONFIG
+    config = config_override or _SAML_CONFIG
     if not config.enabled or not config.acs_url or not config.sp_entity_id:
         raise AuthServiceError("auth.saml_disabled", "SAML 서비스가 비활성화되어 있습니다.", 404)
     try:
         xml_payload = base64.b64decode(saml_response, validate=True)
     except binascii.Error as exc:
         raise AuthServiceError("auth.saml_invalid_payload", "SAMLResponse 디코딩에 실패했습니다.", 400) from exc
+    _validate_saml_signature(xml_payload, config)
     try:
         document = parse_xml(xml_payload)
     except Exception as exc:  # pragma: no cover - XML parsing guard
@@ -900,14 +906,20 @@ def consume_saml_assertion(
     destination = response.get("@Destination") or response.get("Destination")
     if destination and destination.rstrip("/") != config.acs_url.rstrip("/"):
         raise AuthServiceError("auth.saml_destination_mismatch", "Destination 값이 일치하지 않습니다.", 400)
+    _validate_saml_issue_instant(response)
+    response_issuer = _coerce_text(_extract_first(response, ["saml:Issuer", "Issuer"]))
+    _validate_saml_issuer(response_issuer, config, source="Response")
     assertion = _extract_first(response, ["saml:Assertion", "Assertion"])
     if not assertion:
         raise AuthServiceError("auth.saml_missing_assertion", "Assertion 정보가 없습니다.", 400)
+    assertion_issuer = _coerce_text(_extract_first(assertion, ["saml:Issuer", "Issuer"]))
+    _validate_saml_issuer(assertion_issuer, config, source="Assertion")
     conditions = _extract_first(assertion, ["saml:Conditions", "Conditions"])
     audience_restriction = _extract_first(conditions, ["saml:AudienceRestriction", "AudienceRestriction"]) if conditions else None
     audience_value = _coerce_text(_extract_first(audience_restriction, ["saml:Audience", "Audience"])) if audience_restriction else None
     if audience_value and audience_value != config.sp_entity_id:
         raise AuthServiceError("auth.saml_audience_mismatch", "Audience 값이 일치하지 않습니다.", 403)
+    _enforce_saml_temporal_conditions(conditions)
     attribute_statement = _extract_first(assertion, ["saml:AttributeStatement", "AttributeStatement"])
     attributes = _extract_attribute_map(attribute_statement)
     if relay_state:
@@ -951,9 +963,11 @@ def build_oidc_authorize_url(
     prompt: Optional[str],
     login_hint: Optional[str],
     context: RequestContext,
+    provider_slug: Optional[str] = None,
+    config_override: Optional[OidcProviderConfig] = None,
 ) -> OidcAuthorizeResult:
     """Construct the OIDC authorization URL + state payload."""
-    config = _OIDC_CONFIG
+    config = config_override or _OIDC_CONFIG
     if not (
         config.enabled
         and config.authorization_url
@@ -971,6 +985,8 @@ def build_oidc_authorize_url(
         payload["returnTo"] = return_to
     if org_slug:
         payload["orgSlug"] = org_slug
+    if provider_slug:
+        payload["providerSlug"] = provider_slug
     state = _encode_state(payload)
     params: Dict[str, Any] = {
         "client_id": config.client_id,
@@ -994,9 +1010,10 @@ def complete_oidc_login(
     code: str,
     state: str,
     context: RequestContext,
+    config_override: Optional[OidcProviderConfig] = None,
 ) -> LoginResult:
     """Exchange an OIDC authorization code for tokens + login."""
-    config = _OIDC_CONFIG
+    config = config_override or _OIDC_CONFIG
     if not (
         config.enabled
         and config.token_url
@@ -1649,6 +1666,97 @@ def _complete_sso_login(
     return result
 
 
+def _validate_saml_signature(xml_payload: bytes, config: SamlProviderConfig) -> None:
+    """Validate XML signatures on the SAML Response or Assertion."""
+    cert_pem = _build_pem_certificate(config.idp_certificate)
+    if not cert_pem:
+        raise AuthServiceError(
+            "auth.saml_certificate_missing",
+            "IdP 인증서가 설정되지 않아 SAML 서명을 검증할 수 없습니다.",
+            500,
+        )
+    try:
+        root = etree.fromstring(xml_payload)
+    except etree.XMLSyntaxError as exc:
+        raise AuthServiceError("auth.saml_invalid_payload", "SAML 응답을 파싱할 수 없습니다.", 400) from exc
+    verifier = XMLVerifier()
+    try:
+        verifier.verify(root, x509_cert=cert_pem, expect_references=1)
+        return
+    except InvalidSignature as exc:
+        assertion = root.find(".//{urn:oasis:names:tc:SAML:2.0:assertion}Assertion")
+        has_assertion_signature = (
+            assertion is not None
+            and assertion.find(".//{http://www.w3.org/2000/09/xmldsig#}Signature") is not None
+        )
+        if assertion is not None and has_assertion_signature:
+            try:
+                verifier.verify(assertion, x509_cert=cert_pem, expect_references=1)
+                return
+            except InvalidSignature as inner_exc:
+                exc = inner_exc
+        raise AuthServiceError("auth.saml_invalid_signature", "SAML Signature 검증에 실패했습니다.", 400) from exc
+
+
+def _validate_saml_issue_instant(response: Mapping[str, Any]) -> None:
+    raw_issue_instant = response.get("@IssueInstant") or response.get("IssueInstant")
+    issued_at = _parse_saml_instant(raw_issue_instant)
+    if not issued_at:
+        return
+    now = datetime.now(timezone.utc)
+    skew = timedelta(seconds=_SAML_CLOCK_SKEW_SECONDS)
+    if issued_at - skew > now:
+        raise AuthServiceError(
+            "auth.saml_issueinstant_invalid",
+            "Response IssueInstant가 시스템 시간과 일치하지 않습니다.",
+            400,
+        )
+
+
+def _enforce_saml_temporal_conditions(conditions: Optional[Mapping[str, Any]]) -> None:
+    if not isinstance(conditions, Mapping):
+        return
+    skew = timedelta(seconds=_SAML_CLOCK_SKEW_SECONDS)
+    now = datetime.now(timezone.utc)
+    not_before_raw = conditions.get("@NotBefore") or conditions.get("NotBefore")
+    not_on_or_after_raw = conditions.get("@NotOnOrAfter") or conditions.get("NotOnOrAfter")
+    not_before = _parse_saml_instant(not_before_raw)
+    if not_before and now + skew < not_before:
+        raise AuthServiceError("auth.saml_not_yet_valid", "Assertion이 아직 유효하지 않습니다.", 400)
+    not_on_or_after = _parse_saml_instant(not_on_or_after_raw)
+    if not_on_or_after and now - skew >= not_on_or_after:
+        raise AuthServiceError("auth.saml_expired", "Assertion 유효기간이 만료되었습니다.", 400)
+
+
+def _validate_saml_issuer(value: Optional[str], config: SamlProviderConfig, *, source: str) -> None:
+    if not value or not config.idp_entity_id:
+        return
+    issuer = value.strip()
+    if issuer != config.idp_entity_id:
+        raise AuthServiceError(
+            "auth.saml_issuer_mismatch",
+            f"{source} Issuer가 구성된 IdP와 일치하지 않습니다.",
+            403,
+        )
+
+
+def _parse_saml_instant(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _encode_state(payload: Mapping[str, Any]) -> str:
     serialized = json.dumps(payload, separators=(",", ":"), sort_keys=True)
     signature = hmac.new(_SSO_STATE_SECRET.encode("utf-8"), serialized.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -1675,6 +1783,12 @@ def _decode_state(token: str) -> Mapping[str, Any]:
     return payload
 
 
+def decode_oidc_state(token: str) -> Mapping[str, Any]:
+    """Expose decoding for callers that need to inspect OIDC state before login."""
+
+    return _decode_state(token)
+
+
 def _sanitize_certificate(pem_value: Optional[str]) -> Optional[str]:
     if not pem_value:
         return None
@@ -1686,6 +1800,14 @@ def _sanitize_certificate(pem_value: Optional[str]) -> Optional[str]:
         if stripped:
             lines.append(stripped)
     return "".join(lines) or None
+
+
+def _build_pem_certificate(pem_value: Optional[str]) -> Optional[str]:
+    body = _sanitize_certificate(pem_value)
+    if not body:
+        return None
+    wrapped = "\n".join(textwrap.wrap(body, 64)) or body
+    return f"-----BEGIN CERTIFICATE-----\n{wrapped}\n-----END CERTIFICATE-----"
 
 
 def _extract_first(obj: Optional[Mapping[str, Any]], keys: Sequence[str]) -> Optional[Any]:

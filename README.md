@@ -54,7 +54,7 @@ pip install -r requirements.txt
 - Long term we are migrating these JSON stores into PostgreSQL/Cloud Storage—see `docs/state_storage_migration.md` for the roadmap.
 
 #### SSO & SCIM (Enterprise)
-- SAML/OIDC login endpoints now live under `/api/v1/auth/saml/*` and `/api/v1/auth/oidc/*`; configure them via the `AUTH_SAML_*`, `AUTH_OIDC_*`, and `AUTH_SSO_STATE_*` env vars added to `.env.example`.
+- Single Sign-On now supports multiple tenants via `/api/v1/admin/sso/providers` and `/api/v1/auth/saml|oidc/{provider}/*`. Use the admin API to register IdP metadata, rotate credentials, and issue SCIM bearer tokens per org. The legacy `AUTH_SAML_*` / `AUTH_OIDC_*` env vars remain available as a fallback for single-provider deployments.
 - SCIM provisioning (`/scim/v2/Users`, `/scim/v2/Groups`) is protected by `SCIM_BEARER_TOKEN` and maps directly to `users`, `orgs`, and `user_orgs`. See `docs/sso_scim_runbook.md` for the rollout checklist and pilot dashboard.
 
 ### Core schema migrations

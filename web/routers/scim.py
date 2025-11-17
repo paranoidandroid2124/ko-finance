@@ -8,8 +8,9 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from core.env import env_str
 from database import get_db
+from services import sso_provider_service
+from services.sso_metrics import record_scim_request
 from services.scim_service import (
     SCIM_ERROR_SCHEMA,
     SCIM_LIST_RESPONSE,
@@ -26,15 +27,10 @@ from services.scim_service import (
 )
 
 router = APIRouter(prefix="/scim/v2", tags=["SCIM"])
-_SCIM_BEARER_TOKEN = env_str("SCIM_BEARER_TOKEN")
+_SCIM_DEFAULT_PROVIDER = "default"
 
 
-def _require_scim_token(request: Request) -> None:
-    if not _SCIM_BEARER_TOKEN:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"detail": "SCIM provisioning is disabled."},
-        )
+def _extract_bearer_token(request: Request) -> str:
     header = request.headers.get("authorization")
     if not header or not header.lower().startswith("bearer "):
         raise HTTPException(
@@ -42,12 +38,51 @@ def _require_scim_token(request: Request) -> None:
             detail={"detail": "Bearer token required."},
             headers={"WWW-Authenticate": "Bearer"},
         )
-    token = header.split(" ", 1)[1].strip()
-    if token != _SCIM_BEARER_TOKEN:
+    candidate = header.split(" ", 1)[1].strip()
+    if not candidate:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"detail": "Bearer token required."},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return candidate
+
+
+def _resolve_scim_provider(request: Request, db: Session) -> str:
+    token = _extract_bearer_token(request)
+    try:
+        provider, _ = sso_provider_service.resolve_scim_token(db, token)
+    except ValueError as exc:
+        error_code = str(exc)
+        if error_code == "token_revoked":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"detail": "SCIM token has been revoked."},
+            ) from exc
+        if error_code == "token_expired":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"detail": "SCIM token has expired."},
+            ) from exc
+        if error_code == "provider_unavailable":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"detail": "SCIM provider is unavailable."},
+            ) from exc
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"detail": "Invalid SCIM token."},
-        )
+        ) from exc
+    slug = provider.slug or _SCIM_DEFAULT_PROVIDER
+    request.state.scim_provider_slug = slug
+    return slug
+
+
+def _record_scim(provider_slug: str, resource: str, method: str, success: bool) -> None:
+    try:
+        record_scim_request(provider_slug, resource, method, success)
+    except Exception:  # pragma: no cover - best effort
+        pass
 
 
 def _scim_error_response(exc: ScimError) -> None:
@@ -68,11 +103,13 @@ def list_users(
     count: int = 50,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    _require_scim_token(request)
+    provider_slug = _resolve_scim_provider(request, db)
     try:
         result = list_scim_users(db, start_index=startIndex, count=count)
     except ScimError as exc:
+        _record_scim(provider_slug, "Users", "GET", False)
         _scim_error_response(exc)
+    _record_scim(provider_slug, "Users", "GET", True)
     return {
         "schemas": [SCIM_LIST_RESPONSE],
         "totalResults": result.total,
@@ -88,10 +125,13 @@ def create_user(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    _require_scim_token(request)
+    provider_slug = _resolve_scim_provider(request, db)
     try:
-        return create_scim_user(db, payload)
+        result = create_scim_user(db, payload)
+        _record_scim(provider_slug, "Users", "POST", True)
+        return result
     except ScimError as exc:
+        _record_scim(provider_slug, "Users", "POST", False)
         _scim_error_response(exc)
 
 
@@ -101,10 +141,13 @@ def get_user(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    _require_scim_token(request)
+    provider_slug = _resolve_scim_provider(request, db)
     try:
-        return get_scim_user(db, user_id)
+        result = get_scim_user(db, user_id)
+        _record_scim(provider_slug, "Users", "GET", True)
+        return result
     except ScimError as exc:
+        _record_scim(provider_slug, "Users", "GET", False)
         _scim_error_response(exc)
 
 
@@ -115,10 +158,13 @@ def patch_user(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    _require_scim_token(request)
+    provider_slug = _resolve_scim_provider(request, db)
     try:
-        return patch_scim_user(db, user_id, payload)
+        result = patch_scim_user(db, user_id, payload)
+        _record_scim(provider_slug, "Users", "PATCH", True)
+        return result
     except ScimError as exc:
+        _record_scim(provider_slug, "Users", "PATCH", False)
         _scim_error_response(exc)
 
 
@@ -128,10 +174,12 @@ def delete_user(
     request: Request,
     db: Session = Depends(get_db),
 ) -> None:
-    _require_scim_token(request)
+    provider_slug = _resolve_scim_provider(request, db)
     try:
         delete_scim_user(db, user_id)
+        _record_scim(provider_slug, "Users", "DELETE", True)
     except ScimError as exc:
+        _record_scim(provider_slug, "Users", "DELETE", False)
         _scim_error_response(exc)
 
 
@@ -142,11 +190,13 @@ def list_groups(
     count: int = 50,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    _require_scim_token(request)
+    provider_slug = _resolve_scim_provider(request, db)
     try:
         result = list_scim_groups(db, start_index=startIndex, count=count)
     except ScimError as exc:
+        _record_scim(provider_slug, "Groups", "GET", False)
         _scim_error_response(exc)
+    _record_scim(provider_slug, "Groups", "GET", True)
     return {
         "schemas": [SCIM_LIST_RESPONSE],
         "totalResults": result.total,
@@ -162,10 +212,13 @@ def create_group(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    _require_scim_token(request)
+    provider_slug = _resolve_scim_provider(request, db)
     try:
-        return create_scim_group(db, payload)
+        result = create_scim_group(db, payload)
+        _record_scim(provider_slug, "Groups", "POST", True)
+        return result
     except ScimError as exc:
+        _record_scim(provider_slug, "Groups", "POST", False)
         _scim_error_response(exc)
 
 
@@ -175,10 +228,13 @@ def get_group(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    _require_scim_token(request)
+    provider_slug = _resolve_scim_provider(request, db)
     try:
-        return get_scim_group(db, group_id)
+        result = get_scim_group(db, group_id)
+        _record_scim(provider_slug, "Groups", "GET", True)
+        return result
     except ScimError as exc:
+        _record_scim(provider_slug, "Groups", "GET", False)
         _scim_error_response(exc)
 
 
@@ -189,10 +245,13 @@ def patch_group(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    _require_scim_token(request)
+    provider_slug = _resolve_scim_provider(request, db)
     try:
-        return patch_scim_group(db, group_id, payload)
+        result = patch_scim_group(db, group_id, payload)
+        _record_scim(provider_slug, "Groups", "PATCH", True)
+        return result
     except ScimError as exc:
+        _record_scim(provider_slug, "Groups", "PATCH", False)
         _scim_error_response(exc)
 
 

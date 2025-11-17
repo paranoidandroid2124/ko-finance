@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 
 import { AppShell } from "@/components/layout/AppShell";
+import { EventStudyExportButton } from "@/components/event-study/EventStudyExportButton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -49,6 +50,8 @@ import {
 } from "@/lib/alertsApi";
 import { formatKoreanDateTime } from "@/lib/datetime";
 import { useToastStore } from "@/store/toastStore";
+import { usePlanStore } from "@/store/planStore";
+import { buildEventStudyExportParams } from "@/lib/eventStudyExport";
 
 const WINDOW_OPTIONS = [
   { minutes: 180, label: "최근 3시간" },
@@ -356,6 +359,7 @@ export default function WatchlistRadarPage() {
   const [sortOption, setSortOption] = useState<SortOption>("latest");
   const [selectedItem, setSelectedItem] = useState<WatchlistRadarItem | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const reportsEventExportEnabled = usePlanStore((state) => state.featureFlags.reportsEventExport);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [wizardMode, setWizardMode] = useState<"create" | "edit">("create");
   const [wizardInitialRule, setWizardInitialRule] = useState<WatchlistRuleDetail | null>(null);
@@ -730,6 +734,23 @@ export default function WatchlistRadarPage() {
   const generatedAtLabel = generatedAt ?? "생성 시각 미상";
   const alertPlanInfo = alertRulesData?.plan ?? null;
   const eventMatches = eventMatchesData?.matches ?? [];
+  const buildWatchlistExportParams = useCallback(() => {
+    const now = new Date();
+    const windowDuration = windowMinutes || defaultWindowMinutes;
+    const inferredStart = customWindow.start ? new Date(customWindow.start) : new Date(now.getTime() - windowDuration * 60 * 1000);
+    const inferredEnd = customWindow.end ? new Date(customWindow.end) : now;
+    const resolvedSearch = searchQuery.trim() || selectedTickers[0] || undefined;
+    return buildEventStudyExportParams({
+      windowStart: -5,
+      windowEnd: 20,
+      scope: "market",
+      significance: 0.1,
+      startDate: inferredStart,
+      endDate: inferredEnd,
+      search: resolvedSearch,
+      limit: 200,
+    });
+  }, [customWindow.end, customWindow.start, defaultWindowMinutes, searchQuery, selectedTickers, windowMinutes]);
 
   useEffect(() => {
     if (alertRulesData?.items) {
@@ -1285,10 +1306,20 @@ export default function WatchlistRadarPage() {
             onClick={handleRefresh}
             className="inline-flex items-center gap-2 rounded-lg border border-border-light px-3 py-2 text-sm font-semibold text-text-primaryLight transition-all hover:border-primary/40 hover:text-primary dark:border-border-dark dark:text-text-primaryDark dark:hover:border-primary.dark/40 dark:hover:text-primary.dark"
           >
-              <RefreshCw className="h-4 w-4" aria-hidden />
-              새로 고침
-            </button>
-          </div>
+            <RefreshCw className="h-4 w-4" aria-hidden />
+            새로 고침
+          </button>
+          {reportsEventExportEnabled ? (
+            <EventStudyExportButton
+              buildParams={buildWatchlistExportParams}
+              variant="secondary"
+              size="sm"
+              className="rounded-lg"
+            >
+              이벤트 리포트
+            </EventStudyExportButton>
+          ) : null}
+        </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <CalendarClock className="h-4 w-4 text-text-secondaryLight dark:text-text-secondaryDark" aria-hidden />

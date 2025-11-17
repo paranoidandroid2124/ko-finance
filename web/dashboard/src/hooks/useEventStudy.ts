@@ -167,3 +167,49 @@ export const useEventStudyEvents = (
     enabled: options?.enabled ?? true,
   });
 };
+
+export type EventStudyExportParams = {
+  windowStart: number;
+  windowEnd: number;
+  scope?: string;
+  significance?: number;
+  eventTypes?: string[];
+  markets?: string[];
+  capBuckets?: string[];
+  startDate?: string | null;
+  endDate?: string | null;
+  search?: string;
+  limit?: number;
+  requestedBy?: string | null;
+};
+
+export type EventStudyExportResponse = {
+  taskId: string;
+  pdfPath: string;
+  pdfObject?: string | null;
+  pdfUrl?: string | null;
+  packagePath?: string | null;
+  packageObject?: string | null;
+  packageUrl?: string | null;
+  manifestPath?: string | null;
+};
+
+export const exportEventStudyReport = async (params: EventStudyExportParams): Promise<EventStudyExportResponse> => {
+  const payload = {
+    ...params,
+    capBuckets: params.capBuckets?.map((value) => value.toUpperCase()),
+  };
+  const response = await fetch(`${resolveApiBase()}/api/v1/event-study/export`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || "이벤트 스터디 리포트를 내보내지 못했습니다.");
+  }
+  return (await response.json()) as EventStudyExportResponse;
+};

@@ -40,6 +40,14 @@
   ```
   Then enqueue a manual Celery task referencing the stored payload (e.g., `m1.process_filing.delay(letter.payload->>'filing_id')`).
 
+### DLQ CLI shortcuts
+
+- `python scripts/ingest_dlq.py list --status pending` : overview of pending entries (filter by task with `--task-name`).
+- `python scripts/ingest_dlq.py show <letter_id>` : inspect the stored payload/error before deciding.
+- `python scripts/ingest_dlq.py requeue <letter_id> --enqueue` : mark as requeued and (for supported tasks) enqueue `process_filing`.
+- `python scripts/ingest_dlq.py complete <letter_id>` : manually close out an entry after a successful rerun.
+- `python scripts/ingest_dlq.py refresh-metrics` : sync the Prometheus gauges after bulk SQL updates.
+
 ## 3. Backfill Command (Idempotent)
 
 - Script: `python scripts/ingest_backfill.py --start-date 2024-10-01 --end-date 2024-10-07 --chunk-days 2`

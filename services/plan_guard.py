@@ -6,16 +6,8 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 
 from services.plan_service import PlanContext, get_active_plan_context
+from services.plan_labels import get_entitlement_label
 
-_FEATURE_LABELS: Dict[str, str] = {
-    "search.compare": "비교 검색",
-    "search.alerts": "알림 자동화",
-    "search.export": "데이터 내보내기",
-    "evidence.inline_pdf": "Evidence PDF",
-    "evidence.diff": "Evidence Diff",
-    "timeline.full": "전체 타임라인",
-    "table.explorer": "Table Explorer",
-}
 
 
 @dataclass(slots=True)
@@ -43,7 +35,7 @@ class PlanGuardError(RuntimeError):
 
 
 def _feature_label(entitlement: str) -> str:
-    return _FEATURE_LABELS.get(entitlement, entitlement)
+    return get_entitlement_label(entitlement)
 
 
 def ensure_entitlement(plan: PlanContext, entitlement: str) -> PlanContext:

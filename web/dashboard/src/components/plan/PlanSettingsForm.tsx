@@ -83,6 +83,11 @@ const ENTITLEMENT_OPTIONS: Array<{ value: string; label: string; helper: string 
     label: "전체 타임라인",
     helper: "장기 이력을 끊김 없이 훑어볼 수 있게 확장해요.",
   },
+  {
+    value: "reports.event_export",
+    label: "이벤트 리포트 Export",
+    helper: "Event Study 결과를 PDF·ZIP으로 내보내 팀과 바로 공유할 수 있어요.",
+  },
 ];
 
 const formatKoreanDateTime = (iso: string | null | undefined) => {

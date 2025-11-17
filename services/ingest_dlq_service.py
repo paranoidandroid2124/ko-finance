@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import datetime
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
 from models.ingest_dead_letter import IngestDeadLetter
+from services.ingest_metrics import set_dlq_size
 
 logger = logging.getLogger(__name__)
 _MAX_ERROR_LENGTH = 4000
+_KNOWN_STATUSES: Sequence[str] = ("pending", "requeued", "completed")
 
 
 def _normalize_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -26,6 +29,20 @@ def _normalize_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:
         return str(value)
 
     return {str(key): coerce(val) for key, val in payload.items()}
+
+
+def _refresh_gauge(db: Session) -> None:
+    try:
+        for status in _KNOWN_STATUSES:
+            count = db.query(IngestDeadLetter).filter(IngestDeadLetter.status == status).count()
+            set_dlq_size(status, count)
+    except Exception as exc:  # pragma: no cover - metrics best effort
+        logger.debug("Failed to refresh DLQ gauge: %s", exc)
+
+
+def refresh_metrics(db: Session) -> None:
+    """Force-refresh the Prometheus gauge for DLQ status counts."""
+    _refresh_gauge(db)
 
 
 def record_dead_letter(
@@ -60,6 +77,7 @@ def record_dead_letter(
     db.add(letter)
     db.commit()
     db.refresh(letter)
+    _refresh_gauge(db)
     logger.warning(
         "Recorded ingest DLQ entry (task=%s receipt=%s retries=%s).",
         task_name,
@@ -79,6 +97,7 @@ def mark_requeued(
     letter.next_run_at = next_run_at
     db.add(letter)
     db.commit()
+    _refresh_gauge(db)
 
 
 def mark_completed(db: Session, letter: IngestDeadLetter) -> None:
@@ -86,7 +105,40 @@ def mark_completed(db: Session, letter: IngestDeadLetter) -> None:
     letter.next_run_at = None
     db.add(letter)
     db.commit()
+    _refresh_gauge(db)
 
 
-__all__ = ["record_dead_letter", "mark_requeued", "mark_completed"]
+def list_dead_letters(
+    db: Session,
+    *,
+    status: Optional[str] = None,
+    task_name: Optional[str] = None,
+    limit: int = 50,
+) -> Sequence[IngestDeadLetter]:
+    """Return DLQ entries filtered by status/task name."""
+    query = db.query(IngestDeadLetter)
+    if status and status.lower() != "all":
+        query = query.filter(IngestDeadLetter.status == status.lower())
+    if task_name:
+        query = query.filter(IngestDeadLetter.task_name == task_name)
+    limit = max(1, min(int(limit), 500))
+    return query.order_by(IngestDeadLetter.created_at.desc()).limit(limit).all()
 
+
+def get_dead_letter(db: Session, letter_id: str | uuid.UUID) -> Optional[IngestDeadLetter]:
+    """Fetch a dead-letter entry by UUID string."""
+    try:
+        identifier = letter_id if isinstance(letter_id, uuid.UUID) else uuid.UUID(str(letter_id))
+    except (ValueError, TypeError):
+        return None
+    return db.get(IngestDeadLetter, identifier)
+
+
+__all__ = [
+    "get_dead_letter",
+    "list_dead_letters",
+    "mark_completed",
+    "mark_requeued",
+    "record_dead_letter",
+    "refresh_metrics",
+]

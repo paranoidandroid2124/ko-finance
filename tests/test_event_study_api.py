@@ -1,19 +1,29 @@
 import uuid
 from datetime import date, datetime
+from pathlib import Path
 from typing import Iterator, Tuple
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import Column, String, text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Session
 
-from database import get_db
+from database import Base, get_db
 from models.event_study import EventRecord, EventStudyResult, EventSummary
 from models.filing import Filing
 from web.routers.event_study import router as event_study_router
+import web.routers.event_study as event_study_module
 from services.plan_service import PlanContext, PlanQuota
+from services.evidence_package import PackageResult
 from web.deps import get_plan_context
+
+
+class _TestUser(Base):
+    __tablename__ = "users"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email = Column(String(255), nullable=True)
 
 
 @pytest.fixture()
@@ -232,3 +242,56 @@ def test_event_study_event_detail(event_study_client):
     assert len(payload["series"]) == 5
     assert payload["capBucket"] == "LARGE"
     assert payload["marketCap"] == pytest.approx(5_000_000_000_000)
+
+
+def test_event_study_export_endpoint(event_study_client, monkeypatch, tmp_path: Path):
+    client, session = event_study_client
+    seed_event_data(session)
+
+    fake_payload = {
+        "report": {"title": "Event Study Report", "generatedAt": "2025-01-01T00:00:00Z", "requestedBy": "qa"},
+        "filters": {"windowLabel": "[-5,20]"},
+        "metrics": {"sampleSize": 10, "weightedMeanCaar": "+1.20%", "weightedHitRate": "55%", "weightedPValue": "0.0300", "windowEnd": 20},
+        "summary": [],
+        "events": {"rows": []},
+        "series": [],
+        "highlights": {},
+    }
+    monkeypatch.setattr(event_study_module.event_study_report, "build_event_study_report_payload", lambda *args, **kwargs: fake_payload)
+
+    pdf_path = tmp_path / "event_study_report.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 stub")
+    monkeypatch.setattr(event_study_module.report_renderer, "render_event_study_report", lambda data: pdf_path)
+
+    zip_path = tmp_path / "bundle.zip"
+    zip_path.write_bytes(b"PK")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+
+    bundle = PackageResult(
+        pdf_path=pdf_path,
+        pdf_object="s3://reports/event-study.pdf",
+        pdf_url="https://example.com/event-study.pdf",
+        zip_path=zip_path,
+        zip_object="s3://reports/event-study.zip",
+        zip_url="https://example.com/event-study.zip",
+        manifest_path=manifest_path,
+    )
+    monkeypatch.setattr(event_study_module, "make_evidence_bundle", lambda **kwargs: bundle)
+    monkeypatch.setattr(event_study_module, "record_audit_event", lambda **kwargs: None)
+
+    response = client.post(
+        "/api/v1/event-study/export",
+        json={
+            "windowStart": -5,
+            "windowEnd": 20,
+            "eventTypes": ["BUYBACK"],
+            "markets": ["KOSPI"],
+            "requestedBy": "qa",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["taskId"].startswith("event-study::")
+    assert payload["pdfObject"] == "s3://reports/event-study.pdf"
+    assert payload["packageUrl"] == "https://example.com/event-study.zip"

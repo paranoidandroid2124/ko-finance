@@ -147,6 +147,7 @@ Help Center 정보 구조는 다음 5개 허브 아래 개별 문서로 분기�
 - **내용**
   - Digest Lab: Daily/Weekly 옵션, sample 데이터 사용 여부
   - Event Study Lab: 이벤트 타입/시장/시총 필터, 시그니처 계산식
+  - Event Study Export: 보고서 PDF·ZIP 다운로드 흐름, `reports.event_export` + `timeline.full` 엔타이틀먼트(Pro 이상) 필요, RBAC 오류 메시지 대응, presigned URL 만료 정책
   - Evidence Lab: 환경변수 `NEXT_PUBLIC_ENABLE_LABS`, PlanUpgrade 콜백
 - **콘텐츠 제안**
   - `docs/help/labs-overview.md`

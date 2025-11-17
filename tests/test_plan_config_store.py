@@ -15,6 +15,8 @@ def test_plan_config_defaults(monkeypatch: pytest.MonkeyPatch):
     assert "search.compare" in config["entitlements"]
     assert "search.export" in config["entitlements"]
     assert "rag.core" in config["entitlements"]
+    assert "collab.notebook" in config["entitlements"]
+    assert "reports.event_export" in config["entitlements"]
     assert config["quota"]["chatRequestsPerDay"] == 500
     assert config["quota"]["selfCheckEnabled"] is True
 

@@ -66,8 +66,11 @@ def test_plan_context_uses_environment_defaults(plan_api_client: TestClient):
         "search.export",
         "evidence.inline_pdf",
         "rag.core",
+        "collab.notebook",
+        "reports.event_export",
     }
     assert payload["featureFlags"]["ragCore"] is True
+    assert payload["featureFlags"]["reportsEventExport"] is True
     assert payload["expiresAt"] == "2025-12-31T00:00:00+00:00"
     assert payload["checkoutRequested"] is False
 
@@ -329,7 +332,7 @@ def test_plan_presets_update(plan_api_client: TestClient, plan_config_file: Path
             },
             {
                 "tier": "pro",
-                "entitlements": ["search.compare", "search.alerts", "search.export"],
+                "entitlements": ["search.compare", "search.alerts", "search.export", "collab.notebook"],
                 "quota": {
                     "chatRequestsPerDay": 600,
                     "ragTopK": 8,
@@ -347,13 +350,13 @@ def test_plan_presets_update(plan_api_client: TestClient, plan_config_file: Path
     tiers = {entry["tier"]: entry for entry in body["presets"]}
     assert tiers["free"]["entitlements"] == ["search.alerts"]
     assert tiers["pro"]["quota"]["chatRequestsPerDay"] == 600
-    assert set(tiers["pro"]["entitlements"]) == {"search.compare", "search.alerts", "search.export"}
+    assert set(tiers["pro"]["entitlements"]) == {"search.compare", "search.alerts", "search.export", "collab.notebook"}
 
     reread = plan_api_client.get("/api/v1/plan/presets")
     assert reread.status_code == 200
     reread_body = reread.json()
     pro_entry = next(item for item in reread_body["presets"] if item["tier"] == "pro")
-    assert set(pro_entry["entitlements"]) == {"search.compare", "search.alerts", "search.export"}
+    assert set(pro_entry["entitlements"]) == {"search.compare", "search.alerts", "search.export", "collab.notebook"}
     assert pro_entry["quota"]["ragTopK"] == 8
 
     saved = json.loads(plan_config_file.read_text(encoding="utf-8"))

@@ -18,7 +18,7 @@ from .common import (
     VerificationResendResult,
 )
 from .password import login_user, logout_session, refresh_session, register_user
-from .sso import build_oidc_authorize_url, complete_oidc_login, consume_saml_assertion, generate_saml_metadata
+from .sso import build_oidc_authorize_url, complete_oidc_login, consume_saml_assertion, decode_oidc_state, generate_saml_metadata
 from .tokens import (
     confirm_account_unlock,
     confirm_password_reset,
@@ -44,6 +44,7 @@ __all__ = [
     "VerificationResendResult",
     "build_oidc_authorize_url",
     "complete_oidc_login",
+    "decode_oidc_state",
     "confirm_account_unlock",
     "confirm_password_reset",
     "consume_saml_assertion",

@@ -1,5 +1,6 @@
 "use client";
 
+import entitlementLabelData from "@/data/plan/entitlementLabels.json";
 import type { PlanTier } from "@/store/planStore/types";
 
 export const PLAN_DESCRIPTIONS: Record<PlanTier, string> = {
@@ -16,12 +17,5 @@ export const PLAN_TIER_LABELS: Record<PlanTier, string> = {
   enterprise: "Enterprise",
 };
 
-export const PLAN_ENTITLEMENT_LABELS: Record<string, string> = {
-  "search.compare": "비교 검색",
-  "search.alerts": "알림 검색",
-  "search.export": "데이터 내보내기",
-  "evidence.inline_pdf": "PDF 인라인 뷰어",
-  "evidence.diff": "증거 Diff 비교",
-  "timeline.full": "전체 타임라인",
-};
+export const PLAN_ENTITLEMENT_LABELS: Record<string, string> = entitlementLabelData;
 

@@ -37,6 +37,7 @@ _ROUTER_MODULES = [
     "sectors",
     "scim",
     "user_settings",
+    "workspaces",
 ]
 
 __all__ = list(_ROUTER_MODULES)

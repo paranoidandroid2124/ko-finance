@@ -1,12 +1,15 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Search, Sparkles } from "lucide-react";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { FilterChip } from "@/components/ui/FilterChip";
+import { EventStudyExportButton } from "@/components/event-study/EventStudyExportButton";
 import { useEventStudyEvents, useEventStudySummary, type EventStudyEvent, type EventStudySummaryItem } from "@/hooks/useEventStudy";
+import { usePlanStore } from "@/store/planStore";
+import { buildEventStudyExportParams } from "@/lib/eventStudyExport";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -43,6 +46,7 @@ const WINDOW_OPTIONS = [
 
 const formatPercent = (value: number) => `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
 const formatNullablePercent = (value?: number | null) => (value == null ? "—" : formatPercent(value));
+const formatInteger = (value: number) => new Intl.NumberFormat("ko-KR").format(value);
 
 export default function EventStudyLabPage() {
   const [searchInput, setSearchInput] = useState("");
@@ -51,6 +55,7 @@ export default function EventStudyLabPage() {
   const [capBucket, setCapBucket] = useState<CapBucket>("all");
   const [windowKey, setWindowKey] = useState<typeof WINDOW_OPTIONS[number]["key"]>(WINDOW_OPTIONS[1].key);
   const [significanceThreshold, setSignificanceThreshold] = useState(0.1);
+  const exportEntitlementEnabled = usePlanStore((state) => state.featureFlags.reportsEventExport);
 
   const selectedWindow = WINDOW_OPTIONS.find((option) => option.key === windowKey) ?? WINDOW_OPTIONS[0];
 
@@ -77,6 +82,20 @@ export default function EventStudyLabPage() {
     }),
     [capBucket, eventTypes, markets, searchInput, selectedWindow.end],
   );
+  const buildExportParams = useCallback(() => {
+    const currentWindow = WINDOW_OPTIONS.find((option) => option.key === windowKey) ?? WINDOW_OPTIONS[0];
+    return buildEventStudyExportParams({
+      windowStart: currentWindow.start,
+      windowEnd: currentWindow.end,
+      scope: "market",
+      significance: significanceThreshold,
+      eventTypes,
+      markets,
+      capBuckets: capBucket === "all" ? undefined : [capBucket],
+      search: searchInput,
+      limit: eventsParams.limit ?? 100,
+    });
+  }, [capBucket, eventTypes, eventsParams.limit, markets, searchInput, significanceThreshold, windowKey]);
 
   const { data: summaryData, isLoading: isSummaryLoading } = useEventStudySummary(summaryParams);
   const {
@@ -108,6 +127,21 @@ export default function EventStudyLabPage() {
     return aggregated / sampleWeight;
   })();
   const visibleEvents = useMemo<EventStudyEvent[]>(() => eventsData?.events ?? [], [eventsData]);
+  const selectedEventTypeLabels = EVENT_TYPE_OPTIONS.filter((option) => eventTypes.includes(option.value)).map((option) => option.label);
+  const selectedMarketLabels = MARKET_OPTIONS.filter((option) => markets.includes(option.value)).map((option) => option.label);
+  const selectedCapMeta = CAP_OPTIONS.find((option) => option.value === capBucket);
+  const definitionBadges = [
+    { label: "윈도우", value: selectedWindow.label },
+    { label: "유의수준", value: `p ≤ ${significanceThreshold.toFixed(2)}` },
+    {
+      label: "시가총액",
+      value: selectedCapMeta ? `${selectedCapMeta.label}${selectedCapMeta.hint ? ` · ${selectedCapMeta.hint}` : ""}` : "전체",
+    },
+    {
+      label: "시장",
+      value: selectedMarketLabels.length ? selectedMarketLabels.join(", ") : "선택 안 함",
+    },
+  ];
 
   const [focusedEventType, setFocusedEventType] = useState<string | null>(null);
   useEffect(() => {
@@ -160,12 +194,26 @@ export default function EventStudyLabPage() {
               AAR(평균 초과수익)/CAAR(누적 초과수익)·히트율을 바로 확인할 수 있어요.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-dashed border-border-light/80 bg-white/60 px-4 py-3 text-sm text-text-secondaryLight shadow-sm dark:border-border-dark/70 dark:bg-white/5 dark:text-text-secondaryDark">
-            <Sparkles className="h-4 w-4 text-primary dark:text-primary.dark" />
-            <span>
-              전 종목 기준 이벤트 스터디 API(`/api/v1/event-study/*`)를 직접 호출해 렌더합니다. 필터를 조정하면 서버 표본이 즉시
-              다시 계산됩니다.
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-border-light/80 bg-white/60 px-4 py-3 text-sm text-text-secondaryLight shadow-sm dark:border-border-dark/70 dark:bg-white/5 dark:text-text-secondaryDark">
+            <div className="flex items-start gap-3">
+              <Sparkles className="mt-0.5 h-4 w-4 text-primary dark:text-primary.dark" />
+              <span>
+                전 종목 기준 이벤트 스터디 API(`/api/v1/event-study/*`)를 직접 호출해 렌더합니다. 필터를 조정하면 서버 표본이 즉시 다시
+                계산됩니다.
+              </span>
+            </div>
+            {exportEntitlementEnabled ? (
+              <EventStudyExportButton
+                buildParams={buildExportParams}
+                variant="secondary"
+                size="sm"
+                className="rounded-full"
+              >
+                필터 기준 PDF
+              </EventStudyExportButton>
+            ) : (
+              <span className="text-xs text-text-tertiaryLight dark:text-text-tertiaryDark">Pro 플랜에서 PDF Export를 사용할 수 있어요.</span>
+            )}
           </div>
         </header>
 
@@ -270,6 +318,56 @@ export default function EventStudyLabPage() {
           </div>
         </section>
 
+        <section className="rounded-3xl border border-border-light bg-gradient-to-br from-white via-white to-background-light/80 p-6 shadow-sm dark:border-border-dark dark:bg-background-cardDark">
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-text-secondaryLight dark:text-text-secondaryDark">
+                  Event Definition
+                </p>
+                <h2 className="mt-1 text-xl font-semibold text-text-primaryLight dark:text-text-primaryDark">선택한 필터 요약</h2>
+                <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
+                  {selectedEventTypeLabels.length
+                    ? `${selectedEventTypeLabels.join(", ")} 등 ${eventTypes.length}개의 이벤트 유형을 기반으로 분석합니다.`
+                    : "이벤트 유형을 선택하면 조건에 맞는 공시 이벤트가 집계됩니다."}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-border-light/60 bg-white/70 px-4 py-2 text-sm font-semibold text-text-secondaryLight dark:border-border-dark/60 dark:bg-background-dark/70 dark:text-text-secondaryDark">
+                표본 <span className="text-text-primaryLight dark:text-text-primaryDark">{formatInteger(totalSample)}</span>건
+              </div>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-[2fr,3fr]">
+              <div className="space-y-3">
+                <p className="text-xs font-semibold uppercase text-text-secondaryLight dark:text-text-secondaryDark">주요 조건</p>
+                <div className="flex flex-wrap gap-2">
+                  {definitionBadges.map((item) => (
+                    <DefinitionBadge key={item.label} label={item.label} value={item.value} />
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-3">
+                <p className="text-xs font-semibold uppercase text-text-secondaryLight dark:text-text-secondaryDark">선택 이벤트 유형</p>
+                {selectedEventTypeLabels.length ? (
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {selectedEventTypeLabels.map((label) => (
+                      <div
+                        key={label}
+                        className="rounded-2xl border border-border-light/70 bg-white/70 px-4 py-2 text-sm font-medium text-text-primaryLight shadow-sm dark:border-border-dark/70 dark:bg-background-dark/70 dark:text-text-primaryDark"
+                      >
+                        {label}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-border-light/70 px-4 py-6 text-sm text-text-secondaryLight dark:border-border-dark/60 dark:text-text-secondaryDark">
+                    이벤트 유형을 최소 1개 이상 선택하면 조건에 맞는 통계가 노출됩니다.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <SummaryCard title="표본" description="필터를 조정하면 표본이 즉시 업데이트됩니다.">
             {isSummaryLoading ? <Loader2 className="h-6 w-6 animate-spin text-primary" /> : <span>{totalSample}</span>}
@@ -292,6 +390,27 @@ export default function EventStudyLabPage() {
               <span>{weightedPValue.toFixed(2)}</span>
             )}
           </SummaryCard>
+        </section>
+
+        <section className="rounded-3xl border border-border-light bg-white/90 p-5 shadow-sm dark:border-border-dark dark:bg-background-cardDark">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">이벤트 유형별 반응</p>
+              <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                {selectedWindow.label} 구간 기준 CAAR·Hit Rate·p-value를 한 번에 비교합니다.
+              </p>
+            </div>
+            <div className="rounded-full border border-border-light/70 px-3 py-1 text-xs font-semibold text-text-secondaryLight dark:border-border-dark/70 dark:text-text-secondaryDark">
+              p ≤ {significanceThreshold.toFixed(2)}
+            </div>
+          </div>
+          <div className="mt-4">
+            {isSummaryLoading ? (
+              <ChartLoading />
+            ) : (
+              <EventTypeSummaryTable rows={summaryResults} windowLabel={selectedWindow.label} significance={significanceThreshold} />
+            )}
+          </div>
         </section>
 
         <section className="grid gap-4 lg:grid-cols-2">
@@ -462,6 +581,20 @@ function getEventTypeLabel(code: string) {
   return EVENT_TYPE_OPTIONS.find((option) => option.value === code)?.label ?? code;
 }
 
+type DefinitionBadgeProps = {
+  label: string;
+  value: string;
+};
+
+function DefinitionBadge({ label, value }: DefinitionBadgeProps) {
+  return (
+    <div className="flex items-center gap-2 rounded-full border border-border-light/70 bg-white/70 px-3 py-1.5 text-[11px] font-semibold text-text-secondaryLight shadow-sm dark:border-border-dark/70 dark:bg-background-dark/60 dark:text-text-secondaryDark">
+      <span className="text-text-primaryLight dark:text-text-primaryDark">{label}</span>
+      <span className="font-normal text-text-secondaryLight dark:text-text-secondaryDark">{value}</span>
+    </div>
+  );
+}
+
 function createCaarOption(summary: EventStudySummaryItem[], window: typeof WINDOW_OPTIONS[number]) {
   if (!summary.length) {
     return null;
@@ -537,4 +670,76 @@ function createHistogramOption(summary?: EventStudySummaryItem) {
       },
     ],
   };
+}
+
+type EventTypeSummaryTableProps = {
+  rows: EventStudySummaryItem[];
+  windowLabel: string;
+  significance: number;
+};
+
+function EventTypeSummaryTable({ rows, windowLabel, significance }: EventTypeSummaryTableProps) {
+  if (!rows.length) {
+    return (
+      <div className="rounded-2xl border border-dashed border-border-light/70 px-4 py-6 text-center text-sm text-text-secondaryLight dark:border-border-dark/70 dark:text-text-secondaryDark">
+        조건에 맞는 이벤트 유형 통계가 없습니다. 필터를 조정해 보세요.
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-border-light text-sm dark:divide-border-dark">
+        <thead className="bg-background-light/60 text-xs font-semibold uppercase tracking-wide text-text-secondaryLight dark:bg-background-dark/40 dark:text-text-secondaryDark">
+          <tr>
+            <th className="px-4 py-3 text-left">이벤트 유형</th>
+            <th className="px-4 py-3 text-right">표본</th>
+            <th className="px-4 py-3 text-right">{windowLabel} CAAR</th>
+            <th className="px-4 py-3 text-right">Hit Rate</th>
+            <th className="px-4 py-3 text-right">신뢰구간</th>
+            <th className="px-4 py-3 text-right">p-value</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border-light dark:divide-border-dark">
+          {rows.map((row) => (
+            <tr key={`${row.eventType}-${row.capBucket ?? "all"}`} className="hover:bg-primary/5 dark:hover:bg-primary.dark/10">
+              <td className="px-4 py-3 font-medium text-text-primaryLight dark:text-text-primaryDark">{getEventTypeLabel(row.eventType)}</td>
+              <td className="px-4 py-3 text-right font-semibold text-text-primaryLight dark:text-text-primaryDark">{formatInteger(row.n)}</td>
+              <td className="px-4 py-3 text-right">{formatPercent(row.meanCaar)}</td>
+              <td className="px-4 py-3 text-right">{formatPercent(row.hitRate)}</td>
+              <td className="px-4 py-3 text-right text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                {formatPercent(row.ciLo)} ~ {formatPercent(row.ciHi)}
+              </td>
+              <td className="px-4 py-3 text-right">
+                <SignificanceBadge value={row.pValue} threshold={significance} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+type SignificanceBadgeProps = {
+  value?: number;
+  threshold: number;
+};
+
+function SignificanceBadge({ value, threshold }: SignificanceBadgeProps) {
+  if (value == null) {
+    return <span className="text-text-secondaryLight dark:text-text-secondaryDark">—</span>;
+  }
+  const isSignificant = value <= threshold;
+  return (
+    <span
+      className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+        isSignificant
+          ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-200"
+          : "bg-slate-200/60 text-slate-600 dark:bg-slate-700/60 dark:text-slate-200"
+      }`}
+    >
+      {value.toFixed(2)}
+      {isSignificant ? " · 유의" : ""}
+    </span>
+  );
 }

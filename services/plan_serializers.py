@@ -29,6 +29,7 @@ def _feature_flags_from_plan(plan: PlanContext) -> PlanFeatureFlagsSchema:
         evidenceInlinePdf=flags.get("evidence.inline_pdf", False),
         evidenceDiff=flags.get("evidence.diff", False),
         timelineFull=flags.get("timeline.full", False),
+        reportsEventExport=flags.get("reports.event_export", False),
     )
 
 
@@ -86,6 +87,7 @@ def serialize_plan_presets(presets: Sequence[Mapping[str, Any]]) -> PlanPresetRe
                     evidenceInlinePdf=bool(feature_flags.get("evidence.inline_pdf")),
                     evidenceDiff=bool(feature_flags.get("evidence.diff")),
                     timelineFull=bool(feature_flags.get("timeline.full")),
+                    reportsEventExport=bool(feature_flags.get("reports.event_export")),
                 ),
                 quota=PlanQuotaSchema(**cast(dict[str, Any], preset.get("quota") or {})),
             )

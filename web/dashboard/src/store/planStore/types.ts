@@ -10,6 +10,7 @@ export type PlanFeatureFlags = {
   evidenceInlinePdf: boolean;
   evidenceDiff: boolean;
   timelineFull: boolean;
+  reportsEventExport: boolean;
 };
 
 export type PlanMemoryFlags = {

@@ -44,7 +44,15 @@ _DEFAULT_PLAN_CONFIG: Dict[str, Any] = {
             },
         },
         "pro": {
-            "entitlements": ["search.compare", "search.alerts", "search.export", "evidence.inline_pdf", "rag.core"],
+            "entitlements": [
+                "search.compare",
+                "search.alerts",
+                "search.export",
+                "evidence.inline_pdf",
+                "rag.core",
+                "collab.notebook",
+                "reports.event_export",
+            ],
             "quota": {
                 "chatRequestsPerDay": 500,
                 "ragTopK": 6,
@@ -61,6 +69,8 @@ _DEFAULT_PLAN_CONFIG: Dict[str, Any] = {
                 "evidence.diff",
                 "rag.core",
                 "timeline.full",
+                "collab.notebook",
+                "reports.event_export",
             ],
             "quota": {
                 "chatRequestsPerDay": None,

@@ -8,6 +8,7 @@ from .common import (
     build_oidc_authorize_url,
     complete_oidc_login,
     consume_saml_assertion,
+    decode_oidc_state,
     generate_saml_metadata,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "build_oidc_authorize_url",
     "complete_oidc_login",
     "consume_saml_assertion",
+    "decode_oidc_state",
     "generate_saml_metadata",
 ]

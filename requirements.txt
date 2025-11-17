@@ -48,8 +48,11 @@ certifi==2025.11.12
     #   httpx
     #   minio
     #   requests
+    #   signxml
 cffi==2.0.0
-    # via argon2-cffi-bindings
+    # via
+    #   argon2-cffi-bindings
+    #   cryptography
 charset-normalizer==3.4.4
     # via requests
 click==8.3.0
@@ -71,6 +74,8 @@ colorama==0.4.6
     # via
     #   click
     #   tqdm
+cryptography==46.0.3
+    # via signxml
 distro==1.9.0
     # via openai
 dnspython==2.8.0
@@ -209,7 +214,9 @@ langsmith==0.4.42
 litellm==1.79.3
     # via -r requirements.in
 lxml==6.0.2
-    # via -r requirements.in
+    # via
+    #   -r requirements.in
+    #   signxml
 markupsafe==3.0.3
     # via jinja2
 minio==7.2.18
@@ -363,6 +370,8 @@ sgmllib3k==1.0.0
     # via feedparser
 shellingham==1.5.4
     # via huggingface-hub
+signxml==4.2.0
+    # via -r requirements.in
 six==1.17.0
     # via python-dateutil
 sniffio==1.3.1

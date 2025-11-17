@@ -45,6 +45,7 @@ export default function LoginPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [sendingVerify, setSendingVerify] = useState(false);
   const [sendingUnlock, setSendingUnlock] = useState(false);
+  const [ssoProvider, setSsoProvider] = useState("");
   const [lastEmail, setLastEmail] = useState("");
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -76,6 +77,28 @@ export default function LoginPage() {
     setError(null);
     const resolvedRedirect = resolveRedirectTarget(result?.url ?? callbackUrl);
     router.push(resolvedRedirect);
+  };
+
+  const startOidcSso = () => {
+    const slug = ssoProvider.trim();
+    if (!slug) {
+      setActionError("SSO provider slug를 입력한 뒤 시도해주세요.");
+      return;
+    }
+    const target = `/api/v1/auth/oidc/${encodeURIComponent(slug)}/authorize?callbackUrl=${encodeURIComponent(
+      callbackUrl,
+    )}`;
+    window.location.href = target;
+  };
+
+  const openSamlMetadata = () => {
+    const slug = ssoProvider.trim();
+    if (!slug) {
+      setActionError("SSO provider slug를 입력한 뒤 메타데이터를 확인해주세요.");
+      return;
+    }
+    const metadataUrl = `/api/v1/auth/saml/${encodeURIComponent(slug)}/metadata`;
+    window.open(metadataUrl, "_blank", "noopener,noreferrer");
   };
 
   const ensureEmail = (): string | null => {
@@ -219,6 +242,44 @@ export default function LoginPage() {
       <div className="space-y-3">
         <p className="text-center text-sm text-slate-400">또는 소셜 계정으로 계속하기</p>
         <OAuthButtonGroup callbackUrl={callbackUrl} disabled={submitting} />
+      </div>
+      <div className="space-y-3 rounded-xl border border-slate-800/60 bg-slate-900/40 p-4">
+        <p className="text-sm font-semibold text-slate-100">SSO (SAML/OIDC)로 로그인</p>
+        <p className="text-sm text-slate-400">
+          조직에서 발급한 provider slug를 입력하면 전용 OIDC/SAML 엔드포인트로 이동할 수 있습니다.
+        </p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <input
+            type="text"
+            value={ssoProvider}
+            onChange={(event) => setSsoProvider(event.target.value)}
+            placeholder="예: acme-saml"
+            disabled={submitting}
+            className="flex-1 rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+          />
+          <div className="flex flex-1 gap-2">
+            <button
+              type="button"
+              onClick={startOidcSso}
+              disabled={submitting}
+              className="flex-1 rounded-lg border border-blue-400/60 px-3 py-2 text-sm font-semibold text-blue-100 transition hover:border-blue-200 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              OIDC 시작
+            </button>
+            <button
+              type="button"
+              onClick={openSamlMetadata}
+              disabled={submitting}
+              className="flex-1 rounded-lg border border-slate-600/60 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              SAML 메타데이터
+            </button>
+          </div>
+        </div>
+        <p className="text-xs text-slate-500">
+          IdP가 SAML만 지원하는 경우 위 메타데이터 URL과 ACS 경로(`/api/v1/auth/saml/[slug]/acs`)를 등록한 뒤 IdP
+          Initiated 로그인을 사용하세요.
+        </p>
       </div>
       <div className="flex flex-col gap-2 text-center text-sm text-slate-400">
         <Link href="/auth/forgot-password" className="text-blue-300 hover:text-blue-200">

@@ -22,6 +22,7 @@ qdrant-client
 pypdf
 PyMuPDF
 xmltodict
+signxml
 filelock
 beautifulsoup4
 minio

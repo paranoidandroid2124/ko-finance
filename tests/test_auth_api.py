@@ -1,11 +1,18 @@
+import base64
 import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple
 
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from lxml import etree
+from signxml import XMLSigner, methods
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -66,6 +73,112 @@ def auth_api_client(db_session: Session) -> Tuple[TestClient, Session]:
         yield client, db_session
     finally:
         client.close()
+
+
+@pytest.fixture(scope="module")
+def saml_signing_material() -> Tuple[str, str]:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test IdP")])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=1))
+        .sign(private_key=key, algorithm=hashes.SHA256())
+    )
+    cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode("utf-8")
+    key_pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("utf-8")
+    return cert_pem, key_pem
+
+
+def _build_signed_saml_response(
+    *,
+    cert_pem: str,
+    key_pem: str,
+    audience: str,
+    destination: str,
+    issuer: str,
+    email: str = "user@example.com",
+) -> str:
+    now = datetime.now(timezone.utc)
+    issue_instant = now.isoformat().replace("+00:00", "Z")
+    not_before = (now - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+    not_on_or_after = (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    response_id = f"_{uuid.uuid4().hex}"
+    assertion_id = f"_{uuid.uuid4().hex}"
+    xml = f"""
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+                ID="{response_id}"
+                Version="2.0"
+                IssueInstant="{issue_instant}"
+                Destination="{destination}">
+  <saml:Issuer>{issuer}</saml:Issuer>
+  <saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+                  ID="{assertion_id}"
+                  Version="2.0"
+                  IssueInstant="{issue_instant}">
+    <saml:Issuer>{issuer}</saml:Issuer>
+    <saml:Subject>
+      <saml:NameID>{email}</saml:NameID>
+    </saml:Subject>
+    <saml:Conditions NotBefore="{not_before}" NotOnOrAfter="{not_on_or_after}">
+      <saml:AudienceRestriction>
+        <saml:Audience>{audience}</saml:Audience>
+      </saml:AudienceRestriction>
+    </saml:Conditions>
+    <saml:AttributeStatement>
+      <saml:Attribute Name="email">
+        <saml:AttributeValue>{email}</saml:AttributeValue>
+      </saml:Attribute>
+      <saml:Attribute Name="role">
+        <saml:AttributeValue>viewer</saml:AttributeValue>
+      </saml:Attribute>
+      <saml:Attribute Name="orgSlug">
+        <saml:AttributeValue>default-org</saml:AttributeValue>
+      </saml:Attribute>
+    </saml:AttributeStatement>
+  </saml:Assertion>
+</samlp:Response>
+""".strip()
+    root = etree.fromstring(xml.encode("utf-8"))
+    signer = XMLSigner(
+        method=methods.enveloped,
+        signature_algorithm="rsa-sha256",
+        digest_algorithm="sha256",
+    )
+    signed_root = signer.sign(root, key=key_pem, cert=cert_pem)
+    return base64.b64encode(etree.tostring(signed_root)).decode("ascii")
+
+
+def _saml_config_with_cert(cert_pem: str) -> auth_common.SamlProviderConfig:
+    return auth_common.SamlProviderConfig(
+        enabled=True,
+        sp_entity_id="sp:test",
+        acs_url="https://app.local/api/v1/auth/saml/acs",
+        metadata_url=None,
+        sp_certificate=None,
+        idp_entity_id="https://idp.local/metadata",
+        idp_sso_url="https://idp.local/sso",
+        idp_certificate=cert_pem,
+        email_attribute="email",
+        name_attribute="displayName",
+        org_attribute="orgSlug",
+        role_attribute="role",
+        default_org_slug="default-org",
+        default_role="viewer",
+        role_mapping={},
+        auto_provision_orgs=False,
+        default_plan_tier="enterprise",
+    )
 
 
 def _register(client: TestClient, email: str) -> None:
@@ -323,3 +436,47 @@ def test_sso_failure_scenarios(
     assert response.status_code == 400
     body = response.json()
     assert body["detail"]["code"] == expected_code
+
+
+def test_validate_saml_signature_accepts_valid_payload(saml_signing_material: Tuple[str, str]) -> None:
+    cert_pem, key_pem = saml_signing_material
+    config = _saml_config_with_cert(cert_pem)
+    payload = base64.b64decode(
+        _build_signed_saml_response(
+            cert_pem=cert_pem,
+            key_pem=key_pem,
+            audience=config.sp_entity_id or "",
+            destination=config.acs_url or "",
+            issuer=config.idp_entity_id or "https://idp.local/metadata",
+        ).encode("utf-8")
+    )
+    auth_common._validate_saml_signature(payload, config)
+
+
+def test_validate_saml_signature_rejects_tampered_payload(saml_signing_material: Tuple[str, str]) -> None:
+    cert_pem, key_pem = saml_signing_material
+    config = _saml_config_with_cert(cert_pem)
+    payload = base64.b64decode(
+        _build_signed_saml_response(
+            cert_pem=cert_pem,
+            key_pem=key_pem,
+            audience=config.sp_entity_id or "",
+            destination=config.acs_url or "",
+            issuer=config.idp_entity_id or "https://idp.local/metadata",
+        ).encode("utf-8")
+    )
+    tampered = payload.replace(b"user@example.com", b"attacker@example.com")
+    with pytest.raises(auth_common.AuthServiceError) as excinfo:
+        auth_common._validate_saml_signature(tampered, config)
+    assert excinfo.value.code == "auth.saml_invalid_signature"
+
+
+def test_enforce_saml_temporal_conditions_blocks_invalid_windows() -> None:
+    future = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+    past = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+    with pytest.raises(auth_common.AuthServiceError) as excinfo:
+        auth_common._enforce_saml_temporal_conditions({"@NotBefore": future})
+    assert excinfo.value.code == "auth.saml_not_yet_valid"
+    with pytest.raises(auth_common.AuthServiceError) as excinfo:
+        auth_common._enforce_saml_temporal_conditions({"@NotOnOrAfter": past})
+    assert excinfo.value.code == "auth.saml_expired"

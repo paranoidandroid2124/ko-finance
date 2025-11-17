@@ -5,7 +5,7 @@ const BASE_URL = process.env.PLAYWRIGHT_TEST_BASE_URL ?? "http://localhost:3000"
 const PLAN_CONTEXT_RESPONSE = {
   planTier: "pro",
   expiresAt: "2026-12-31T00:00:00+00:00",
-  entitlements: ["search.compare", "search.alerts", "search.export", "evidence.inline_pdf", "rag.core"],
+  entitlements: ["search.compare", "search.alerts", "search.export", "evidence.inline_pdf", "rag.core", "reports.event_export"],
   featureFlags: {
     searchCompare: true,
     searchAlerts: true,
@@ -14,6 +14,7 @@ const PLAN_CONTEXT_RESPONSE = {
     evidenceInlinePdf: true,
     evidenceDiff: false,
     timelineFull: false,
+    reportsEventExport: true,
   },
   quota: {
     chatRequestsPerDay: 500,

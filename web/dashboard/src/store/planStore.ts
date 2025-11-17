@@ -60,6 +60,7 @@ const DEFAULT_FEATURE_FLAGS: PlanFeatureFlags = {
   evidenceInlinePdf: false,
   evidenceDiff: false,
   timelineFull: false,
+  reportsEventExport: false,
 };
 
 const DEFAULT_MEMORY_FLAGS: PlanMemoryFlags = {

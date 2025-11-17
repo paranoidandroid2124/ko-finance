@@ -51,6 +51,9 @@ def _month_range(ts: datetime) -> tuple[datetime, datetime]:
 
 
 def _ensure_partition(session: Session, ts: datetime) -> None:
+    bind = session.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        return
     month_key = ts.strftime("%Y_%m")
     with _PARTITION_LOCK:
         if month_key in _KNOWN_PARTITIONS:

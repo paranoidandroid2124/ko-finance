@@ -20,3 +20,4 @@ from .ingest_dead_letter import IngestDeadLetter  # noqa: F401
 from .org import Org, OrgRole, UserOrg  # noqa: F401
 from .table_extraction import TableMeta, TableCell  # noqa: F401
 from .notebook import Notebook, NotebookEntry, NotebookShare  # noqa: F401
+from .sso_provider import SsoProvider, SsoProviderCredential, ScimToken  # noqa: F401

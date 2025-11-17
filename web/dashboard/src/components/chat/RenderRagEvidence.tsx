@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { NotebookQuickCaptureButton } from "@/components/notebook/NotebookQuickCaptureButton";
 import type {
   GuardrailLevel,
   GuardrailTelemetry,
@@ -270,6 +271,19 @@ export function RagEvidencePanel({
         <ul className="space-y-2">
           {items.map((item) => {
             const isActive = item.id === activeId;
+            const notebookSource = {
+              type: item.sourceType ?? "rag",
+              label: item.title,
+              url: item.sourceUrl,
+              page: item.page,
+              metadata: {
+                evidenceId: item.id,
+                chunkType: item.chunkType,
+                ticker: item.ticker,
+                sector: item.sector
+              }
+            };
+            const defaultTags = item.ticker ? [item.ticker] : undefined;
             return (
               <li
                 key={item.id}
@@ -298,6 +312,12 @@ export function RagEvidencePanel({
                         {Math.round(item.score * 100)}점
                       </span>
                     )}
+                    <NotebookQuickCaptureButton
+                      highlight={item.snippet || item.title}
+                      source={notebookSource}
+                      tags={defaultTags}
+                      className="text-primary underline-offset-2 hover:underline"
+                    />
                     {item.sourceUrl ? (
                       <button
                         type="button"
