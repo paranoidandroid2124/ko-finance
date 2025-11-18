@@ -38,7 +38,7 @@ class Org(Base):
     status = Column(String(32), nullable=False, default="active")
     default_role = Column(String(32), ForeignKey("org_roles.key", onupdate="CASCADE"), nullable=False, default="viewer")
     metadata_json = Column("metadata", JSONB, nullable=False, default=dict)
-    metadata = JSONMetadataProxy("metadata_json")
+    metadata = JSONMetadataProxy("metadata_json")  # type: ignore[assignment]
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -57,7 +57,7 @@ class UserOrg(Base):
     invited_at = Column(DateTime(timezone=True), nullable=True)
     accepted_at = Column(DateTime(timezone=True), nullable=True)
     metadata_json = Column("metadata", JSONB, nullable=False, default=dict)
-    metadata = JSONMetadataProxy("metadata_json")
+    metadata = JSONMetadataProxy("metadata_json")  # type: ignore[assignment]
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 

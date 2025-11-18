@@ -69,11 +69,14 @@ const DEFAULT_MEMORY_FLAGS: PlanMemoryFlags = {
   chat: false,
 };
 
+// Frontend defaults intentionally avoid real per-tier values. Actual numbers
+// come from the backend (plan context/presets) so we don't drift from
+// services/plan_config_store.py whenever plans change.
 const DEFAULT_QUOTA: PlanQuota = {
-  chatRequestsPerDay: 20,
-  ragTopK: 4,
+  chatRequestsPerDay: null,
+  ragTopK: null,
   selfCheckEnabled: false,
-  peerExportRowLimit: 0,
+  peerExportRowLimit: null,
 };
 
 const DEFAULT_PLAN_PAYLOAD: PlanContextPayload = {

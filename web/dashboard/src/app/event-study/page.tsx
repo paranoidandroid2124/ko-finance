@@ -7,6 +7,8 @@ import { Loader2 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { FilterChip } from "@/components/ui/FilterChip";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
+import { PlanLock } from "@/components/ui/PlanLock";
 import {
   useEventStudyBoard,
   useEventStudyEventDetail,
@@ -14,12 +16,9 @@ import {
   type EventStudyEvent,
   type EventStudyEventDetailResponse,
 } from "@/hooks/useEventStudy";
-import {
-  EvidencePanel,
-  type EvidenceItem,
-  type EvidencePanelStatus,
-} from "@/components/evidence/EvidencePanel";
-import { usePlanTier } from "@/store/planStore";
+import { EvidencePanel } from "@/components/evidence/EvidencePanel";
+import type { EvidencePanelItem, EvidencePanelStatus } from "@/components/evidence/types";
+import { usePlanContext, isTierAtLeast } from "@/store/planStore";
 import type { PlanTier } from "@/store/planStore/types";
 import { EventStudyBoardHeader, RestatementRadarFooter } from "@/components/legal";
 
@@ -50,14 +49,13 @@ const RANGE_OPTIONS = [
 const formatDate = (input: Date) => input.toISOString().slice(0, 10);
 const formatPercent = (value?: number | null, digits = 2) =>
   value == null ? "—" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(digits)}%`;
-export default function EventStudyBoardPage() {
+function EventStudyBoardContent({ planTier }: { planTier: PlanTier }) {
   const [rangePreset, setRangePreset] = useState(30);
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [capBucket, setCapBucket] = useState("ALL");
   const [sectorInput, setSectorInput] = useState("");
   const [minSalience, setMinSalience] = useState(0);
   const [selectedReceipt, setSelectedReceipt] = useState<string | null>(null);
-  const planTier = usePlanTier();
 
   const endDate = useMemo(() => new Date(), []);
   const startDate = useMemo(() => {
@@ -97,8 +95,14 @@ export default function EventStudyBoardPage() {
   };
 
   return (
-    <AppShell title="Event Study 보드" description="기간별 이벤트 성과와 근거를 한눈에 살펴보세요.">
+    <AppShell>
       <div className="flex flex-col gap-6">
+        <section className="space-y-2">
+          <h1 className="text-2xl font-semibold text-text-primaryLight dark:text-text-primaryDark">Event Study 보드</h1>
+          <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
+            기간별 이벤트 성과와 근거를 한눈에 살펴보세요.
+          </p>
+        </section>
         <FilterPanel
           rangePreset={rangePreset}
           onRangeChange={setRangePreset}
@@ -118,9 +122,9 @@ export default function EventStudyBoardPage() {
             데이터를 불러오는 중입니다...
           </div>
         ) : isError ? (
-          <EmptyState title="보드를 불러오지 못했습니다." body="잠시 후 다시 시도해주세요." />
+          <EmptyState title="보드를 불러오지 못했습니다." description="잠시 후 다시 시도해주세요." />
         ) : !data || data.events.total === 0 ? (
-          <EmptyState title="표시할 이벤트가 없습니다." body="필터를 변경해 다시 검색해 보세요." />
+          <EmptyState title="표시할 이벤트가 없습니다." description="필터를 변경해 다시 검색해 보세요." />
         ) : (
           <>
             <SummarySection board={data} />
@@ -173,12 +177,9 @@ function FilterPanel({
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-sm font-semibold text-muted-foreground">기간</span>
         {RANGE_OPTIONS.map((option) => (
-          <FilterChip
-            key={option.value}
-            label={option.label}
-            selected={rangePreset === option.value}
-            onClick={() => onRangeChange(option.value)}
-          />
+          <FilterChip key={option.value} active={rangePreset === option.value} onClick={() => onRangeChange(option.value)}>
+            {option.label}
+          </FilterChip>
         ))}
       </div>
       <div className="mt-4">
@@ -187,10 +188,11 @@ function FilterPanel({
           {EVENT_TYPE_OPTIONS.map((option) => (
             <FilterChip
               key={option.value}
-              label={option.label}
-              selected={selectedTypes.includes(option.value)}
+              active={selectedTypes.includes(option.value)}
               onClick={() => onToggleEventType(option.value)}
-            />
+            >
+              {option.label}
+            </FilterChip>
           ))}
         </div>
       </div>
@@ -435,13 +437,13 @@ function DetailPanel({ detail, planTier }: { detail: EventStudyEventDetailRespon
       ],
     };
   }, [detail.series]);
-  const evidenceItems = useMemo<EvidenceItem[]>(() => {
+  const evidenceItems = useMemo<EvidencePanelItem[]>(() => {
     if (!detail.evidence.length) {
       return [];
     }
     return detail.evidence.map((entry, index) => ({
       urnId: entry.urnId ?? `${detail.receiptNo}-evidence-${index}`,
-      quote: entry.quote ?? undefined,
+      quote: entry.quote ?? "연결된 문장이 없습니다.",
       section: entry.section ?? undefined,
       pageNumber: entry.pageNumber ?? undefined,
       viewerUrl: entry.viewerUrl ?? entry.documentUrl ?? detail.viewerUrl ?? undefined,
@@ -505,4 +507,35 @@ function DetailPanel({ detail, planTier }: { detail: EventStudyEventDetailRespon
       />
     </div>
   );
+}
+
+export default function EventStudyBoardPage() {
+  const planContext = usePlanContext();
+  const planReady = planContext.initialized && !planContext.loading;
+
+  if (!planReady) {
+    return (
+      <AppShell>
+        <div className="space-y-4">
+          <SkeletonBlock className="h-48 rounded-3xl" />
+        </div>
+      </AppShell>
+    );
+  }
+
+  const hasAccess = isTierAtLeast(planContext.planTier ?? "free", "pro");
+
+  if (!hasAccess) {
+    return (
+      <AppShell>
+        <PlanLock
+          requiredTier="pro"
+          title="Event Study 보드는 Pro 플랜에서 제공됩니다"
+          description="Event Study 필터와 Evidence 리포트를 사용하려면 플랜을 업그레이드해 주세요."
+        />
+      </AppShell>
+    );
+  }
+
+  return <EventStudyBoardContent planTier={planContext.planTier} />;
 }

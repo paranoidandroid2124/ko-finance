@@ -27,7 +27,7 @@ import type {
   WatchlistDigestSchedulePayload,
 } from "@/lib/alertsApi";
 import { useToastStore } from "@/store/toastStore";
-import { usePlanStore } from "@/store/planStore";
+import { usePlanStore, usePlanContext, isTierAtLeast } from "@/store/planStore";
 
 const TIMEFRAME_OPTIONS: Array<{ value: "daily" | "weekly"; label: string }> = [
   { value: "daily", label: "Daily Digest" },
@@ -47,7 +47,7 @@ type ScheduleDialogState = {
   schedule?: WatchlistDigestSchedule;
 };
 
-export default function DigestPage() {
+function DigestContent() {
   const [timeframe, setTimeframe] = useState<"daily" | "weekly">("daily");
   const [windowMinutes, setWindowMinutes] = useState(1440);
   const [emailTargets, setEmailTargets] = useState("");
@@ -886,4 +886,35 @@ function DigestScheduleDialog({ state, onClose, onSubmit, isSubmitting }: Digest
       </div>
     </div>
   );
+}
+export default function DigestPage() {
+  const planContext = usePlanContext();
+  const planReady = planContext.initialized && !planContext.loading;
+
+  if (!planReady) {
+    return (
+      <AppShell>
+        <div className="space-y-4">
+          <SkeletonBlock className="h-40 rounded-3xl" />
+          <SkeletonBlock className="h-40 rounded-3xl" />
+        </div>
+      </AppShell>
+    );
+  }
+
+  const hasAccess = isTierAtLeast(planContext.planTier ?? "free", "pro");
+
+  if (!hasAccess) {
+    return (
+      <AppShell>
+        <PlanLock
+          requiredTier="pro"
+          title="Digest 기능은 Pro 이상에서 제공됩니다"
+          description="Slack/Email Digest 전송과 스케줄 자동화를 사용하려면 플랜 업그레이드가 필요합니다."
+        />
+      </AppShell>
+    );
+  }
+
+  return <DigestContent />;
 }

@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, cast
 
 from scripts._path import add_root
 
@@ -38,14 +38,18 @@ def sentence_hash(text: str) -> Optional[str]:
 
 def load_manifest(path: Path) -> Dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("매니페스트는 dict 구조여야 합니다.")
     if "documents" not in data or not isinstance(data["documents"], list):
         raise ValueError("매니페스트에 documents 배열이 필요합니다.")
-    return data
+    return cast(Dict[str, Any], data)
 
 
 def get_metadata(chunk: Dict[str, Any]) -> Dict[str, Any]:
-    metadata = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
-    return metadata
+    raw_metadata = chunk.get("metadata")
+    if isinstance(raw_metadata, dict):
+        return cast(Dict[str, Any], raw_metadata)
+    return {}
 
 
 def extract_text(chunk: Dict[str, Any], metadata: Dict[str, Any]) -> str:

@@ -1,11 +1,9 @@
 import type { Metadata } from "next";
 
 import { LegalDocumentPage, type LegalSection } from "@/app/legal/_components/LegalDocumentPage";
+import { LEGAL_COMPANY, buildDpoContactSection } from "@/app/legal/constants";
 
-const UPDATED_AT = "2025-11-18";
-const companyName = process.env.NEXT_PUBLIC_COMPANY_NAME ?? "ko-finance 주식회사";
-const companyContact = process.env.NEXT_PUBLIC_COMPANY_CONTACT ?? "support@ko.finance";
-const dpoName = process.env.NEXT_PUBLIC_DPO_NAME ?? "개인정보 보호책임자";
+const { updatedAt, name: companyName, contact: companyContact } = LEGAL_COMPANY;
 
 export const metadata: Metadata = {
   title: "개인정보 처리방침 | K-Finance",
@@ -136,24 +134,10 @@ const sections: LegalSection[] = [
       },
     ],
   },
-  {
-    id: "dpo",
+  buildDpoContactSection({
     title: "8. 개인정보 보호책임자 및 문의",
-    contents: [
-      {
-        type: "paragraph",
-        text: `개인정보 보호책임자: ${dpoName}`,
-      },
-      {
-        type: "paragraph",
-        text: `연락처: ${companyContact}`,
-      },
-      {
-        type: "note",
-        text: `${companyName}는 문의를 처리하기 위한 최소 범위에서만 개인정보에 접근하며, 처리 결과를 이메일로 안내합니다.`,
-      },
-    ],
-  },
+    note: `${companyName}는 문의를 처리하기 위한 최소 범위에서만 개인정보에 접근하며, 처리 결과를 이메일로 안내합니다.`,
+  }),
 ];
 
 export default function PrivacyPage() {
@@ -161,7 +145,7 @@ export default function PrivacyPage() {
     <LegalDocumentPage
       title="개인정보 처리방침"
       subtitle="K-Finance Copilot이 수집·이용하는 개인정보와 이용자 권리를 투명하게 안내합니다."
-      updatedAtLabel={UPDATED_AT}
+      updatedAtLabel={updatedAt}
       sections={sections}
     />
   );

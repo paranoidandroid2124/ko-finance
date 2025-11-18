@@ -118,3 +118,4 @@ export type EvidenceListItemProps = {
   planTier: PlanTier;
 };
 
+export type EvidencePanelItem = EvidenceItem;

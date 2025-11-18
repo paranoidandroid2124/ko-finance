@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import dataclass
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Mapping
@@ -57,8 +58,7 @@ from models.chat import ChatMessage, ChatSession
 from services.memory.facade import MEMORY_SERVICE
 from services.plan_service import PlanContext
 import services.rag_metrics as rag_metrics
-from web.quota_guard import enforce_quota
-
+from services.quota_guard import evaluate_quota
 
 def _extract_anchor(chunk: Dict[str, Any]) -> Optional[EvidenceAnchor]:
     metadata = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
@@ -233,9 +233,49 @@ def _memory_subject_ids(
 logger = get_logger(__name__)
 
 _GRID_CELL_LIMIT = 25
+_QUOTA_PROBLEM_TYPE = "https://kofinance.ai/docs/errors/plan-quota"
+_CHAT_ACTION_LABEL = "AI 분석"
 
-NO_CONTEXT_ANSWER = "?? ?? ??? ?? ?????. ?? ??? ??? ???."
-INTENT_GENERAL_MESSAGE = "?? ????? ?? ??? ???? ???? ??????. ??? ??? ??? ???."
+
+def _plan_label(plan: PlanContext) -> str:
+    tier_value = getattr(plan.tier, "value", str(plan.tier))
+    normalized = str(tier_value or "").replace("_", " ").strip()
+    return normalized.title() or "Plan"
+
+
+def _enforce_chat_quota(plan: PlanContext, user_id: Optional[uuid.UUID]) -> None:
+    if not user_id:
+        return
+    decision = evaluate_quota("rag.chat", user_id=user_id, org_id=None, context="rag-service")
+    if decision is None or decision.allowed or decision.backend_error:
+        return
+    plan_label = _plan_label(plan)
+    limit = decision.limit or 0
+    if limit == 0:
+        status_code = status.HTTP_403_FORBIDDEN
+        code = "plan.chat_quota_unavailable"
+        message = f"{plan_label} 플랜에서는 {_CHAT_ACTION_LABEL}을(를) 사용할 수 없습니다."
+    else:
+        status_code = status.HTTP_429_TOO_MANY_REQUESTS
+        code = "plan.chat_quota_exceeded"
+        message = f"{plan_label} 플랜 {_CHAT_ACTION_LABEL} 한도를 모두 사용했습니다."
+    detail = {
+        "type": _QUOTA_PROBLEM_TYPE,
+        "title": message,
+        "detail": message,
+        "code": code,
+        "planTier": getattr(plan.tier, "value", str(plan.tier)),
+        "quota": {
+            "action": "rag.chat",
+            "remaining": decision.remaining,
+            "limit": decision.limit,
+            "cost": 1,
+        },
+    }
+    raise HTTPException(status_code=status_code, detail=detail)
+
+NO_CONTEXT_ANSWER = "관련 증거를 찾지 못했습니다. 다른 키워드나 기간으로 다시 질문해 주세요."
+INTENT_GENERAL_MESSAGE = "요청하신 내용은 정책상 바로 제공되지 않습니다. 보다 구체적인 배경이나 합법적 목적을 함께 알려 주세요."
 INTENT_BLOCK_MESSAGE = SAFE_MESSAGE
 INTENT_WARNING_CODE = "intent_filter"
 
@@ -350,8 +390,97 @@ def record_rag_telemetry(
     return RAGTelemetryResponse(accepted=accepted)
 
 
-def _enforce_chat_quota(plan: PlanContext, user_id: Optional[uuid.UUID]) -> None:
-    enforce_quota("rag.chat", plan=plan, user_id=user_id, org_id=None)
+def _enqueue_session_summary_if_allowed(plan_memory_enabled: bool, needs_summary: bool, session_id: uuid.UUID) -> None:
+    if plan_memory_enabled and needs_summary:
+        chat_service.enqueue_session_summary(session_id)
+
+
+def _validate_grid_request(
+    payload: RagGridRequest,
+) -> None:
+    cell_count = len(payload.tickers) * len(payload.questions)
+    if cell_count > _GRID_CELL_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "rag.grid_too_large",
+                "message": f"요청 가능한 셀 수가 {_GRID_CELL_LIMIT}개 제한을 초과했습니다.",
+            },
+        )
+
+
+@dataclass(slots=True)
+class IntentGateResult:
+    decision: str
+    reason: Optional[str]
+    model: Optional[str]
+    response: Optional[RAGQueryResponse]
+
+
+def _evaluate_intent_gate(
+    ctx: "RagSessionStage",
+    intent_result: Mapping[str, Any],
+    db: Session,
+    *,
+    plan_memory_enabled: bool,
+) -> IntentGateResult:
+    decision = (intent_result.get("decision") or "pass").lower()
+    reason = intent_result.get("reason")
+    model_used = intent_result.get("model_used")
+    if decision != "pass":
+        response, needs_summary = build_intent_reply(
+            db,
+            question=ctx.question,
+            trace_id=ctx.trace_id,
+            session=ctx.session,
+            turn_id=ctx.turn_id,
+            user_message=ctx.user_message,
+            assistant_message=ctx.assistant_message,
+            decision=decision,
+            reason=reason,
+            model_used=model_used,
+            conversation_memory=ctx.conversation_memory,
+        )
+        response.meta = {
+            **(response.meta or {}),
+            "memory": dict(ctx.memory_info),
+        }
+        db.commit()
+        _enqueue_session_summary_if_allowed(plan_memory_enabled, needs_summary, ctx.session.id)
+        return IntentGateResult(decision, reason, model_used, response)
+    return IntentGateResult(decision, reason, model_used, None)
+
+
+def _handle_empty_vector_response(
+    ctx: "RagSessionStage",
+    retrieval_stage: "RagRetrievalStage",
+    db: Session,
+    *,
+    plan_memory_enabled: bool,
+) -> Optional[RAGQueryResponse]:
+    if retrieval_stage.rag_mode != "vector" or retrieval_stage.context_chunks:
+        return None
+    response, needs_summary = build_empty_response(
+        db,
+        question=ctx.question,
+        filing_id=retrieval_stage.selected_filing_id,
+        trace_id=ctx.trace_id,
+        session=ctx.session,
+        turn_id=ctx.turn_id or uuid.uuid4(),
+        user_message=ctx.user_message,
+        assistant_message=ctx.assistant_message,
+        conversation_memory=ctx.conversation_memory,
+        related_filings=retrieval_stage.related_filings,
+        judge_result=retrieval_stage.judge_result,
+        rag_mode=retrieval_stage.rag_mode,
+    )
+    response.meta = {
+        **(response.meta or {}),
+        "memory": dict(ctx.memory_info),
+    }
+    db.commit()
+    _enqueue_session_summary_if_allowed(plan_memory_enabled, needs_summary, ctx.session.id)
+    return response
 
 
 def _stringify_ms(value: Optional[int]) -> Optional[str]:
@@ -1428,58 +1557,24 @@ def query_rag(
     user_meta = ctx.user_meta
 
     try:
-        intent_result = llm_service.classify_query_intent(question)
-        intent_decision = (intent_result.get("decision") or "pass").lower()
-        intent_reason = intent_result.get("reason")
-        intent_model = intent_result.get("model_used")
-
-        if intent_decision != "pass":
-            response, needs_summary = build_intent_reply(
-                db,
-                question=question,
-                trace_id=trace_id,
-                session=session,
-                turn_id=turn_id,
-                user_message=user_message,
-                assistant_message=assistant_message,
-                decision=intent_decision,
-                reason=intent_reason,
-                model_used=intent_model,
-                conversation_memory=conversation_memory,
-            )
-            response.meta = {
-                **(response.meta or {}),
-                "memory": dict(memory_info),
-            }
-            db.commit()
-            if needs_summary:
-                chat_service.enqueue_session_summary(session.id)
-            return response
+        intent_gate = _evaluate_intent_gate(
+            ctx,
+            llm_service.classify_query_intent(question),
+            db,
+            plan_memory_enabled=plan_memory_enabled,
+        )
+        if intent_gate.response:
+            return intent_gate.response
 
         retrieval_stage = _run_retrieval_stage(ctx, request, db)
-        if retrieval_stage.rag_mode == "vector" and not retrieval_stage.context_chunks:
-            response, needs_summary = build_empty_response(
-                db,
-                question=ctx.question,
-                filing_id=retrieval_stage.selected_filing_id,
-                trace_id=ctx.trace_id,
-                session=ctx.session,
-                turn_id=ctx.turn_id or uuid.uuid4(),
-                user_message=ctx.user_message,
-                assistant_message=ctx.assistant_message,
-                conversation_memory=ctx.conversation_memory,
-                related_filings=retrieval_stage.related_filings,
-                judge_result=retrieval_stage.judge_result,
-                rag_mode=retrieval_stage.rag_mode,
-            )
-            response.meta = {
-                **(response.meta or {}),
-                "memory": dict(ctx.memory_info),
-            }
-            db.commit()
-            if needs_summary:
-                chat_service.enqueue_session_summary(ctx.session.id)
-            return response
+        empty_response = _handle_empty_vector_response(
+            ctx,
+            retrieval_stage,
+            db,
+            plan_memory_enabled=plan_memory_enabled,
+        )
+        if empty_response:
+            return empty_response
 
         llm_stage = _run_llm_stage(
             ctx,
@@ -1508,16 +1603,16 @@ def query_rag(
             ctx,
             retrieval_stage,
             llm_stage,
-            intent_decision=intent_decision,
-            intent_reason=intent_reason,
-            intent_model=intent_model,
+            intent_decision=intent_gate.decision,
+            intent_reason=intent_gate.reason,
+            intent_model=intent_gate.model,
         )
         _record_rag_audit(
             ctx,
             plan,
             retrieval=retrieval_stage,
             llm_stage=llm_stage,
-            intent_decision=intent_decision,
+            intent_decision=intent_gate.decision,
             response=response,
         )
 
@@ -1532,8 +1627,7 @@ def query_rag(
             rag_jobs.enqueue_self_check(payload)
 
         db.commit()
-        if needs_summary:
-            chat_service.enqueue_session_summary(ctx.session.id)
+        _enqueue_session_summary_if_allowed(plan_memory_enabled, needs_summary, ctx.session.id)
         return response
     except HTTPException:
         db.rollback()
@@ -1619,8 +1713,7 @@ def query_rag_stream(
                 "memory": dict(memory_info),
             }
             db.commit()
-            if needs_summary:
-                chat_service.enqueue_session_summary(session.id)
+            _enqueue_session_summary_if_allowed(plan_memory_enabled, needs_summary, session.id)
 
             payload_json = response.model_dump(mode="json")
 
@@ -1674,8 +1767,7 @@ def query_rag_stream(
                 rag_mode=rag_mode,
             )
             db.commit()
-            if needs_summary:
-                chat_service.enqueue_session_summary(session.id)
+            _enqueue_session_summary_if_allowed(plan_memory_enabled, needs_summary, session.id)
 
             payload = response.model_dump(mode="json")
             payload["evidence"] = []
@@ -1773,6 +1865,9 @@ def query_rag_stream(
                 evidence_payload = [
                     item.model_dump(mode="json", exclude_none=True) for item in pipeline_result.evidence
                 ]
+                pipeline_warning_messages = [warning.message for warning in pipeline_result.warnings]
+                combined_warnings = pipeline_warning_messages + llm_warning_messages
+                state_value = str(final_payload.get("state") or "ready")
 
                 streaming_retrieval = RagRetrievalStage(
                     rag_mode=payload_rag_mode,
@@ -1790,7 +1885,7 @@ def query_rag_stream(
                     snapshot_payload=snapshot_payload,
                     diff_meta=diff_meta,
                     citations=citations,
-                    warnings=[warning.message for warning in pipeline_result.warnings] + llm_warning_messages,
+                    warnings=combined_warnings,
                     highlights=highlights,
                     error=error,
                     selected_filing_id=selected_filing_id,
@@ -1831,6 +1926,7 @@ def query_rag_stream(
                 payload_json["traceId"] = trace_id
                 payload_json["ragMode"] = payload_rag_mode
                 payload_json["state"] = state_value
+                payload_json["warnings"] = combined_warnings
 
                 if request.run_self_check:
                     rag_jobs.enqueue_self_check(
@@ -1844,8 +1940,7 @@ def query_rag_stream(
                     )
 
                 db.commit()
-                if needs_summary:
-                    chat_service.enqueue_session_summary(session.id)
+                _enqueue_session_summary_if_allowed(plan_memory_enabled, needs_summary, session.id)
 
                 yield json.dumps(
                     {
@@ -1898,6 +1993,7 @@ def query_rag_v2(
     trace_id = str(uuid.uuid4())
     user_id = _resolve_lightmem_user_id(x_user_id)
     org_id = _parse_uuid(x_org_id)
+    plan_memory_enabled = plan.memory_chat_enabled
     turn_id = _coerce_uuid(payload.turnId)
     user_message_id = _parse_uuid(payload.userMessageId)
     assistant_message_id = _parse_uuid(payload.assistantMessageId)
@@ -1982,7 +2078,7 @@ def query_rag_v2(
         except RuntimeError as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"code": "rag.pipeline_unavailable", "message": "?? ?????? ??? ? ????."},
+                detail={"code": "rag.pipeline_unavailable", "message": "RAG 파이프라인을 잠시 사용할 수 없습니다. 잠시 후 다시 시도해 주세요."},
             ) from exc
 
         llm_payload = llm_service.generate_rag_answer(
@@ -2073,8 +2169,7 @@ def query_rag_v2(
             )
 
         db.commit()
-        if needs_summary:
-            chat_service.enqueue_session_summary(session.id)
+        _enqueue_session_summary_if_allowed(plan_memory_enabled, needs_summary, session.id)
 
         evidence_payload = [item.model_dump(mode="json", exclude_none=True) for item in pipeline_result.evidence]
         citations_payload: Dict[str, List[Any]] = {}
@@ -2120,25 +2215,14 @@ def query_rag_grid(
     plan: PlanContext,
     db: Session,
 ) -> RagGridResponse:
-    cell_count = len(payload.tickers) * len(payload.questions)
-    if cell_count > _GRID_CELL_LIMIT:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "code": "rag.grid_too_large",
-                "message": f"?? ??? ?? ? ?? {_GRID_CELL_LIMIT}? ???.",
-            },
-        )
-
-    user_id = _parse_uuid(x_user_id)
-    _enforce_chat_quota(plan, user_id)
+    _validate_grid_request(payload)
 
     try:
         return rag_grid.run_grid(db, payload)
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "rag.grid_unavailable", "message": "Grid ?? ? ??? ??????."},
+            detail={"code": "rag.grid_unavailable", "message": "Grid 실행을 잠시 처리할 수 없습니다. 잠시 후 다시 시도해 주세요."},
         ) from exc
 
 
@@ -2149,21 +2233,10 @@ def create_rag_grid_job(
     plan: PlanContext,
     db: Session,
 ) -> RagGridJobResponse:
-    cell_count = len(payload.tickers) * len(payload.questions)
-    if cell_count > _GRID_CELL_LIMIT:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "code": "rag.grid_too_large",
-                "message": f"?? ??? ?? ? ?? {_GRID_CELL_LIMIT}? ???.",
-            },
-        )
-
-    user_id = _parse_uuid(x_user_id)
-    _enforce_chat_quota(plan, user_id)
+    _validate_grid_request(payload)
 
     try:
-        job = rag_grid.create_grid_job(db, payload, requested_by=user_id)
+        job = rag_grid.create_grid_job(db, payload, requested_by=_parse_uuid(x_user_id))
         rag_grid.enqueue_grid_job(job.id)
         return rag_grid.serialize_job(job, include_cells=False)
     except ValueError as exc:

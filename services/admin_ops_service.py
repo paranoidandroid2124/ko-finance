@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, cast
 
 from core.logging import get_logger
 from services.admin_audit import append_audit_log, read_audit_logs
@@ -195,14 +197,15 @@ def _normalize_targets(value: Any) -> List[str]:
 
 
 def _normalize_langfuse_config(
-    raw: Mapping[str, Any], existing_config: Optional[Mapping[str, Any]] = None
+    raw: Any, existing_config: Optional[Mapping[str, Any]] = None
 ) -> Dict[str, Any]:
     if not isinstance(raw, Mapping):
         raw = {}
     default_env = _normalize_text(raw.get("defaultEnvironment")) or _normalize_text(raw.get("environment")) or "production"
-    environments_raw = []
-    if isinstance(raw.get("environments"), Iterable) and not isinstance(raw.get("environments"), (str, bytes)):
-        environments_raw = [entry for entry in raw.get("environments") if isinstance(entry, Mapping)]
+    environments_raw: List[Mapping[str, Any]] = []
+    environments_value = raw.get("environments")
+    if isinstance(environments_value, Iterable) and not isinstance(environments_value, (str, bytes)):
+        environments_raw = [entry for entry in environments_value if isinstance(entry, Mapping)]
     elif raw:
         environments_raw = [raw]
     if not environments_raw:
@@ -224,11 +227,11 @@ def _normalize_langfuse_config(
         ]
     existing_map: Dict[str, Mapping[str, Any]] = {}
     if isinstance(existing_config, Mapping):
-        for entry in existing_config.get("environments", []):
-            if isinstance(entry, Mapping):
-                name = _normalize_text(entry.get("name"))
-                if name:
-                    existing_map[name] = entry
+        existing_envs = existing_config.get("environments")
+        for entry in _iterable_mappings(existing_envs):
+            name = _normalize_text(entry.get("name"))
+            if name:
+                existing_map[name] = entry
     sanitized_envs: List[Dict[str, Any]] = []
     seen: set[str] = set()
     for entry in environments_raw:
@@ -310,6 +313,12 @@ def _sanitize_langfuse_environment(
 def _history_entries(value: Any) -> List[Mapping[str, Any]]:
     if isinstance(value, Mapping):
         return [value]
+    if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+        return [entry for entry in value if isinstance(entry, Mapping)]
+    return []
+
+
+def _iterable_mappings(value: Any) -> List[Mapping[str, Any]]:
     if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
         return [entry for entry in value if isinstance(entry, Mapping)]
     return []
@@ -425,8 +434,9 @@ def load_api_keys() -> Dict[str, object]:
         try:
             payload = json.loads(_OPS_API_KEYS_PATH.read_text(encoding="utf-8"))
             if isinstance(payload, dict):
-                langfuse_config = _normalize_langfuse_config(payload.get("langfuse", {}))
-                external_raw = payload.get("externalApis") if isinstance(payload.get("externalApis"), list) else []
+                langfuse_config = _normalize_langfuse_config(payload.get("langfuse"))
+                external_raw_value = payload.get("externalApis")
+                external_raw: List[Any] = external_raw_value if isinstance(external_raw_value, list) else []
                 external_entries: List[Dict[str, Any]] = []
                 for entry in external_raw:
                     if isinstance(entry, Mapping):
@@ -455,7 +465,11 @@ def load_api_keys() -> Dict[str, object]:
         except json.JSONDecodeError as exc:  # pragma: no cover
             logger.warning("Failed to parse ops api keys store: %s", exc)
     default_payload = json.loads(json.dumps(_DEFAULT_API_KEYS))
-    default_payload["alerts"] = _compute_token_alerts(default_payload["langfuse"], default_payload.get("externalApis", []))
+    langfuse_value = default_payload.get("langfuse")
+    langfuse_config = langfuse_value if isinstance(langfuse_value, Mapping) else {}
+    external_value = default_payload.get("externalApis")
+    external_entries = external_value if isinstance(external_value, list) else []
+    default_payload["alerts"] = _compute_token_alerts(langfuse_config, external_entries)
     return default_payload
 
 
@@ -486,40 +500,45 @@ def update_api_keys(
     note: Optional[str],
 ) -> Dict[str, object]:
     existing = load_api_keys()
-    existing_langfuse = existing.get("langfuse") if isinstance(existing, Mapping) else {}
+    existing_langfuse_raw = existing.get("langfuse") if isinstance(existing, Mapping) else None
+    existing_langfuse: Optional[Mapping[str, Any]]
+    if isinstance(existing_langfuse_raw, Mapping):
+        existing_langfuse = existing_langfuse_raw
+    else:
+        existing_langfuse = None
     normalized_config = _normalize_langfuse_config(langfuse, existing_langfuse)
 
     existing_env_map: Dict[str, Mapping[str, Any]] = {}
     if isinstance(existing_langfuse, Mapping):
-        for env in existing_langfuse.get("environments", []):
-            if isinstance(env, Mapping):
-                name = _normalize_text(env.get("name"))
-                if name:
-                    existing_env_map[name] = env
+        for env in _iterable_mappings(existing_langfuse.get("environments")):
+            name = _normalize_text(env.get("name"))
+            if name:
+                existing_env_map[name] = env
 
     sanitized_envs: List[Dict[str, Any]] = []
-    for env in normalized_config.get("environments", []):
+    for env in _iterable_mappings(normalized_config.get("environments")):
         env_name = _normalize_text(env.get("name")) or "production"
         sanitized_envs.append(_sanitize_langfuse_environment(env, existing_env_map.get(env_name)))
 
+    default_environment = _normalize_text(normalized_config.get("defaultEnvironment"))
+    if not default_environment and isinstance(existing_langfuse, Mapping):
+        default_environment = _normalize_text(existing_langfuse.get("defaultEnvironment"))
+
     langfuse_payload = {
-        "defaultEnvironment": _normalize_text(normalized_config.get("defaultEnvironment"))
-        or (existing_langfuse.get("defaultEnvironment") if isinstance(existing_langfuse, Mapping) else "production"),
+        "defaultEnvironment": default_environment or "production",
         "environments": sanitized_envs,
     }
 
     existing_external_map: Dict[str, Mapping[str, Any]] = {}
-    if isinstance(existing.get("externalApis"), list):
-        for entry in existing.get("externalApis"):
-            if isinstance(entry, Mapping):
-                key = _normalize_text(entry.get("name")) or ""
-                if key:
-                    existing_external_map[key] = entry
+    existing_external_raw = existing.get("externalApis") if isinstance(existing, Mapping) else None
+    for entry in _iterable_mappings(existing_external_raw):
+        key = _normalize_text(entry.get("name")) or ""
+        if key:
+            existing_external_map[key] = entry
 
     sanitized_external: List[Dict[str, Any]] = []
-    for index, entry in enumerate(external_apis):
-        if not isinstance(entry, Mapping):
-            continue
+    external_items = [entry for entry in external_apis if isinstance(entry, Mapping)]
+    for index, entry in enumerate(external_items):
         name = _normalize_text(entry.get("name")) or f"external-{index + 1:02d}"
         existing_entry = existing_external_map.get(name)
         metadata = _sanitize_metadata_map(entry.get("metadata") or (existing_entry.get("metadata") if isinstance(existing_entry, Mapping) else {}))
@@ -582,14 +601,16 @@ def create_alert_channel(
     note: Optional[str],
 ) -> Dict[str, object]:
     existing_record = load_alert_channels()
-    existing_channels = existing_record.get("channels") if isinstance(existing_record, Mapping) else []
+    channels_value = existing_record.get("channels") if isinstance(existing_record, Mapping) else None
+    existing_channels_raw = channels_value if isinstance(channels_value, list) else []
+    existing_channels = [entry for entry in existing_channels_raw if isinstance(entry, Mapping)]
     existing_keys = {
-        str(item.get("key"))
-        for item in existing_channels or []
-        if isinstance(item, Mapping) and item.get("key")
+        str(entry.get("key"))
+        for entry in existing_channels
+        if isinstance(entry.get("key"), str) and entry.get("key")
     }
 
-    index = len(existing_channels or [])
+    index = len(existing_channels)
     sanitized = _sanitize_alert_channel(channel, index, existing=None)
 
     base_key = sanitized["key"]
@@ -802,14 +823,16 @@ def rotate_langfuse_keys(
     note: Optional[str],
 ) -> Dict[str, object]:
     existing = load_api_keys()
-    langfuse_config = existing.get("langfuse") if isinstance(existing, Mapping) else _DEFAULT_API_KEYS["langfuse"]
+    langfuse_source_raw = existing.get("langfuse") if isinstance(existing, Mapping) else None
+    if not isinstance(langfuse_source_raw, Mapping):
+        default_langfuse = _DEFAULT_API_KEYS.get("langfuse")
+        langfuse_source_raw = default_langfuse if isinstance(default_langfuse, Mapping) else {}
+    langfuse_config = _normalize_langfuse_config(langfuse_source_raw)
     default_env = _normalize_text(langfuse_config.get("defaultEnvironment")) or "production"
 
     environments: List[Dict[str, Any]] = []
     target_found = False
-    for env in langfuse_config.get("environments", []):
-        if not isinstance(env, Mapping):
-            continue
+    for env in _iterable_mappings(langfuse_config.get("environments")):
         env_name = _normalize_text(env.get("name")) or "production"
         if env_name == default_env and not target_found:
             new_public = f"lf_pub_{secrets.token_urlsafe(18)}"
@@ -874,7 +897,8 @@ def rotate_langfuse_keys(
         "environments": environments,
     }
 
-    external_entries = existing.get("externalApis") if isinstance(existing, Mapping) else []
+    external_candidates = existing.get("externalApis") if isinstance(existing, Mapping) else None
+    external_entries = [entry for entry in _iterable_mappings(external_candidates)]
     payload = {
         "langfuse": langfuse_payload,
         "externalApis": external_entries,
@@ -957,7 +981,12 @@ def build_sample_metadata(
             if entry.get("key") == template:
                 selected = entry
                 break
-    metadata = dict(selected.get("metadata") if selected else {})
+    metadata_value: Any = selected.get("metadata") if selected else None
+    if isinstance(metadata_value, Mapping):
+        template_metadata = cast(Mapping[str, Any], metadata_value)
+    else:
+        template_metadata = {}
+    metadata: Dict[str, Any] = dict(template_metadata)
     generated_ts = now_iso()
     if channel_key == "slack":
         metadata.setdefault("headline", "ESG 리포트가 새롭게 공개됐어요")

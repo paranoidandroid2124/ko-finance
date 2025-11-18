@@ -1,6 +1,6 @@
 import argparse
 import logging
-from typing import List
+from typing import Any, List, cast
 
 from scripts._path import add_root
 
@@ -18,7 +18,8 @@ def _dispatch_articles(articles: List):
     for article in articles:
         try:
             payload = article.model_dump() if hasattr(article, "model_dump") else article.dict()
-            process_news_article.delay(payload)
+            task_fn = cast(Any, process_news_article)
+            task_fn.delay(payload)
             logger.info("Queued news article for Celery processing: '%s'", article.headline)
         except Exception as exc:
             logger.error("Failed to enqueue article '%s': %s", article.headline, exc, exc_info=True)

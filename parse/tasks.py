@@ -8,10 +8,10 @@ import uuid
 import json
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time as dt_time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union, cast
 
 from celery import shared_task
 from pydantic import ValidationError
@@ -98,6 +98,12 @@ def _parse_recipients(value: Optional[str]) -> List[str]:
         if trimmed:
             recipients.append(trimmed)
     return recipients
+
+
+def _set_filing_fields(filing: Filing, **updates: Any) -> None:
+    typed = cast(Any, filing)
+    for field, value in updates.items():
+        setattr(typed, field, value)
 
 
 ALERT_FAILURE_SLACK_TARGETS = _parse_recipients(env_str("ALERTS_FAILURE_SLACK_TARGETS"))
@@ -373,15 +379,22 @@ def _normalize_category_label(value: Optional[str]) -> Optional[str]:
 
 def _build_vector_metadata(filing: Filing) -> Dict[str, Any]:
     """Assemble metadata fields to persist alongside vector chunks."""
+    ticker = cast(Optional[str], filing.ticker)
+    corp_code = cast(Optional[str], filing.corp_code)
+    corp_name = cast(Optional[str], filing.corp_name)
+    market = cast(Optional[str], filing.market)
+    report_name = cast(Optional[str], filing.report_name)
+    category = cast(Optional[str], filing.category)
     meta: Dict[str, Any] = {
-        "ticker": filing.ticker,
-        "corp_code": filing.corp_code,
-        "corp_name": filing.corp_name,
-        "market": filing.market,
-        "report_name": filing.report_name,
-        "category": filing.category,
+        "ticker": ticker,
+        "corp_code": corp_code,
+        "corp_name": corp_name,
+        "market": market,
+        "report_name": report_name,
+        "category": category,
     }
-    urls = filing.urls if isinstance(filing.urls, Mapping) else {}
+    raw_urls = cast(Optional[Mapping[str, Any]], filing.urls)
+    urls = raw_urls if isinstance(raw_urls, Mapping) else {}
     viewer_url = urls.get("viewer") if isinstance(urls, Mapping) else None
     download_url = (
         urls.get("download")
@@ -401,9 +414,10 @@ def _build_vector_metadata(filing: Filing) -> Dict[str, Any]:
         meta.setdefault("document_url", download_url)
     elif pdf_url:
         meta.setdefault("document_url", pdf_url)
-    if filing.receipt_no:
-        meta["receipt_no"] = filing.receipt_no
-    filed_at = filing.filed_at
+    receipt_no = cast(Optional[str], filing.receipt_no)
+    if receipt_no:
+        meta["receipt_no"] = receipt_no
+    filed_at = cast(Optional[datetime], filing.filed_at)
     if filed_at:
         if filed_at.tzinfo is None:
             filed_at = filed_at.replace(tzinfo=timezone.utc)
@@ -523,26 +537,29 @@ def evaluate_alert_rules(self, limit: int = 1000, prefetch_factor: Optional[int]
 
 
 def _ensure_pdf_path(filing: Filing) -> Optional[str]:
-    if filing.file_path and Path(filing.file_path).is_file():
-        return filing.file_path
+    file_path = cast(Optional[str], filing.file_path)
+    if file_path and Path(file_path).is_file():
+        return file_path
 
-    source_files = filing.source_files or {}
+    source_files = cast(Optional[Mapping[str, Any]], filing.source_files) or {}
     pdf_path = source_files.get("pdf") if isinstance(source_files, dict) else None
     if pdf_path and Path(pdf_path).is_file():
-        filing.file_path = pdf_path
+        _set_filing_fields(filing, file_path=pdf_path)
         return pdf_path
 
-    urls = filing.urls or {}
+    urls = cast(Optional[Mapping[str, Any]], filing.urls) or {}
     object_name = (
         urls.get("storage_object")
         or urls.get("minio_object")
         or urls.get("object_name")
     )
     if object_name and storage_service.is_enabled():
-        local_path = Path(UPLOAD_DIR) / f"{filing.receipt_no or filing.id}.pdf"
+        receipt_no = cast(Optional[str], filing.receipt_no)
+        filing_id = cast(uuid.UUID, filing.id)
+        local_path = Path(UPLOAD_DIR) / f"{receipt_no or filing_id}.pdf"
         downloaded = storage_service.download_file(object_name, str(local_path))
         if downloaded:
-            filing.file_path = downloaded
+            _set_filing_fields(filing, file_path=downloaded)
             return downloaded
 
     logger.warning("PDF file not available for filing %s", filing.id)
@@ -550,7 +567,7 @@ def _ensure_pdf_path(filing: Filing) -> Optional[str]:
 
 
 def _load_xml_paths(filing: Filing) -> List[str]:
-    source_files = filing.source_files or {}
+    source_files = cast(Optional[Mapping[str, Any]], filing.source_files) or {}
     xml_paths = source_files.get("xml") if isinstance(source_files, dict) else None
     if not xml_paths:
         return []
@@ -617,10 +634,10 @@ def _save_chunks(
     *,
     commit: bool = True,
 ) -> None:
-    filing.chunks = chunks
-    filing.raw_md = "\n\n".join(
+    combined_raw = "\n\n".join(
         chunk["content"] for chunk in chunks if isinstance(chunk.get("content"), str)
     )
+    _set_filing_fields(filing, chunks=chunks, raw_md=combined_raw)
     if commit:
         db.commit()
 
@@ -664,14 +681,15 @@ def _save_summary(filing: Filing, summary: Dict[str, Any], db: Session) -> None:
     if not record:
         record = Summary(filing_id=filing.id)
         db.add(record)
-    record.who = summary.get("who")
-    record.what = summary.get("what")
-    record.when = summary.get("when")
-    record.where = summary.get("where")
-    record.how = summary.get("how")
-    record.why = summary.get("why")
-    record.insight = summary.get("insight")
-    record.confidence_score = summary.get("confidence_score")
+    typed_record = cast(Any, record)
+    typed_record.who = summary.get("who")
+    typed_record.what = summary.get("what")
+    typed_record.when = summary.get("when")
+    typed_record.where = summary.get("where")
+    typed_record.how = summary.get("how")
+    typed_record.why = summary.get("why")
+    typed_record.insight = summary.get("insight")
+    typed_record.confidence_score = summary.get("confidence_score")
     sentiment_label = summary.get("sentiment") or summary.get("sentiment_label")
     sentiment_reason = summary.get("sentiment_reason")
     normalized_label = _normalize_sentiment(sentiment_label)
@@ -680,21 +698,25 @@ def _save_summary(filing: Filing, summary: Dict[str, Any], db: Session) -> None:
         stripped = sentiment_reason.strip()
         if stripped:
             normalized_reason = stripped
-    record.sentiment_label = normalized_label
-    record.sentiment_reason = normalized_reason
+    typed_record.sentiment_label = normalized_label
+    typed_record.sentiment_reason = normalized_reason
     db.commit()
 
 
 def _format_notification(filing: Filing, summary: Dict[str, Any]) -> str:
     parts = ["*[DART Watcher+]*"]
-    title = filing.report_name or filing.title or "Untitled filing"
-    if filing.ticker:
-        parts.append(f"*{filing.ticker}* {title}")
+    report_name = cast(Optional[str], filing.report_name)
+    fallback_title = cast(Optional[str], filing.title)
+    title = report_name or fallback_title or "Untitled filing"
+    ticker = cast(Optional[str], filing.ticker)
+    if ticker:
+        parts.append(f"*{ticker}* {title}")
     else:
         parts.append(title)
     insight = summary.get("insight") or summary.get("what") or "Summary is not available."
     parts.append(f"- Summary: {insight}")
-    viewer_url = (filing.urls or {}).get("viewer")
+    urls = cast(Optional[Mapping[str, Any]], filing.urls) or {}
+    viewer_url = urls.get("viewer")
     if viewer_url:
         parts.append(f"[View original document]({viewer_url})")
     parts.append("_(For information only. This is not investment advice.)_")
@@ -772,12 +794,12 @@ def seed_recent_filings_task(self, days_back: int = 1) -> int:
 
     # Kick off event study ingest/aggregation asynchronously so the dashboard stays fresh.
     try:
-        sync_stock_prices.delay(days_back=days_back + 5)
-        sync_benchmark_prices.delay(days_back=days_back + 5)
-        sync_security_metadata.delay(days_back=1)
-        ingest_event_study_events.delay(days_back=days_back)
-        update_event_study_returns.delay()
-        aggregate_event_study_summary.delay()
+        cast(Any, sync_stock_prices).delay(days_back=days_back + 5)
+        cast(Any, sync_benchmark_prices).delay(days_back=days_back + 5)
+        cast(Any, sync_security_metadata).delay(days_back=1)
+        cast(Any, ingest_event_study_events).delay(days_back=days_back)
+        cast(Any, update_event_study_returns).delay()
+        cast(Any, aggregate_event_study_summary).delay()
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.warning("Failed to enqueue market/event study tasks after seeding: %s", exc, exc_info=True)
 
@@ -802,8 +824,9 @@ def process_filing(self, filing_id: str) -> str:
             logger.error("Filing %s not found.", filing_id)
             return _finish_stage("missing")
 
-        raw_content = filing.raw_md or ""
-        chunk_count = len(filing.chunks or [])
+        raw_content = cast(Optional[str], filing.raw_md) or ""
+        existing_chunks = cast(Optional[Sequence[Any]], filing.chunks)
+        chunk_count = len(existing_chunks or [])
         resolved_pdf_path: Optional[str] = None
 
         def run_stage(name: str, func: Callable[[], None], *, critical: bool) -> bool:
@@ -895,7 +918,8 @@ def process_filing(self, filing_id: str) -> str:
             vector_service.store_chunk_vectors(str(filing.id), extracted, metadata=vector_metadata)
             db.commit()
 
-            raw_content = filing.raw_md or raw_content
+            raw_candidate = cast(Optional[str], filing.raw_md)
+            raw_content = raw_candidate or raw_content
             chunk_count = len(extracted)
 
         def table_extraction_stage() -> None:
@@ -909,15 +933,18 @@ def process_filing(self, filing_id: str) -> str:
                     pdf_path=pdf_path,
                 )
             except table_extraction_service.TableExtractionServiceError as exc:
+                receipt_no = cast(Optional[str], filing.receipt_no)
+                corp_code = cast(Optional[str], filing.corp_code)
+                ticker = cast(Optional[str], filing.ticker)
                 ingest_dlq_service.record_dead_letter(
                     db,
                     task_name="table_extraction",
                     payload={"filing_id": str(filing.id), "pdf_path": pdf_path},
                     error=str(exc),
                     retries=getattr(self.request, "retries", 0),
-                    receipt_no=filing.receipt_no,
-                    corp_code=filing.corp_code,
-                    ticker=filing.ticker,
+                    receipt_no=receipt_no,
+                    corp_code=corp_code,
+                    ticker=ticker,
                 )
                 raise
             else:
@@ -939,8 +966,11 @@ def process_filing(self, filing_id: str) -> str:
 
             classification = llm_service.classify_filing_content(raw_content)
             normalized_category = _normalize_category_label(classification.get("category"))
-            filing.category = normalized_category
-            filing.category_confidence = classification.get("confidence_score")
+            _set_filing_fields(
+                filing,
+                category=normalized_category,
+                category_confidence=classification.get("confidence_score"),
+            )
             db.commit()
 
         def facts_stage() -> None:
@@ -1039,25 +1069,21 @@ def process_filing(self, filing_id: str) -> str:
         non_critical_failures = [result for result in stage_results if not result.success and not result.skipped]
 
         if skipped_results:
-            filing.status = STATUS_PARTIAL
-            filing.analysis_status = ANALYSIS_PARTIAL
+            _set_filing_fields(filing, status=STATUS_PARTIAL, analysis_status=ANALYSIS_PARTIAL)
             db.commit()
             return _finish_stage("skipped")
 
         if critical_failures:
-            filing.status = STATUS_FAILED
-            filing.analysis_status = ANALYSIS_FAILED
+            _set_filing_fields(filing, status=STATUS_FAILED, analysis_status=ANALYSIS_FAILED)
             db.commit()
             return _finish_stage("failed")
 
         if non_critical_failures:
-            filing.status = STATUS_PARTIAL
-            filing.analysis_status = ANALYSIS_PARTIAL
+            _set_filing_fields(filing, status=STATUS_PARTIAL, analysis_status=ANALYSIS_PARTIAL)
             db.commit()
             return _finish_stage("partial")
 
-        filing.status = STATUS_COMPLETED
-        filing.analysis_status = ANALYSIS_ANALYZED
+        _set_filing_fields(filing, status=STATUS_COMPLETED, analysis_status=ANALYSIS_ANALYZED)
         db.commit()
         return _finish_stage("completed")
 
@@ -1249,7 +1275,7 @@ def seed_news_feeds(self, limit_per_feed: Optional[int] = None, use_mock_fallbac
     for article in articles:
         try:
             payload = article.model_dump() if hasattr(article, "model_dump") else dict(article)
-            process_news_article.delay(payload)
+            cast(Any, process_news_article).delay(payload)
             queued += 1
         except Exception as exc:
             logger.warning(
@@ -1306,7 +1332,11 @@ def aggregate_news_data(window_end_iso: Optional[str] = None) -> str:
             neutral_threshold=neutral_threshold,
         )
 
-        tickers = {signal.ticker for signal in signals if getattr(signal, "ticker", None)}
+        tickers: set[str] = set()
+        for signal in signals:
+            ticker_value = cast(Optional[str], getattr(signal, "ticker", None))
+            if ticker_value:
+                tickers.add(ticker_value)
 
         record = (
             db.query(NewsObservation)
@@ -1371,7 +1401,7 @@ def aggregate_news_data(window_end_iso: Optional[str] = None) -> str:
 
 
 @shared_task(name="m2.cleanup_news_signals")
-def cleanup_news_signals(retention_days: Optional[int] = None) -> Dict[str, int]:
+def cleanup_news_signals(retention_days: Optional[int] = None) -> Dict[str, Union[int, str]]:
     """Purge news signals and related aggregates older than the retention window."""
 
     days = int(retention_days or NEWS_RETENTION_DAYS)
@@ -1477,7 +1507,7 @@ def aggregate_sector_windows(as_of_iso: Optional[str] = None, window_days: Seque
 
 def _get_digest_bounds(target: date) -> Tuple[datetime, datetime]:
     """Return UTC window (naive) covering the given local date."""
-    start_local = datetime.combine(target, time.min, tzinfo=DIGEST_ZONE)
+    start_local = datetime.combine(target, dt_time.min, tzinfo=DIGEST_ZONE)
     end_local = start_local + timedelta(days=1)
     start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
     end_utc = end_local.astimezone(timezone.utc).replace(tzinfo=None)
@@ -2006,7 +2036,7 @@ def generate_daily_brief(
         db.close()
 
 
-def _flatten_citation_entries(meta: Dict[str, Any]) -> List[str]:
+def _flatten_citation_entries(meta: Mapping[str, Any]) -> List[str]:
     if not isinstance(meta, dict):
         return []
     collected: List[str] = []
@@ -2026,9 +2056,11 @@ def _flatten_citation_entries(meta: Dict[str, Any]) -> List[str]:
 def _build_transcript_payload(messages: List[ChatMessage]) -> List[Dict[str, str]]:
     payload: List[Dict[str, str]] = []
     for message in messages:
-        if not message.content:
+        content = cast(Optional[str], message.content)
+        role = cast(Optional[str], message.role)
+        if not content:
             continue
-        payload.append({"role": message.role, "content": message.content})
+        payload.append({"role": role or "", "content": content})
     return payload
 
 
@@ -2051,7 +2083,10 @@ def summarize_chat_session(session_id: str) -> str:
         if session is None:
             return "session_missing"
 
-        snapshot = session.memory_snapshot or {}
+        raw_snapshot = session.memory_snapshot
+        snapshot: Dict[str, Any] = {}
+        if isinstance(raw_snapshot, Mapping):
+            snapshot = dict(raw_snapshot)
         summarized_until = int(snapshot.get("summarized_until") or 0)
 
         messages = (
@@ -2063,7 +2098,10 @@ def summarize_chat_session(session_id: str) -> str:
         if not messages:
             return "no_messages"
 
-        unsummarized = [message for message in messages if message.seq > summarized_until]
+        def _coerce_seq_value(chat_message: ChatMessage) -> int:
+            return int(cast(Any, getattr(chat_message, "seq", 0) or 0))
+
+        unsummarized = [message for message in messages if _coerce_seq_value(message) > summarized_until]
         keep_count = SUMMARY_RECENT_TURNS * 2
         if len(unsummarized) <= keep_count:
             return "insufficient_history"
@@ -2084,19 +2122,22 @@ def summarize_chat_session(session_id: str) -> str:
 
         citations: List[str] = []
         for message in archive_candidates:
-            citations.extend(_flatten_citation_entries(message.meta))
+            meta_payload = message.meta if isinstance(message.meta, Mapping) else {}
+            citations.extend(_flatten_citation_entries(meta_payload))
         unique_citations = sorted({item for item in citations if item})
 
-        snapshot_payload = dict(snapshot)
+        snapshot_payload: Dict[str, Any] = dict(snapshot)
         snapshot_payload["summary"] = summary_text
         snapshot_payload["citations"] = unique_citations
-        snapshot_payload["summarized_until"] = archive_candidates[-1].seq
+        last_seq_value = _coerce_seq_value(archive_candidates[-1])
+        snapshot_payload["summarized_until"] = last_seq_value
         snapshot_payload["updated_at"] = datetime.now(timezone.utc).isoformat()
-        session.memory_snapshot = snapshot_payload
+        session_proxy = cast(Any, session)
+        session_proxy.memory_snapshot = snapshot_payload
         if summary_text:
-            session.summary = chat_service.trim_preview(summary_text)
+            session_proxy.summary = chat_service.trim_preview(summary_text)
 
-        max_seq = archive_candidates[-1].seq
+        max_seq = last_seq_value
         archived = chat_service.archive_chat_messages(db, session_id=session_uuid, seq_threshold=max_seq)
         db.commit()
         logger.info(

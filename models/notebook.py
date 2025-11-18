@@ -33,7 +33,7 @@ class Notebook(Base):
     tags = Column(ARRAY(String), nullable=False, default=list)
     cover_color = Column(String(32), nullable=True)
     metadata_json = Column("metadata", JSONB, nullable=False, default=dict)
-    metadata = JSONMetadataProxy("metadata_json")
+    metadata = JSONMetadataProxy("metadata_json")  # type: ignore[assignment]
     entry_count = Column(Integer, nullable=False, default=0)
     last_activity_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

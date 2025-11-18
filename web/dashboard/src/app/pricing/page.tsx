@@ -13,6 +13,7 @@ import { resolvePlanMarketingCopy } from "@/lib/planContext";
 import type { PlanTier } from "@/store/planStore/types";
 import type { PlanTierCopy } from "@/config/planConfig";
 import { PlanTierCTA } from "@/components/plan/PlanTierCTA";
+import { usePlanContext } from "@/store/planStore";
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   free: Sparkles,
@@ -41,12 +42,18 @@ type PlanCardProps = {
   tier: PlanCatalogTier;
   isFeatured?: boolean;
   copy: PlanTierCopy;
+  isCurrent?: boolean;
 };
 
-const PlanCard = ({ tier, isFeatured, copy }: PlanCardProps) => {
+const PlanCard = ({ tier, isFeatured, copy, isCurrent = false }: PlanCardProps) => {
   const Icon = ICON_MAP[tier.tier] ?? Sparkles;
   const priceText = formatCurrency(tier.price.amount, tier.price.currency);
   const priceNote = tier.price.note;
+  const description = copy.description ?? tier.description ?? null;
+  const featureEntries: Array<{ text: string; highlight?: boolean | null }> =
+    tier.features?.length && tier.features.every((feature) => typeof feature?.text === "string")
+      ? (tier.features as Array<{ text: string; highlight?: boolean | null }>)
+      : copy.features.map((text) => ({ text }));
 
   return (
     <div
@@ -61,12 +68,19 @@ const PlanCard = ({ tier, isFeatured, copy }: PlanCardProps) => {
           <Icon className="h-5 w-5" />
           {tier.badge ?? tier.tier.toUpperCase()}
         </span>
-        {isFeatured && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-accent-primary px-3 py-1 text-xs font-semibold text-white">
-            <BadgeCheck className="h-3.5 w-3.5" />
-            추천 플랜
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {isCurrent ? (
+            <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary dark:bg-primary.dark/20 dark:text-primary.dark">
+              현재 이용 중
+            </span>
+          ) : null}
+          {isFeatured && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-accent-primary px-3 py-1 text-xs font-semibold text-white">
+              <BadgeCheck className="h-3.5 w-3.5" />
+              추천 플랜
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="mt-5">
@@ -74,6 +88,9 @@ const PlanCard = ({ tier, isFeatured, copy }: PlanCardProps) => {
         <p className="mt-2 text-sm leading-relaxed text-text-secondaryLight dark:text-text-secondaryDark">
           {tier.tagline}
         </p>
+        {description ? (
+          <p className="mt-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">{description}</p>
+        ) : null}
       </div>
 
       <div className="mt-6 flex items-baseline gap-2">
@@ -87,7 +104,7 @@ const PlanCard = ({ tier, isFeatured, copy }: PlanCardProps) => {
       )}
 
       <ul className="mt-6 space-y-3 text-sm leading-relaxed text-text-secondaryLight dark:text-text-secondaryDark">
-        {tier.features.map((feature) => (
+        {featureEntries.map((feature) => (
           <li
             key={feature.text}
             className={`flex items-start gap-2 rounded-lg border border-transparent px-2 py-1 ${
@@ -122,6 +139,7 @@ const PlanCard = ({ tier, isFeatured, copy }: PlanCardProps) => {
 
 export default function PricingPage() {
   const { catalog, loading, error, refetch } = usePlanCatalog();
+  const planContext = usePlanContext();
 
   const tiers: PlanCatalogTier[] = useMemo(() => {
     const all = catalog?.tiers ?? [];
@@ -138,6 +156,9 @@ export default function PricingPage() {
     });
     return map;
   }, [catalog]);
+
+  const currentPlanTier = planContext.planTier ?? "free";
+  const planInitialized = planContext.initialized && !planContext.loading;
 
   return (
     <AppShell>
@@ -175,7 +196,13 @@ export default function PricingPage() {
       {!loading && !error && (
         <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {tiers.map((tier) => (
-            <PlanCard key={tier.tier} tier={tier} isFeatured={tier.tier === "pro"} copy={tierCopyMap[tier.tier]!} />
+            <PlanCard
+              key={tier.tier}
+              tier={tier}
+              isFeatured={tier.tier === "pro"}
+              copy={tierCopyMap[tier.tier]!}
+              isCurrent={planInitialized && tier.tier === currentPlanTier}
+            />
           ))}
         </section>
       )}

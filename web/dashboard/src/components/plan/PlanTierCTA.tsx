@@ -3,6 +3,7 @@
 import clsx from "classnames";
 import Link from "next/link";
 import { useMemo } from "react";
+import type { Route } from "next";
 
 import type { PlanTier } from "@/store/planStore/types";
 import type { PlanTierAction } from "@/config/planConfig";
@@ -94,7 +95,7 @@ export function PlanTierCTA({
   }
 
   return (
-    <Link href={href} target={action.target} className={baseClass} data-testid="plan-tier-cta-link">
+    <Link href={href as Route} target={action.target} className={baseClass} data-testid="plan-tier-cta-link">
       {action.label}
     </Link>
   );

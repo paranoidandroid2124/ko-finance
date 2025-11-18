@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
+import type { Route } from "next";
 
 import { PlanProvider } from "../plan/PlanProvider";
 import { SideNav } from "./SideNav";
@@ -37,7 +38,7 @@ export function AppShell({ children }: AppShellProps) {
     if (currentPath.startsWith("/onboarding") || currentPath.startsWith("/auth")) {
       return;
     }
-    router.replace("/onboarding");
+    router.replace("/onboarding" as Route);
   }, [pathname, router, session, setNeedsOnboarding, status]);
 
   return (

@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
 import { LegalDocumentPage, type LegalSection } from "@/app/legal/_components/LegalDocumentPage";
+import { LEGAL_COMPANY, buildCompanyContactSection } from "@/app/legal/constants";
 
-const UPDATED_AT = "2025-11-18";
-const companyContact = process.env.NEXT_PUBLIC_COMPANY_CONTACT ?? "support@ko.finance";
+const { contact: companyContact, updatedAt } = LEGAL_COMPANY;
 
 export const metadata: Metadata = {
   title: "데이터 & 라이선스 정책 | K-Finance",
@@ -98,16 +98,11 @@ const sections: LegalSection[] = [
       },
     ],
   },
-  {
+  buildCompanyContactSection({
     id: "contact",
     title: "6. 문의",
-    contents: [
-      {
-        type: "paragraph",
-        text: `데이터 사용, 라이선스, DSAR 처리 관련 문의는 ${companyContact} 로 연락해 주세요.`,
-      },
-    ],
-  },
+    note: `데이터 사용, 라이선스, DSAR 처리 관련 문의는 ${companyContact} 로 연락해 주세요.`,
+  }),
 ];
 
 export default function DataPolicyPage() {
@@ -115,7 +110,7 @@ export default function DataPolicyPage() {
     <LegalDocumentPage
       title="데이터 & 라이선스 정책"
       subtitle="데이터 소스, Guardrail, 보존/삭제 원칙, DSAR 흐름을 한눈에 제공합니다."
-      updatedAtLabel={UPDATED_AT}
+      updatedAtLabel={updatedAt}
       sections={sections}
     />
   );

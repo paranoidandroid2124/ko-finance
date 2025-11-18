@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Mapping
 
 import hashlib
 
@@ -146,9 +146,11 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
 
     try:
         document = fitz.open(pdf_path)
-        logger.info("Parsing PDF '%s' (%d pages).", pdf_path, len(document))
+        page_count = len(document)
+        logger.info("Parsing PDF '%s' (%d pages).", pdf_path, page_count)
 
-        for page_index, page in enumerate(document):
+        for page_index in range(page_count):
+            page = document[page_index]
             page_number = page_index + 1
             page_height = float(page.rect.height or 1.0)
             page_width = float(page.rect.width or 1.0)
@@ -301,8 +303,20 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
 
             _flush_pending()
 
-            tables = page.find_tables()
-            for table_index, table in enumerate(tables, start=1):
+            find_tables = getattr(page, "find_tables", None)
+            tables_list: List[Any] = []
+            if callable(find_tables):
+                try:
+                    tables_obj = find_tables()
+                    if isinstance(tables_obj, list):
+                        tables_list = tables_obj
+                    else:
+                        candidate = getattr(tables_obj, "tables", None)
+                        if isinstance(candidate, list):
+                            tables_list = candidate
+                except Exception:
+                    tables_list = []
+            for table_index, table in enumerate(tables_list, start=1):
                 table_data = table.extract()
                 if not table_data:
                     continue
@@ -363,8 +377,15 @@ def extract_chunks(pdf_path: str) -> List[Dict[str, Any]]:
                 )
                 chunk_counter += 1
 
-            dict_blocks = page.get_text("dict").get("blocks", [])
+            dict_blocks_raw = page.get_text("dict")
+            dict_blocks: List[Any] = []
+            if isinstance(dict_blocks_raw, Mapping):
+                blocks_value = dict_blocks_raw.get("blocks", [])
+                if isinstance(blocks_value, list):
+                    dict_blocks = blocks_value
             for block in dict_blocks:
+                if not isinstance(block, Mapping):
+                    continue
                 if block.get("type") != 1:
                     continue
                 bbox = block.get("bbox", [0, 0, 0, 0])

@@ -261,7 +261,7 @@ def test_rag_query_intent_semipass(monkeypatch):
 
     response = client.post(
         "/api/v1/rag/query",
-        json={"question": "?? ????"},
+        json={"question": "불법 매매 방법 알려줘?"},
     )
 
     assert response.status_code == 200

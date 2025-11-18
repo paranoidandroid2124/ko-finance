@@ -1,17 +1,20 @@
 import Link from "next/link";
+import type { Route } from "next";
+
+import { LEGAL_COMPANY } from "@/app/legal/constants";
 
 const LEGAL_LINKS = [
   { href: "/legal/terms", label: "이용약관" },
   { href: "/legal/privacy", label: "개인정보 처리방침" },
-  { href: "/legal/data", label: "데이터 & 라이선스 정책" }
+  { href: "/legal/data", label: "데이터 & 라이선스 정책" },
 ] as const;
 
 const companyProfile = {
-  name: process.env.NEXT_PUBLIC_COMPANY_NAME ?? "미등록",
+  name: LEGAL_COMPANY.name,
   representative: process.env.NEXT_PUBLIC_COMPANY_REPRESENTATIVE ?? "미등록",
   registrationNumber: process.env.NEXT_PUBLIC_COMPANY_REGISTRATION ?? "미등록",
-  address: process.env.NEXT_PUBLIC_COMPANY_ADDRESS ?? "미등록",
-  contact: process.env.NEXT_PUBLIC_COMPANY_CONTACT ?? "support@ko.finance"
+  address: LEGAL_COMPANY.address,
+  contact: LEGAL_COMPANY.contact
 };
 
 export function AppFooter() {
@@ -20,7 +23,7 @@ export function AppFooter() {
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           {LEGAL_LINKS.map((link) => (
-            <Link key={link.href} href={link.href} className="hover:text-primary hover:underline">
+            <Link key={link.href} href={link.href as Route} className="hover:text-primary hover:underline">
               {link.label}
             </Link>
           ))}
@@ -36,4 +39,3 @@ export function AppFooter() {
     </footer>
   );
 }
-

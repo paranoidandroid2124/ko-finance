@@ -367,10 +367,25 @@ class TableExtractor:
             raise TableExtractorError(f"Unable to open PDF: {exc}") from exc
 
         try:
-            for page_number, page in enumerate(document, start=1):
+            page_count = len(document)
+            for page_offset in range(page_count):
+                page_number = page_offset + 1
+                page = document[page_offset]
                 if self.max_pages and page_number > self.max_pages:
                     break
-                tables = page.find_tables()
+                find_tables = getattr(page, "find_tables", None)
+                tables: List[Any] = []
+                if callable(find_tables):
+                    try:
+                        tables_obj = find_tables()
+                        if isinstance(tables_obj, list):
+                            tables = tables_obj
+                        else:
+                            candidate = getattr(tables_obj, "tables", None)
+                            if isinstance(candidate, list):
+                                tables = candidate
+                    except Exception:
+                        tables = []
                 if not tables:
                     continue
 
@@ -453,7 +468,16 @@ class TableExtractor:
                             0.5 + (0.2 * header_coverage) + (0.2 * non_empty_ratio) + (0.05 * numeric_ratio),
                         ),
                     )
-                    bbox = tuple(float(coord) for coord in table.bbox)
+                    bbox_values = list(getattr(table, "bbox", []) or [])
+                    if len(bbox_values) >= 4:
+                        bbox = (
+                            float(bbox_values[0]),
+                            float(bbox_values[1]),
+                            float(bbox_values[2]),
+                            float(bbox_values[3]),
+                        )
+                    else:
+                        bbox = (0.0, 0.0, 0.0, 0.0)
                     stats = {
                         "rowCount": len(body_rows),
                         "columnCount": len(matrix[0]) if matrix else 0,

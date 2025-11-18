@@ -41,7 +41,7 @@ class DSARRequest(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
     artifact_path = Column(Text, nullable=True)
     failure_reason = Column(Text, nullable=True)
-    metadata = Column(JSONB, nullable=False, default=dict)
+    metadata = Column(JSONB, nullable=False, default=dict)  # type: ignore[assignment]
 
 
 __all__ = ["DSARRequest"]

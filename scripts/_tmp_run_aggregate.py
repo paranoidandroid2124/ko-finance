@@ -3,7 +3,7 @@ import types
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-sys.modules.setdefault("fitz", types.SimpleNamespace())
+sys.modules.setdefault("fitz", types.ModuleType("fitz"))
 
 import parse.tasks as tasks
 
@@ -62,7 +62,7 @@ class DummySession:
 original_session_local = tasks.SessionLocal
 try:
     tasks.SessionLocal = lambda: DummySession()
-    result = tasks.aggregate_news_metrics()
+    result = tasks.aggregate_news_data()
     print("aggregate_news_metrics result:\n", result)
 finally:
     tasks.SessionLocal = original_session_local

@@ -2,38 +2,45 @@
 
 from __future__ import annotations
 
-import json
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
+from filelock import FileLock
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, MutableMapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
-STORE_PATH = Path("uploads") / "watchlist" / "digest_schedules.json"
+from core.env import env_int, env_str
+from services.json_store import ensure_parent_dir, read_json_document, write_json_document
+
+DEFAULT_STORE_PATH = Path(env_str("WATCHLIST_DIGEST_STORE_FILE") or (Path("uploads") / "watchlist" / "digest_schedules.json"))
+STORE_PATH = DEFAULT_STORE_PATH
 _LOCK = threading.RLock()
 DEFAULT_TIMEZONE = "Asia/Seoul"
+_LOCK_TIMEOUT = env_int("WATCHLIST_DIGEST_LOCK_TIMEOUT_SECONDS", 5, minimum=1)
 
 
-def _ensure_store_dir() -> None:
-    STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+def _store_lock_path() -> Path:
+    ensure_parent_dir(STORE_PATH)
+    if STORE_PATH.suffix:
+        return STORE_PATH.with_suffix(STORE_PATH.suffix + ".lock")
+    return STORE_PATH.with_name(f"{STORE_PATH.name}.lock")
+
+
+def _file_lock() -> FileLock:
+    ensure_parent_dir(STORE_PATH)
+    return FileLock(str(_store_lock_path()), timeout=_LOCK_TIMEOUT)
 
 
 def _load_store() -> Dict[str, Dict[str, Any]]:
-    if not STORE_PATH.exists():
-        return {}
-    try:
-        raw = json.loads(STORE_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
-    if isinstance(raw, dict):
-        return raw
+    payload = read_json_document(STORE_PATH, default=dict)
+    if isinstance(payload, dict):
+        return payload
     return {}
 
 
 def _save_store(store: Dict[str, Dict[str, Any]]) -> None:
-    _ensure_store_dir()
-    STORE_PATH.write_text(json.dumps(store, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_document(STORE_PATH, store)
 
 
 def _parse_time_of_day(value: str) -> Tuple[int, int]:
@@ -88,7 +95,8 @@ def _compute_next_run(
 
 def list_schedules(owner_filters: Mapping[str, Optional[uuid.UUID]]) -> List[Dict[str, Any]]:
     with _LOCK:
-        store = _load_store()
+        with _file_lock():
+            store = _load_store()
         rows = [
             dict(value)
             for value in store.values()
@@ -99,7 +107,8 @@ def list_schedules(owner_filters: Mapping[str, Optional[uuid.UUID]]) -> List[Dic
 
 def load_schedule(schedule_id: uuid.UUID, owner_filters: Mapping[str, Optional[uuid.UUID]]) -> Optional[Dict[str, Any]]:
     with _LOCK:
-        store = _load_store()
+        with _file_lock():
+            store = _load_store()
         entry = store.get(str(schedule_id))
         if entry and _owner_matches(entry, owner_filters):
             return dict(entry)
@@ -154,9 +163,10 @@ def create_schedule(
     next_run = _compute_next_run(storage_entry)
     storage_entry["next_run_at"] = next_run.isoformat()
     with _LOCK:
-        store = dict(_load_store())
-        store[str(schedule_id)] = storage_entry
-        _save_store(store)
+        with _file_lock():
+            store = dict(_load_store())
+            store[str(schedule_id)] = storage_entry
+            _save_store(store)
     return dict(storage_entry)
 
 
@@ -176,66 +186,69 @@ def update_schedule(
     actor: Optional[str] = None,
 ) -> Dict[str, Any]:
     with _LOCK:
-        store = dict(_load_store())
-        entry = store.get(str(schedule_id))
-        if not entry or not _owner_matches(entry, owner_filters):
-            raise KeyError("schedule_not_found")
-        if slack_targets is not None or email_targets is not None:
-            _validate_targets(slack_targets or entry.get("slack_targets") or [], email_targets or entry.get("email_targets") or [])
-        if label is not None:
-            entry["label"] = label.strip() or entry["label"]
-        if window_minutes is not None:
-            entry["window_minutes"] = int(window_minutes)
-        if limit is not None:
-            entry["limit"] = int(limit)
-        if time_of_day is not None:
-            _parse_time_of_day(time_of_day)
-            entry["time_of_day"] = time_of_day
-        if timezone_name is not None:
-            entry["timezone"] = _normalize_timezone(timezone_name)
-        if weekdays_only is not None:
-            entry["weekdays_only"] = bool(weekdays_only)
-        if slack_targets is not None:
-            entry["slack_targets"] = [target.strip() for target in slack_targets if target.strip()]
-        if email_targets is not None:
-            entry["email_targets"] = [target.strip() for target in email_targets if target.strip()]
-        if enabled is not None:
-            entry["enabled"] = bool(enabled)
-        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
-        entry["updated_by"] = actor or entry.get("updated_by")
-        entry["next_run_at"] = _compute_next_run(entry).isoformat()
-        store[str(schedule_id)] = entry
-        _save_store(store)
+        with _file_lock():
+            store = dict(_load_store())
+            entry = store.get(str(schedule_id))
+            if not entry or not _owner_matches(entry, owner_filters):
+                raise KeyError("schedule_not_found")
+            if slack_targets is not None or email_targets is not None:
+                _validate_targets(slack_targets or entry.get("slack_targets") or [], email_targets or entry.get("email_targets") or [])
+            if label is not None:
+                entry["label"] = label.strip() or entry["label"]
+            if window_minutes is not None:
+                entry["window_minutes"] = int(window_minutes)
+            if limit is not None:
+                entry["limit"] = int(limit)
+            if time_of_day is not None:
+                _parse_time_of_day(time_of_day)
+                entry["time_of_day"] = time_of_day
+            if timezone_name is not None:
+                entry["timezone"] = _normalize_timezone(timezone_name)
+            if weekdays_only is not None:
+                entry["weekdays_only"] = bool(weekdays_only)
+            if slack_targets is not None:
+                entry["slack_targets"] = [target.strip() for target in slack_targets if target.strip()]
+            if email_targets is not None:
+                entry["email_targets"] = [target.strip() for target in email_targets if target.strip()]
+            if enabled is not None:
+                entry["enabled"] = bool(enabled)
+            entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+            entry["updated_by"] = actor or entry.get("updated_by")
+            entry["next_run_at"] = _compute_next_run(entry).isoformat()
+            store[str(schedule_id)] = entry
+            _save_store(store)
     return dict(entry)
 
 
 def delete_schedule(schedule_id: uuid.UUID, owner_filters: Mapping[str, Optional[uuid.UUID]]) -> None:
     with _LOCK:
-        store = dict(_load_store())
-        entry = store.get(str(schedule_id))
-        if not entry or not _owner_matches(entry, owner_filters):
-            raise KeyError("schedule_not_found")
-        store.pop(str(schedule_id), None)
-        _save_store(store)
+        with _file_lock():
+            store = dict(_load_store())
+            entry = store.get(str(schedule_id))
+            if not entry or not _owner_matches(entry, owner_filters):
+                raise KeyError("schedule_not_found")
+            store.pop(str(schedule_id), None)
+            _save_store(store)
 
 
 def list_due_schedules(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     current = (now or datetime.now(timezone.utc))
     with _LOCK:
-        store = _load_store()
-        due = []
-        for entry in store.values():
-            if not entry.get("enabled"):
-                continue
-            next_run = entry.get("next_run_at")
-            if not next_run:
-                continue
-            try:
-                next_dt = datetime.fromisoformat(next_run)
-            except ValueError:
-                continue
-            if next_dt <= current:
-                due.append(dict(entry))
+        with _file_lock():
+            store = _load_store()
+            due = []
+            for entry in store.values():
+                if not entry.get("enabled"):
+                    continue
+                next_run = entry.get("next_run_at")
+                if not next_run:
+                    continue
+                try:
+                    next_dt = datetime.fromisoformat(next_run)
+                except ValueError:
+                    continue
+                if next_dt <= current:
+                    due.append(dict(entry))
     return due
 
 
@@ -248,20 +261,21 @@ def mark_dispatched(
     last_error: Optional[str] = None,
 ) -> None:
     with _LOCK:
-        store = dict(_load_store())
-        entry = store.get(str(schedule_id))
-        if not entry:
-            return
-        entry["last_dispatched_at"] = dispatched_at.isoformat()
-        entry["last_status"] = status
-        entry["last_error"] = last_error
-        if next_run:
-            entry["next_run_at"] = next_run.isoformat()
-        else:
-            entry["next_run_at"] = _compute_next_run(entry, from_time=dispatched_at + timedelta(minutes=1)).isoformat()
-        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
-        store[str(schedule_id)] = entry
-        _save_store(store)
+        with _file_lock():
+            store = dict(_load_store())
+            entry = store.get(str(schedule_id))
+            if not entry:
+                return
+            entry["last_dispatched_at"] = dispatched_at.isoformat()
+            entry["last_status"] = status
+            entry["last_error"] = last_error
+            if next_run:
+                entry["next_run_at"] = next_run.isoformat()
+            else:
+                entry["next_run_at"] = _compute_next_run(entry, from_time=dispatched_at + timedelta(minutes=1)).isoformat()
+            entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+            store[str(schedule_id)] = entry
+            _save_store(store)
 
 
 __all__ = [

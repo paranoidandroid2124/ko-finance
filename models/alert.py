@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from sqlalchemy import (
     Column,
@@ -72,18 +72,18 @@ class AlertRule(Base):
 
     @property
     def throttle_until(self) -> Optional[datetime]:
-        return self.cooled_until
+        return cast(Optional[datetime], self.cooled_until)
 
     @throttle_until.setter
     def throttle_until(self, value: Optional[datetime]) -> None:
         self.cooled_until = value
 
-    def _frequency_payload(self) -> Dict[str, object]:
+    def _frequency_payload(self) -> Dict[str, Any]:
         payload = self.frequency or {}
         return payload if isinstance(payload, dict) else {}
 
     def _frequency_int(self, key: str, default: int, *, minimum: int = 0) -> int:
-        value = self._frequency_payload().get(key)
+        value: Any = self._frequency_payload().get(key)
         try:
             candidate = int(value)
         except (TypeError, ValueError):
@@ -91,7 +91,7 @@ class AlertRule(Base):
         return max(candidate, minimum)
 
     def _frequency_optional_int(self, key: str) -> Optional[int]:
-        value = self._frequency_payload().get(key)
+        value: Any = self._frequency_payload().get(key)
         if value in (None, "", False):
             return None
         try:
@@ -145,26 +145,31 @@ class AlertRule(Base):
 
     def should_evaluate(self, now: datetime) -> bool:
         """Determine whether the rule is due for evaluation."""
-        if self.status != "active":
+        status_value = cast(Optional[str], self.status)
+        if status_value != "active":
             return False
-        if self.cooled_until and self.cooled_until > now:
+        cooled_until = cast(Optional[datetime], self.cooled_until)
+        if cooled_until and cooled_until > now:
             return False
-        if self.last_evaluated_at is None:
+        last_evaluated_at = cast(Optional[datetime], self.last_evaluated_at)
+        if last_evaluated_at is None:
             return True
         interval = max(self.evaluation_interval_minutes or 1, 1)
-        due_at = self.last_evaluated_at + timedelta(minutes=interval)
+        due_at = last_evaluated_at + timedelta(minutes=interval)
         return due_at <= now
 
     def remaining_cooldown(self, now: datetime) -> int:
-        if self.cooled_until and self.cooled_until > now:
-            delta = self.cooled_until - now
+        cooled_until = cast(Optional[datetime], self.cooled_until)
+        if cooled_until and cooled_until > now:
+            delta = cooled_until - now
             return max(int(delta.total_seconds() // 60), 0)
-        if self.last_triggered_at is None:
+        last_triggered_at = cast(Optional[datetime], self.last_triggered_at)
+        if last_triggered_at is None:
             return 0
         cooldown = max(self.cooldown_minutes or 0, 0)
         if cooldown == 0:
             return 0
-        unlock_at = self.last_triggered_at + timedelta(minutes=cooldown)
+        unlock_at = last_triggered_at + timedelta(minutes=cooldown)
         if unlock_at <= now:
             return 0
         return max(int((unlock_at - now).total_seconds() // 60), 0)

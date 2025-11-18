@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Literal, Optional, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from core.plan_constants import PlanTier
 from schemas.api.plan import PlanMemoryFlagsSchema
@@ -775,6 +776,20 @@ class PlanQuickAdjustRequest(AdminBaseModel):
         return normalized
 
 
+class AdminUserPlanUpdateRequest(AdminBaseModel):
+    email: EmailStr = Field(..., description="플랜을 변경할 사용자 이메일.")
+    planTier: PlanTier = Field(..., description="설정할 플랜 티어.")
+    note: Optional[str] = Field(default=None, max_length=500, description="변경 사유 또는 메모.")
+
+
+class AdminUserPlanUpdateResponse(AdminBaseModel):
+    userId: str = Field(..., description="사용자 ID.")
+    email: EmailStr = Field(..., description="사용자 이메일.")
+    planTier: PlanTier = Field(..., description="변경된 플랜 티어.")
+    previousPlanTier: PlanTier = Field(..., description="변경 이전 플랜.")
+    updatedAt: str = Field(..., description="갱신 시각(ISO8601).")
+
+
 class TossWebhookReplayRequest(AdminBaseModel):
     transmissionId: str = Field(..., description="재처리할 Toss webhook transmission ID.")
 
@@ -791,11 +806,9 @@ class AdminSessionCreateRequest(AdminBaseModel):
     idToken: Optional[str] = Field(default=None, description="Google Workspace ID 토큰.")
     actorOverride: Optional[str] = Field(default=None, description="(정적 토큰 전용) actor 라벨을 덮어쓸 때 사용합니다.")
 
-    @model_validator(mode="after")
-    def validate_credentials(cls, values: "AdminSessionCreateRequest") -> "AdminSessionCreateRequest":
-        if not values.token and not values.idToken:
+    def model_post_init(self, __context: Any) -> None:
+        if not self.token and not self.idToken:
             raise ValueError("token 또는 idToken 중 하나는 반드시 필요합니다.")
-        return values
 
 
 class AdminSessionResponse(AdminBaseModel):

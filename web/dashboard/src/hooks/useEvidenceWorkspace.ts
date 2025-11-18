@@ -15,7 +15,7 @@ import type {
   EvidenceTableReference,
   EvidenceTableCell,
   EvidenceDocumentMeta,
-} from "@/components/evidence";
+} from "@/components/evidence/types";
 
 type MappedWorkspace = {
   evidence: EvidencePanelItem[];

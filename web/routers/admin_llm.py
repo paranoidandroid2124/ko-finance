@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import difflib
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
@@ -353,7 +353,7 @@ def list_guardrail_samples(
     search: Optional[str] = Query(default=None, alias="q"),
     bookmarked: Optional[bool] = Query(default=None),
 ) -> AdminGuardrailSampleListResponse:
-    raw_samples = admin_llm_store.list_guardrail_samples(
+    raw_samples: List[Dict[str, Any]] = admin_llm_store.list_guardrail_samples(
         limit=limit + 1, search=search, bookmarked=bookmarked
     )
     has_more = len(raw_samples) > limit

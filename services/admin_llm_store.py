@@ -7,7 +7,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
 
 from core.logging import get_logger
 from services.admin_audit import append_audit_log
@@ -31,7 +31,7 @@ _GUARDRAIL_PATH = _ADMIN_DIR / "guardrails_policy.json"
 _SAMPLES_PATH = _ADMIN_DIR / "guardrail_samples.jsonl"
 _SAMPLE_LIMIT_DEFAULT = 200
 
-_DEFAULT_PROMPTS = {
+_DEFAULT_PROMPTS: Dict[str, Dict[str, Any]] = {
     "chat": {
         "prompt": "You are K-Finance Copilot. Respond with warm, social-enterprise tone.",
         "updatedBy": "system",
@@ -57,7 +57,7 @@ _DEFAULT_GUARDRAIL_POLICY = {
     "updatedBy": None,
 }
 
-def load_litellm_config(path: Optional[Path] = None) -> Tuple[Path, Dict[str, object]]:
+def load_litellm_config(path: Optional[Path] = None) -> Tuple[Path, Dict[str, Any]]:
     """
     Load the LiteLLM configuration YAML file.
 
@@ -80,7 +80,7 @@ def load_litellm_config(path: Optional[Path] = None) -> Tuple[Path, Dict[str, ob
         raise RuntimeError(f"Failed to read LiteLLM config: {exc}") from exc
 
 
-def save_litellm_config(path: Path, config: Dict[str, object]) -> None:
+def save_litellm_config(path: Path, config: Dict[str, Any]) -> None:
     if yaml is None:
         raise RuntimeError("PyYAML is required to manage LiteLLM profiles.")
     try:
@@ -101,7 +101,7 @@ def _resolve_litellm_config_path() -> Optional[Path]:
     return None
 
 
-def list_litellm_profiles(config: Dict[str, object]) -> List[Dict[str, object]]:
+def list_litellm_profiles(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     model_list = config.get("model_list")
     if not isinstance(model_list, list):
         return []
@@ -125,12 +125,12 @@ def list_litellm_profiles(config: Dict[str, object]) -> List[Dict[str, object]]:
 
 
 def upsert_litellm_profile(
-    config: Dict[str, object],
+    config: Dict[str, Any],
     *,
     name: str,
     model: str,
-    settings: Dict[str, object],
-) -> Dict[str, object]:
+    settings: Dict[str, Any],
+) -> Dict[str, Any]:
     model_list = config.setdefault("model_list", [])
     if not isinstance(model_list, list):
         raise RuntimeError("Invalid LiteLLM configuration: model_list must be a list.")
@@ -141,7 +141,7 @@ def upsert_litellm_profile(
             target_entry = entry
             break
 
-    params = {"model": model}
+    params: Dict[str, Any] = {"model": model}
     params.update(settings)
 
     if target_entry is None:
@@ -156,18 +156,18 @@ def upsert_litellm_profile(
     }
 
 
-def load_system_prompts() -> Dict[str, Dict[str, object]]:
+def load_system_prompts() -> Dict[str, Dict[str, Any]]:
     if _PROMPTS_PATH.exists():
         try:
             payload = json.loads(_PROMPTS_PATH.read_text(encoding="utf-8"))
             if isinstance(payload, dict):
-                return payload
+                return cast(Dict[str, Dict[str, Any]], payload)
         except json.JSONDecodeError as exc:  # pragma: no cover
             logger.warning("Failed to parse system prompts store: %s", exc)
-    return dict(_DEFAULT_PROMPTS)
+    return {channel: dict(config) for channel, config in _DEFAULT_PROMPTS.items()}
 
 
-def save_system_prompts(prompts: Dict[str, Dict[str, object]]) -> None:
+def save_system_prompts(prompts: Dict[str, Dict[str, Any]]) -> None:
     ensure_parent_dir(_PROMPTS_PATH, logger)
     try:
         _PROMPTS_PATH.write_text(json.dumps(prompts, ensure_ascii=False, indent=2), encoding="utf-8")

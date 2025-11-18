@@ -7,9 +7,9 @@ import os
 from typing import Optional
 
 try:  # pragma: no cover - optional dependency
-    from google.cloud import logging as gcp_logging
+    from google.cloud import logging as gcp_logging  # type: ignore[reportMissingImports]
 except Exception:  # pragma: no cover - GCP logging optional
-    gcp_logging = None
+    gcp_logging = None  # type: ignore[assignment]
 
 _CONFIGURED = False
 _CLOUD_HANDLER_ATTACHED = False

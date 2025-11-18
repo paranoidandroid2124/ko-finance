@@ -46,7 +46,7 @@ class EventRecord(Base):
     is_restatement = Column(Boolean, nullable=False, default=False, server_default="false")
     matches = Column(JSONB, nullable=True)
     metadata_json = Column("metadata", JSONB, nullable=True)
-    metadata = JSONMetadataProxy("metadata_json")
+    metadata = JSONMetadataProxy("metadata_json")  # type: ignore[assignment]
     market_cap = Column(Numeric, nullable=True)
     cap_bucket = Column(String, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -161,7 +161,7 @@ class EventAlertMatch(Base):
     alert_id = Column(UUID(as_uuid=True), ForeignKey("alert_rules.id", ondelete="CASCADE"), nullable=False, index=True)
     match_score = Column(Numeric, nullable=True)
     metadata_json = Column("metadata", JSONB, nullable=False, default=dict)
-    metadata = JSONMetadataProxy("metadata_json")
+    metadata = JSONMetadataProxy("metadata_json")  # type: ignore[assignment]
     matched_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
@@ -178,7 +178,7 @@ class EventIngestJob(Base):
     events_skipped = Column(Integer, nullable=False, default=0)
     errors = Column(JSONB, nullable=False, default=dict)
     metadata_json = Column("metadata", JSONB, nullable=False, default=dict)
-    metadata = JSONMetadataProxy("metadata_json")
+    metadata = JSONMetadataProxy("metadata_json")  # type: ignore[assignment]
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

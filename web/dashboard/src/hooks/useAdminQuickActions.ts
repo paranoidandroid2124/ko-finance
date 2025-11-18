@@ -7,9 +7,12 @@ import {
   applyPlanQuickAdjust,
   fetchTossWebhookAudit,
   triggerQuickAction,
+  updateUserPlanTier,
   type AdminQuickActionId,
   type AdminQuickActionPayload,
   type AdminQuickActionResult,
+  type AdminUserPlanUpdatePayload,
+  type AdminUserPlanUpdateResult,
   type PlanQuickAdjustPayload,
   type WebhookAuditEntry,
 } from "@/lib/adminApi";
@@ -49,6 +52,11 @@ export const usePlanQuickAdjust = () => {
     },
   });
 };
+
+export const useUpdateUserPlanTier = () =>
+  useMutation<AdminUserPlanUpdateResult, Error, AdminUserPlanUpdatePayload>({
+    mutationFn: (payload) => updateUserPlanTier(payload),
+  });
 
 type QuickActionMutationInput = AdminQuickActionPayload & {
   action: AdminQuickActionId;

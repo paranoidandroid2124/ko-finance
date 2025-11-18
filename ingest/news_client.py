@@ -1,7 +1,7 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from schemas.news import NewsArticleCreate
 
@@ -18,10 +18,10 @@ class MockNewsClient:
         logger.info("목업 뉴스 클라이언트가 초기화되었습니다.")
 
     def fetch_news(
-        self, 
-        query: str = "", 
-        tickers: List[str] = None,
-        limit: int = 10
+        self,
+        query: str = "",
+        tickers: Optional[List[str]] = None,
+        limit: int = 10,
     ) -> List[NewsArticleCreate]:
         """
         저장된 목업 데이터베이스에서 뉴스 기사를 필터링하여 가져옵니다.

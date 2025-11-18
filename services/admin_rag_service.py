@@ -8,7 +8,7 @@ import math
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Mapping, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Mapping, Sequence, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -367,10 +367,11 @@ def load_retry_queue() -> List[Dict[str, object]]:
     for item in payload:
         if isinstance(item, dict):
             entries.append(item)
-    entries.sort(
-        key=lambda entry: entry.get("updatedAt") or entry.get("createdAt") or "",
-        reverse=True,
-    )
+    def _retry_sort_key(entry: Mapping[str, Any]) -> str:
+        raw_value = entry.get("updatedAt") or entry.get("createdAt")
+        return raw_value if isinstance(raw_value, str) else ""
+
+    entries.sort(key=_retry_sort_key, reverse=True)
     return entries
 
 
@@ -389,10 +390,11 @@ def collect_due_retry_entries(
         status = str(entry.get("status") or "").lower()
         if status not in {"queued", "failed"}:
             continue
-        attempts = int(entry.get("attempts") or 0)
+        attempts = _coerce_int(entry.get("attempts")) or 0
         if attempts >= max_attempts:
             continue
-        last_attempt_at = parse_iso_datetime(entry.get("lastAttemptAt"))
+        last_attempt_raw = entry.get("lastAttemptAt")
+        last_attempt_at = parse_iso_datetime(last_attempt_raw if isinstance(last_attempt_raw, str) else None)
         if last_attempt_at is None:
             due_entries.append(entry)
             continue
@@ -406,7 +408,8 @@ def compute_next_retry_time(
     *,
     cooldown_minutes: int,
 ) -> Optional[datetime]:
-    last_attempt_at = parse_iso_datetime(entry.get("lastAttemptAt"))
+    last_attempt_raw = entry.get("lastAttemptAt")
+    last_attempt_at = parse_iso_datetime(last_attempt_raw if isinstance(last_attempt_raw, str) else None)
     if last_attempt_at is None:
         return None
     return last_attempt_at + timedelta(minutes=max(cooldown_minutes, 0))
@@ -428,7 +431,8 @@ def compute_retry_entry_age(entry: Mapping[str, Any], *, now: Optional[datetime]
     reference = now or datetime.now(timezone.utc)
     candidate_times: List[datetime] = []
     for field in ("lastAttemptAt", "createdAt", "updatedAt"):
-        parsed = parse_iso_datetime(entry.get(field))
+        raw_value = entry.get(field)
+        parsed = parse_iso_datetime(raw_value if isinstance(raw_value, str) else None)
         if parsed:
             candidate_times.append(parsed)
     if not candidate_times:
@@ -683,18 +687,22 @@ def collect_evidence_diff(
     snapshot_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
     for snapshot in rows:
-        payload = snapshot.payload or {}
-        cache_key = (str(snapshot.urn_id or ""), str(snapshot.snapshot_hash or ""))
+        payload_raw = cast(Any, snapshot.payload)
+        payload: Dict[str, Any] = payload_raw if isinstance(payload_raw, dict) else {}
+        urn_value = cast(Optional[str], cast(Any, snapshot.urn_id))
+        snapshot_hash = cast(Optional[str], cast(Any, snapshot.snapshot_hash))
+        cache_key = (urn_value or "", snapshot_hash or "")
         snapshot_cache[cache_key] = payload
 
         source_value = str(payload.get("source") or payload.get("source_name") or "").strip().lower()
         if apply_filter and source_value not in scope_filter:
             continue
 
-        diff_type = str(snapshot.diff_type or "").lower()
+        diff_type = str(cast(Optional[str], cast(Any, snapshot.diff_type)) or "").lower()
         previous_payload: Dict[str, Any] = {}
-        if snapshot.previous_snapshot_hash:
-            previous_key = (str(snapshot.urn_id or ""), str(snapshot.previous_snapshot_hash))
+        previous_hash = cast(Optional[str], cast(Any, snapshot.previous_snapshot_hash))
+        if previous_hash:
+            previous_key = (cache_key[0], previous_hash)
             previous_payload = snapshot_cache.get(previous_key, {})
             if not previous_payload:
                 try:
@@ -702,7 +710,10 @@ def collect_evidence_diff(
                 except Exception:
                     previous_snapshot = None
                 if previous_snapshot is not None:
-                    previous_payload = previous_snapshot.payload or {}
+                    previous_payload_raw = cast(Any, previous_snapshot.payload)
+                    previous_payload = (
+                        previous_payload_raw if isinstance(previous_payload_raw, dict) else {}
+                    )
                     snapshot_cache[previous_key] = previous_payload
 
         visible_payload = payload
@@ -722,7 +733,7 @@ def collect_evidence_diff(
         if len(samples) >= _EVIDENCE_DIFF_SAMPLE_LIMIT:
             continue
 
-        urn_id = str(snapshot.urn_id or "")
+        urn_id = cache_key[0]
         if urn_id and urn_id in seen_samples:
             continue
         if urn_id:
@@ -787,6 +798,7 @@ def collect_evidence_diff(
             if isinstance(prev_section_candidate, str) and prev_section_candidate.strip():
                 previous_section_value = prev_section_candidate
 
+        updated_at_value = cast(Optional[datetime], cast(Any, snapshot.updated_at))
         sample_entry: Dict[str, Any] = {
             "urnId": urn_id or None,
             "diffType": diff_type,
@@ -794,7 +806,7 @@ def collect_evidence_diff(
             "section": visible_payload.get("section"),
             "quote": quote_text,
             "chunkId": visible_payload.get("chunk_id") or visible_payload.get("id"),
-            "updatedAt": snapshot.updated_at.isoformat() if snapshot.updated_at else None,
+            "updatedAt": updated_at_value.isoformat() if updated_at_value else None,
         }
         if diff_changes:
             sample_entry["changes"] = diff_changes
@@ -864,11 +876,17 @@ def summarize_reindex_history(records: Iterable[Mapping[str, Any]]) -> Dict[str,
 
     completed = sum(1 for item in items if str(item.get("status") or "").lower() == "completed")
     failed = sum(1 for item in items if str(item.get("status") or "").lower() == "failed")
-    traced_urls = [str(item.get("langfuseTraceUrl")) for item in items if item.get("langfuseTraceUrl")]
+    traced_urls = [
+        value for value in (item.get("langfuseTraceUrl") for item in items) if isinstance(value, str)
+    ]
     traced = len(traced_urls)
-    durations = [int(item.get("durationMs")) for item in items if isinstance(item.get("durationMs"), int)]
-    total_elapsed = [int(item.get("totalElapsedMs")) for item in items if isinstance(item.get("totalElapsedMs"), int)]
-    queue_waits = [int(item.get("queueWaitMs")) for item in items if isinstance(item.get("queueWaitMs"), int)]
+    durations = [value for value in (_coerce_int(item.get("durationMs")) for item in items) if value is not None]
+    total_elapsed = [
+        value for value in (_coerce_int(item.get("totalElapsedMs")) for item in items) if value is not None
+    ]
+    queue_waits = [
+        value for value in (_coerce_int(item.get("queueWaitMs")) for item in items) if value is not None
+    ]
     average = int(sum(durations) / len(durations)) if durations else None
 
     mode_usage: Dict[str, int] = {}
@@ -883,7 +901,7 @@ def summarize_reindex_history(records: Iterable[Mapping[str, Any]]) -> Dict[str,
         if len(latest_urls) >= 5:
             break
 
-    timestamps = [item.get("timestamp") for item in items if item.get("timestamp")]
+    timestamps = [value for value in (item.get("timestamp") for item in items) if isinstance(value, str)]
     last_run_at = max(timestamps) if timestamps else None
     sla_target_ms = REINDEX_SLA_MINUTES * 60 * 1000
     sla_breaches = sum(1 for value in total_elapsed if value > sla_target_ms)
@@ -964,13 +982,11 @@ def summarize_retry_queue(entries: Iterable[Mapping[str, Any]]) -> Dict[str, Any
             manual_mode += 1
 
         cooldown_raw = item.get("cooldownUntil")
-        cooldown_at = parse_iso_datetime(cooldown_raw) if cooldown_raw else None
-        max_attempts = item.get("maxAttempts") or AUTO_RETRY_MAX_ATTEMPTS
-        attempts = item.get("attempts") or 0
-        if isinstance(attempts, str) and attempts.isdigit():
-            attempts = int(attempts)
-        if isinstance(max_attempts, str) and max_attempts.isdigit():
-            max_attempts = int(max_attempts)
+        cooldown_at = (
+            parse_iso_datetime(cooldown_raw if isinstance(cooldown_raw, str) else None) if cooldown_raw else None
+        )
+        max_attempts = _coerce_int(item.get("maxAttempts")) or AUTO_RETRY_MAX_ATTEMPTS
+        attempts = _coerce_int(item.get("attempts")) or 0
         if attempts >= max_attempts:
             stalled += 1
 

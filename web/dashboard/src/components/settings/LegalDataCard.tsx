@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import { ShieldCheck } from "lucide-react";
 
 import { SettingsDataRetentionList } from "@/components/legal";
@@ -67,18 +68,27 @@ export function LegalDataCard() {
         <SettingsDataRetentionList className="mt-2" />
         <p className="mt-4">
           세부 정책과 DSAR 절차는{" "}
-          <Link href="/legal/privacy" className="text-primary underline-offset-2 hover:underline dark:text-primary.dark">
+          <Link
+            href={"/legal/privacy" as Route}
+            className="text-primary underline-offset-2 hover:underline dark:text-primary.dark"
+          >
             개인정보 처리방침
           </Link>{" "}
           및{" "}
-          <Link href="/legal/data" className="text-primary underline-offset-2 hover:underline dark:text-primary.dark">
+          <Link
+            href={"/legal/data" as Route}
+            className="text-primary underline-offset-2 hover:underline dark:text-primary.dark"
+          >
             데이터 & 라이선스 정책
           </Link>{" "}
           페이지에서 확인할 수 있습니다.
         </p>
         <p className="mt-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
           상세 이력과 처리 현황은{" "}
-          <Link href="/settings/privacy" className="text-primary underline-offset-2 hover:underline dark:text-primary.dark">
+          <Link
+            href={"/settings/privacy" as Route}
+            className="text-primary underline-offset-2 hover:underline dark:text-primary.dark"
+          >
             개인정보·데이터 관리 화면
           </Link>{" "}
           에서 언제든지 확인할 수 있습니다.

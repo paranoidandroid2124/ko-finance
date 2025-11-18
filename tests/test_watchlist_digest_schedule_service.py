@@ -15,7 +15,6 @@ class DummySession:
 def _reset_store(tmp_path, monkeypatch):
     store_path = tmp_path / "digest_schedules.json"
     monkeypatch.setattr(schedule_service, "STORE_PATH", store_path)
-    monkeypatch.setattr(schedule_service, "_CACHE", None)
     yield
     if store_path.exists():
         store_path.unlink()

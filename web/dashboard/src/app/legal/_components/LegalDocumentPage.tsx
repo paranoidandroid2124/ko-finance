@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import type { Route } from "next";
 import classNames from "classnames";
 
 export type LegalSectionContent =
@@ -51,10 +52,24 @@ function renderContent(content: LegalSectionContent, index: number): ReactNode {
     );
   }
   if (content.type === "link") {
+    const isExternal = /^https?:\/\//i.test(content.href);
+    if (isExternal) {
+      return (
+        <a
+          key={index}
+          href={content.href}
+          target="_blank"
+          rel="noreferrer"
+          className="text-sm font-semibold text-primary hover:underline dark:text-primary.dark"
+        >
+          {content.label}
+        </a>
+      );
+    }
     return (
       <Link
         key={index}
-        href={content.href}
+        href={content.href as Route}
         className="text-sm font-semibold text-primary hover:underline dark:text-primary.dark"
       >
         {content.label}

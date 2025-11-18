@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
-import { EvidencePanel, type EvidencePanelItem, type PlanTier } from "@/components/evidence/EvidencePanel";
+import { EvidencePanel, type EvidencePanelItem } from "@/components/evidence/EvidencePanel";
+import type { PlanTier } from "@/store/planStore/types";
 import { useEvidenceWorkspaceStore } from "@/store/evidenceWorkspaceStore";
 import { EvidenceDetailPanel } from "@/components/evidence/EvidenceDetailPanel";
 import { EvidenceLayout } from "@/components/evidence/EvidenceLayout";

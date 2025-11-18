@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import os
 import uuid
 from pathlib import Path as FilePath
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from fastapi import HTTPException, Path, Query, status
 from fastapi.responses import FileResponse
@@ -119,6 +119,22 @@ def _news_pipeline_response(raw: Dict[str, object]) -> AdminOpsNewsPipelineRespo
     )
 
 
+def _coerce_langfuse_config(value: object) -> AdminOpsLangfuseConfigSchema:
+    payload: Dict[str, Any] = {}
+    if isinstance(value, Mapping):
+        payload = dict(value)
+    default_env = payload.get("defaultEnvironment")
+    if not isinstance(default_env, str) or not default_env.strip():
+        payload["defaultEnvironment"] = "production"
+    environments = payload.get("environments")
+    if not isinstance(environments, list):
+        payload["environments"] = []
+    try:
+        return AdminOpsLangfuseConfigSchema(**payload)
+    except Exception:
+        return AdminOpsLangfuseConfigSchema(defaultEnvironment="production", environments=[])
+
+
 def _api_keys_response(raw: Dict[str, object]) -> AdminOpsApiKeyResponse:
     external = []
     for item in raw.get("externalApis", []):
@@ -127,8 +143,9 @@ def _api_keys_response(raw: Dict[str, object]) -> AdminOpsApiKeyResponse:
                 external.append(AdminOpsApiKeySchema(**item))
             except Exception:
                 continue
+    langfuse = _coerce_langfuse_config(raw.get("langfuse"))
     secrets = AdminOpsApiKeyCollection(
-        langfuse=dict(raw.get("langfuse") or {}),
+        langfuse=langfuse,
         externalApis=external,
     )
     return AdminOpsApiKeyResponse(

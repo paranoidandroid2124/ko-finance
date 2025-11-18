@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
+import type { Route } from "next";
 import clsx from "clsx";
 import { AlertTriangle, DownloadCloud, Loader2, RefreshCw, ShieldCheck, X } from "lucide-react";
 
@@ -154,11 +155,17 @@ export default function PrivacySettingsPage() {
             <SettingsDataRetentionList className="mt-3" />
             <p className="mt-4">
               개인정보 처리방침과 데이터 & 라이선스 정책은 각각{" "}
-              <Link href="/legal/privacy" className="text-primary underline-offset-2 hover:underline dark:text-primary.dark">
+              <Link
+                href={"/legal/privacy" as Route}
+                className="text-primary underline-offset-2 hover:underline dark:text-primary.dark"
+              >
                 /legal/privacy
               </Link>{" "}
               ,{" "}
-              <Link href="/legal/data" className="text-primary underline-offset-2 hover:underline dark:text-primary.dark">
+              <Link
+                href={"/legal/data" as Route}
+                className="text-primary underline-offset-2 hover:underline dark:text-primary.dark"
+              >
                 /legal/data
               </Link>{" "}
               페이지에서 자세히 확인할 수 있습니다.

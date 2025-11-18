@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 from scripts._path import add_root
 
@@ -31,9 +31,10 @@ def _parse_bool(value: str) -> bool:
 
 
 def _format_flag(flag: IngestViewerFlag) -> str:
-    status = "ENABLED" if flag.fallback_enabled else "DISABLED"
-    reason = flag.reason or "-"
-    updated_by = flag.updated_by or "-"
+    enabled = bool(getattr(flag, "fallback_enabled", False))
+    status = "ENABLED" if enabled else "DISABLED"
+    reason = getattr(flag, "reason", None) or "-"
+    updated_by = getattr(flag, "updated_by", None) or "-"
     return f"{flag.corp_code:<10} {status:<8} reason={reason} updated_by={updated_by}"
 
 

@@ -63,5 +63,6 @@ else:
 if schedule_from_yaml:
     app.conf.beat_schedule.update(schedule_from_yaml)
 if yaml_timezone:
-    app.conf.timezone = yaml_timezone
-app.conf.enable_utc = (app.conf.timezone or "UTC").upper() == "UTC"
+    app.conf.update(timezone=yaml_timezone)
+current_tz = getattr(app.conf, "timezone", None) or "UTC"
+app.conf.enable_utc = str(current_tz).upper() == "UTC"

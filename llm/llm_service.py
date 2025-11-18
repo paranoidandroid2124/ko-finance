@@ -7,7 +7,7 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 import litellm
 from langfuse import Langfuse
@@ -101,7 +101,7 @@ def _extract_usage_payload(response: Any) -> Optional[Dict[str, int]]:
         return _normalize(response.get("usage"))
     return None
 
-LANGFUSE_CLIENT: Optional[Langfuse] = None
+LANGFUSE_CLIENT: Optional[Any] = None
 if os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"):
     try:
         LANGFUSE_CLIENT = Langfuse(
@@ -166,6 +166,29 @@ def _record_langfuse_event(
         logger.debug("Langfuse logging skipped: %s", exc, exc_info=True)
 
 
+def _choice_content(response: Any) -> str:
+    """Best-effort extraction of the first choice's message content from litellm responses."""
+    try:
+        response_any = cast(Any, response)
+        choices = getattr(response_any, "choices", None)
+        if isinstance(choices, list) and choices:
+            first_choice = choices[0]
+            message = getattr(first_choice, "message", None)
+            if message is None and isinstance(first_choice, Mapping):
+                message = first_choice.get("message")
+            if message is None:
+                return ""
+            if isinstance(message, Mapping):
+                content = message.get("content")
+            else:
+                content = getattr(message, "content", None)
+            if isinstance(content, str):
+                return content
+    except Exception:
+        pass
+    return ""
+
+
 def _safe_completion(
     model: str,
     messages: List[Dict[str, Any]],
@@ -175,7 +198,7 @@ def _safe_completion(
 ) -> Tuple[Optional[Any], Optional[str]]:
     try:
         response = litellm.completion(model=model, messages=messages, response_format=response_format)
-        response_content = getattr(response.choices[0].message, "content", "")
+        response_content = _choice_content(response)
         _record_langfuse_event(model, messages, response_content=response_content)
         return response, model
     except Exception as primary_err:
@@ -190,7 +213,7 @@ def _safe_completion(
                     response_format=response_format,
                 )
                 logger.info("Fallback model %s succeeded after %s failure.", fallback_model, model)
-                response_content = getattr(response.choices[0].message, "content", "")
+                response_content = _choice_content(response)
                 _record_langfuse_event(fallback_model, messages, response_content=response_content)
                 return response, fallback_model
             except Exception as fallback_err:
@@ -222,7 +245,7 @@ def _json_completion(
         return {"error": model_used}
 
     try:
-        payload = json.loads(response.choices[0].message.content)
+        payload = json.loads(_choice_content(response) or "{}")
         payload["model_used"] = model_used
         return payload
     except Exception as exc:
@@ -778,7 +801,7 @@ def _format_transcript_for_summary(transcript: List[Dict[str, str]], *, max_char
         content = str(entry.get("content") or "").strip()
         if not content:
             continue
-        role_label = "???" if role == "user" else "Copilot"
+        role_label = "사용자" if role == "user" else "Copilot"
         lines.append(f"{role_label}: {content}")
     combined = "\n".join(lines)
     if len(combined) <= max_chars:
@@ -890,7 +913,7 @@ def generate_rag_answer(
     if response is None:
         return {"error": model_used or "rag_failed"}
 
-    answer = getattr(response.choices[0].message, "content", "") or ""
+    answer = _choice_content(response) or ""
     payload = _build_rag_payload(context_chunks, answer, model_used)
     payload["rag_mode"] = rag_mode
     if prompt_metadata:
@@ -1037,7 +1060,7 @@ def summarize_chat_transcript(transcript: List[Dict[str, str]]) -> str:
     response, _ = _safe_completion(SUMMARY_MODEL, messages)
     if response is None:
         raise RuntimeError("chat_summary_failed")
-    summary_text = getattr(response.choices[0].message, "content", "") or ""
+    summary_text = _choice_content(response) or ""
     return summary_text.strip()
 
 
@@ -1096,7 +1119,7 @@ def generate_watchlist_digest_overview(
     response, _ = _safe_completion(SUMMARY_MODEL, messages, fallback_model=QUALITY_FALLBACK_MODEL)
     if response is None:
         raise RuntimeError("watchlist_overview_failed")
-    overview = getattr(response.choices[0].message, "content", "") or ""
+    overview = _choice_content(response) or ""
     return overview.strip()
 
 
@@ -1132,7 +1155,7 @@ def generate_watchlist_personal_note(prompt_text: str) -> Tuple[str, Dict[str, A
     response, model_used = _safe_completion(SUMMARY_MODEL, messages, fallback_model=QUALITY_FALLBACK_MODEL)
     if response is None:
         raise RuntimeError("watchlist_personal_note_failed")
-    note = getattr(response.choices[0].message, "content", "") or ""
+    note = _choice_content(response) or ""
     metadata: Dict[str, Any] = {}
     if model_used:
         metadata["model"] = model_used

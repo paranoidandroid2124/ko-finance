@@ -33,6 +33,8 @@ from schemas.api.admin import (
     AdminSessionResponse,
     AdminSessionRevokeResponse,
     PlanQuickAdjustRequest,
+    AdminUserPlanUpdateRequest,
+    AdminUserPlanUpdateResponse,
     TossWebhookReplayRequest,
     TossWebhookReplayResponse,
     WebhookAuditListResponse,
@@ -720,6 +722,79 @@ def apply_plan_quick_adjust(payload: PlanQuickAdjustRequest) -> PlanContextRespo
         ) from exc
 
     return serialize_plan_context(context)
+
+
+@protected_router.post(
+    "/users/plan-tier",
+    response_model=AdminUserPlanUpdateResponse,
+    summary="특정 사용자 플랜 티어를 수동으로 변경합니다.",
+)
+def update_user_plan_tier_route(
+    payload: AdminUserPlanUpdateRequest,
+    request: Request,
+    admin_session: AdminSession = Depends(require_admin_session),
+    db: Session = Depends(get_db),
+) -> AdminUserPlanUpdateResponse:
+    normalized_email = payload.email.strip().lower()
+    user_row = (
+        db.execute(
+            text('SELECT id, email, plan_tier FROM "users" WHERE LOWER(email) = :email LIMIT 1'),
+            {"email": normalized_email},
+        )
+        .mappings()
+        .first()
+    )
+    if not user_row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "admin.user_not_found", "message": "해당 이메일을 찾을 수 없습니다."},
+        )
+
+    updated_row = (
+        db.execute(
+            text(
+                'UPDATE "users" SET plan_tier = :plan_tier, updated_at = NOW() WHERE id = :user_id '
+                'RETURNING id, email, plan_tier, updated_at'
+            ),
+            {"plan_tier": payload.planTier, "user_id": user_row["id"]},
+        )
+        .mappings()
+        .first()
+    )
+    if not updated_row:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "admin.user_plan_update_failed", "message": "플랜 티어를 변경하지 못했습니다."},
+        )
+    db.commit()
+
+    record_admin_audit_event(
+        db,
+        actor=admin_session.actor,
+        event_type="user.plan_tier.update",
+        session_id=admin_session.session_id,
+        route=request.url.path,
+        method=request.method,
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        metadata={
+            "email": updated_row["email"],
+            "planTier": updated_row["plan_tier"],
+            "previousPlanTier": user_row["plan_tier"],
+            "note": payload.note,
+        },
+    )
+
+    updated_at = updated_row["updated_at"]
+    updated_at_iso = updated_at.isoformat() if hasattr(updated_at, "isoformat") else str(updated_at)
+
+    return AdminUserPlanUpdateResponse(
+        userId=str(updated_row["id"]),
+        email=updated_row["email"],
+        planTier=updated_row["plan_tier"],
+        previousPlanTier=user_row["plan_tier"],
+        updatedAt=updated_at_iso,
+    )
 
 
 @protected_router.get(

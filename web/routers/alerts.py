@@ -53,7 +53,13 @@ from services.alert_channel_registry import list_channel_definitions
 from services import alert_rate_limiter, watchlist_service, watchlist_digest_schedule_service
 from services.audit_log import audit_alert_event
 from services.user_settings_service import UserLightMemSettings
-from services import lightmem_gate
+from services.alerts_watchlist_support import (
+    resolve_lightmem_user_id,
+    load_user_lightmem_settings,
+    watchlist_memory_enabled,
+    digest_memory_enabled,
+    owner_filters as build_owner_filters,
+)
 from services.plan_service import PlanContext
 from services.web_utils import parse_uuid
 from web.deps import require_plan_feature
@@ -97,40 +103,6 @@ def _normalize_query_list(values: Optional[List[str]]) -> List[str]:
             if trimmed and trimmed not in normalized:
                 normalized.append(trimmed)
     return normalized
-
-
-def _default_lightmem_user_id() -> Optional[uuid.UUID]:
-    return lightmem_gate.default_user_id()
-
-
-def _resolve_lightmem_user_id(value: Optional[str]) -> Optional[uuid.UUID]:
-    if value:
-        return parse_uuid(value)
-    return _default_lightmem_user_id()
-
-
-def _load_user_lightmem_settings(
-    user_id: Optional[uuid.UUID],
-) -> Optional[UserLightMemSettings]:
-    return lightmem_gate.load_user_settings(user_id)
-
-
-def _watchlist_memory_enabled(
-    plan: PlanContext,
-    user_settings: Optional[UserLightMemSettings],
-) -> bool:
-    return lightmem_gate.watchlist_enabled(plan, user_settings)
-
-
-def _digest_memory_enabled(
-    plan: PlanContext,
-    user_settings: Optional[UserLightMemSettings],
-) -> bool:
-    return lightmem_gate.digest_enabled(plan, user_settings)
-
-
-def _owner_filters(user_id: Optional[uuid.UUID], org_id: Optional[uuid.UUID]) -> dict:
-    return {"user_id": user_id, "org_id": org_id}
 
 
 def _rate_limit_identifier(user_id: Optional[uuid.UUID], org_id: Optional[uuid.UUID]) -> str:
@@ -275,7 +247,7 @@ def list_rules(
 ) -> AlertRuleListResponse:
     user_id = parse_uuid(x_user_id)
     org_id = parse_uuid(x_org_id)
-    rules = list_alert_rules(db, owner_filters=_owner_filters(user_id, org_id))
+    rules = list_alert_rules(db, owner_filters=build_owner_filters(user_id, org_id))
     items = [_response_from_rule(rule) for rule in rules]
     plan_info = AlertPlanInfo.model_validate(serialize_plan_capabilities(plan.tier, rules))
     preset_payloads = list_alert_presets(plan.tier)
@@ -293,7 +265,7 @@ def create_rule(
 ) -> AlertRuleResponse:
     user_id = parse_uuid(x_user_id)
     org_id = parse_uuid(x_org_id)
-    filters = _owner_filters(user_id, org_id)
+    filters = build_owner_filters(user_id, org_id)
     enforce_quota("alerts.rules.create", plan=plan, user_id=user_id, org_id=org_id)
     _enforce_write_rate_limit(user_id, org_id)
     preset_meta = _extract_preset_metadata(payload.extras)
@@ -343,7 +315,7 @@ def update_rule(
 ) -> AlertRuleResponse:
     user_id = parse_uuid(x_user_id)
     org_id = parse_uuid(x_org_id)
-    filters = _owner_filters(user_id, org_id)
+    filters = build_owner_filters(user_id, org_id)
     _enforce_write_rate_limit(user_id, org_id)
     rule = get_alert_rule(db, rule_id=alert_id, owner_filters=filters)
     if rule is None:
@@ -380,7 +352,7 @@ def simulate_rule(
 ) -> AlertRuleSimulationResponse:
     user_id = parse_uuid(x_user_id)
     org_id = parse_uuid(x_org_id)
-    filters = _owner_filters(user_id, org_id)
+    filters = build_owner_filters(user_id, org_id)
     rule = get_alert_rule(db, rule_id=alert_id, owner_filters=filters)
     if rule is None:
         raise _plan_http_exception(status.HTTP_404_NOT_FOUND, "alerts.not_found", "알림을 찾을 수 없습니다.")
@@ -407,7 +379,7 @@ def read_rule_stats(
 ) -> AlertRuleStatsResponse:
     user_id = parse_uuid(x_user_id)
     org_id = parse_uuid(x_org_id)
-    filters = _owner_filters(user_id, org_id)
+    filters = build_owner_filters(user_id, org_id)
     rule = get_alert_rule(db, rule_id=alert_id, owner_filters=filters)
     if rule is None:
         raise _plan_http_exception(status.HTTP_404_NOT_FOUND, "alerts.not_found", "알림을 찾을 수 없습니다.")
@@ -427,7 +399,7 @@ def list_event_matches(
 ) -> AlertEventMatchResponse:
     user_id = parse_uuid(x_user_id)
     org_id = parse_uuid(x_org_id)
-    filters = _owner_filters(user_id, org_id)
+    filters = build_owner_filters(user_id, org_id)
     since_dt = _parse_iso_datetime(since)
     matches = list_event_alert_matches(
         db,
@@ -448,7 +420,7 @@ def delete_rule(
 ) -> None:
     user_id = parse_uuid(x_user_id)
     org_id = parse_uuid(x_org_id)
-    filters = _owner_filters(user_id, org_id)
+    filters = build_owner_filters(user_id, org_id)
     _enforce_write_rate_limit(user_id, org_id)
     rule = get_alert_rule(db, rule_id=alert_id, owner_filters=filters)
     if rule is None:
@@ -478,15 +450,15 @@ def watchlist_radar(
 ) -> WatchlistRadarResponse:
     window_minutes = max(min(int(window_minutes or 1440), 7 * 24 * 60), 5)
     limit = max(min(int(limit or 100), 200), 1)
-    user_id = _resolve_lightmem_user_id(x_user_id)
+    user_id = resolve_lightmem_user_id(x_user_id)
     org_id = parse_uuid(x_org_id)
     enforce_quota("watchlist.radar", plan=plan, user_id=user_id, org_id=org_id)
-    owner_filters = _owner_filters(user_id, org_id)
+    filters = build_owner_filters(user_id, org_id)
     tenant_token = str(org_id) if org_id else None
     user_token = str(user_id) if user_id else None
     session_key = f"watchlist:radar:{tenant_token or user_token or 'global'}"
-    user_memory_settings = _load_user_lightmem_settings(user_id)
-    plan_memory_enabled = _watchlist_memory_enabled(plan, user_memory_settings)
+    user_memory_settings = load_user_lightmem_settings(user_id)
+    plan_memory_enabled = watchlist_memory_enabled(plan, user_memory_settings)
     parsed_channels = _normalize_query_list(channels)
     parsed_event_types = _normalize_query_list(event_types)
     parsed_tickers = _normalize_query_list(tickers)
@@ -513,7 +485,7 @@ def watchlist_radar(
         query=query,
         window_start=start_dt,
         window_end=end_dt,
-        owner_filters=owner_filters,
+        owner_filters=filters,
         plan_memory_enabled=plan_memory_enabled,
         session_id=session_key,
         tenant_id=tenant_token,
@@ -533,22 +505,22 @@ def watchlist_dispatch(
     _require_digest_enabled(plan)
     window_minutes = max(min(int(payload.windowMinutes or 1440), 7 * 24 * 60), 5)
     limit = max(min(int(payload.limit or 20), 200), 1)
-    user_id = _resolve_lightmem_user_id(x_user_id)
+    user_id = resolve_lightmem_user_id(x_user_id)
     org_id = parse_uuid(x_org_id)
     enforce_quota("watchlist.digest", plan=plan, user_id=user_id, org_id=org_id)
-    owner_filters = _owner_filters(user_id, org_id)
+    filters = build_owner_filters(user_id, org_id)
     tenant_token = str(org_id) if org_id else None
     user_token = str(user_id) if user_id else None
     session_key = f"watchlist:dispatch:{tenant_token or user_token or 'global'}"
-    user_memory_settings = _load_user_lightmem_settings(user_id)
-    plan_memory_enabled = _digest_memory_enabled(plan, user_memory_settings)
+    user_memory_settings = load_user_lightmem_settings(user_id)
+    plan_memory_enabled = digest_memory_enabled(plan, user_memory_settings)
     result = watchlist_service.dispatch_watchlist_digest(
         db,
         window_minutes=window_minutes,
         limit=limit,
         slack_targets=payload.slackTargets or [],
         email_targets=payload.emailTargets or [],
-        owner_filters=owner_filters,
+        owner_filters=filters,
         plan_memory_enabled=plan_memory_enabled,
         session_id=session_key,
         tenant_id=tenant_token,
@@ -571,10 +543,10 @@ def list_watchlist_schedules(
     plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> WatchlistDigestScheduleListResponse:
     _require_digest_enabled(plan)
-    user_id = _resolve_lightmem_user_id(x_user_id)
+    user_id = resolve_lightmem_user_id(x_user_id)
     org_id = parse_uuid(x_org_id)
-    owner_filters = _owner_filters(user_id, org_id)
-    entries = watchlist_digest_schedule_service.list_schedules(owner_filters)
+    filters = build_owner_filters(user_id, org_id)
+    entries = watchlist_digest_schedule_service.list_schedules(filters)
     items = [
         WatchlistDigestScheduleSchema.model_validate(_serialize_digest_schedule(entry))
         for entry in entries
@@ -594,13 +566,13 @@ def create_watchlist_schedule(
     plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> WatchlistDigestScheduleSchema:
     _require_digest_enabled(plan)
-    user_id = _resolve_lightmem_user_id(x_user_id)
+    user_id = resolve_lightmem_user_id(x_user_id)
     org_id = parse_uuid(x_org_id)
-    owner_filters = _owner_filters(user_id, org_id)
+    filters = build_owner_filters(user_id, org_id)
     try:
         entry = watchlist_digest_schedule_service.create_schedule(
             label=payload.label,
-            owner_filters=owner_filters,
+            owner_filters=filters,
             window_minutes=payload.windowMinutes,
             limit=payload.limit,
             time_of_day=payload.timeOfDay,
@@ -631,13 +603,13 @@ def update_watchlist_schedule(
     plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> WatchlistDigestScheduleSchema:
     _require_digest_enabled(plan)
-    user_id = _resolve_lightmem_user_id(x_user_id)
+    user_id = resolve_lightmem_user_id(x_user_id)
     org_id = parse_uuid(x_org_id)
-    owner_filters = _owner_filters(user_id, org_id)
+    filters = build_owner_filters(user_id, org_id)
     try:
         entry = watchlist_digest_schedule_service.update_schedule(
             schedule_id,
-            owner_filters=owner_filters,
+            owner_filters=filters,
             label=payload.label,
             window_minutes=payload.windowMinutes,
             limit=payload.limit,
@@ -673,11 +645,11 @@ def delete_watchlist_schedule(
     plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> Response:
     _require_digest_enabled(plan)
-    user_id = _resolve_lightmem_user_id(x_user_id)
+    user_id = resolve_lightmem_user_id(x_user_id)
     org_id = parse_uuid(x_org_id)
-    owner_filters = _owner_filters(user_id, org_id)
+    filters = build_owner_filters(user_id, org_id)
     try:
-        watchlist_digest_schedule_service.delete_schedule(schedule_id, owner_filters)
+        watchlist_digest_schedule_service.delete_schedule(schedule_id, filters)
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -699,17 +671,17 @@ def preview_watchlist_schedule(
     db: Session = Depends(get_db),
 ) -> WatchlistDigestPreviewResponse:
     _require_digest_enabled(plan)
-    user_id = _resolve_lightmem_user_id(x_user_id)
+    user_id = resolve_lightmem_user_id(x_user_id)
     org_id = parse_uuid(x_org_id)
-    owner_filters = _owner_filters(user_id, org_id)
-    schedule_entry = watchlist_digest_schedule_service.load_schedule(schedule_id, owner_filters)
+    filters = build_owner_filters(user_id, org_id)
+    schedule_entry = watchlist_digest_schedule_service.load_schedule(schedule_id, filters)
     if schedule_entry is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "digest_schedule.not_found", "message": "스케줄을 찾을 수 없습니다."},
         )
-    user_settings = _load_user_lightmem_settings(user_id)
-    plan_memory_enabled = _digest_memory_enabled(plan, user_settings)
+    user_settings = load_user_lightmem_settings(user_id)
+    plan_memory_enabled = digest_memory_enabled(plan, user_settings)
     window_minutes = payload.windowMinutes or schedule_entry.get("window_minutes") or 1440
     limit = payload.limit or schedule_entry.get("limit") or 20
     window_minutes = max(min(int(window_minutes), 7 * 24 * 60), 5)
@@ -720,7 +692,7 @@ def preview_watchlist_schedule(
         db,
         window_minutes=window_minutes,
         limit=limit,
-        owner_filters=owner_filters,
+        owner_filters=filters,
         plan_memory_enabled=plan_memory_enabled,
         session_id=f"watchlist:preview:schedule:{schedule_id}",
         tenant_id=tenant_token,
@@ -741,12 +713,12 @@ def watchlist_rule_detail(
 ) -> WatchlistRuleDetailResponse:
     user_id = parse_uuid(x_user_id)
     org_id = parse_uuid(x_org_id)
-    owner_filters = _owner_filters(user_id, org_id)
+    filters = build_owner_filters(user_id, org_id)
     try:
         payload = watchlist_service.collect_watchlist_rule_detail(
             db,
             rule_id=rule_id,
-            owner_filters=owner_filters,
+            owner_filters=filters,
             recent_limit=recent_limit,
         )
     except ValueError as exc:

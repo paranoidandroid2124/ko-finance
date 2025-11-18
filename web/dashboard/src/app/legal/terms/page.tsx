@@ -1,11 +1,9 @@
 import type { Metadata } from "next";
 
 import { LegalDocumentPage, type LegalSection } from "@/app/legal/_components/LegalDocumentPage";
+import { LEGAL_COMPANY, buildCompanyContactSection } from "@/app/legal/constants";
 
-const UPDATED_AT = "2025-11-18";
-const companyName = process.env.NEXT_PUBLIC_COMPANY_NAME ?? "ko-finance 주식회사";
-const companyAddress = process.env.NEXT_PUBLIC_COMPANY_ADDRESS ?? "서울특별시 (업데이트 예정)";
-const companyContact = process.env.NEXT_PUBLIC_COMPANY_CONTACT ?? "support@ko.finance";
+const { name: companyName, address: companyAddress, contact: companyContact, updatedAt } = LEGAL_COMPANY;
 
 export const metadata: Metadata = {
   title: "서비스 이용약관 | K-Finance",
@@ -129,28 +127,10 @@ const sections: LegalSection[] = [
       },
     ],
   },
-  {
-    id: "contact",
+  buildCompanyContactSection({
+    note: "법무·데이터 정책·DSAR 관련 문의는 Settings → Legal & Data 또는 위 연락처로 남겨 주세요.",
     title: "9. 문의처",
-    contents: [
-      {
-        type: "paragraph",
-        text: `회사명: ${companyName}`,
-      },
-      {
-        type: "paragraph",
-        text: `주소: ${companyAddress}`,
-      },
-      {
-        type: "paragraph",
-        text: `연락처: ${companyContact}`,
-      },
-      {
-        type: "note",
-        text: "법무·데이터 정책·DSAR 관련 문의는 Settings → Legal & Data 또는 위 연락처로 남겨 주세요.",
-      },
-    ],
-  },
+  }),
 ];
 
 export default function TermsPage() {
@@ -158,7 +138,7 @@ export default function TermsPage() {
     <LegalDocumentPage
       title="서비스 이용약관"
       subtitle="K-Finance Copilot을 안전하게 이용하기 위한 권리와 의무, 제한 사항을 안내합니다."
-      updatedAtLabel={UPDATED_AT}
+      updatedAtLabel={updatedAt}
       sections={sections}
     />
   );

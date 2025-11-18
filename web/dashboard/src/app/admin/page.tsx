@@ -15,6 +15,7 @@ import { AdminTokenLoginCard } from "@/components/admin/AdminTokenLoginCard";
 import { AdminUiUxPanel } from "@/components/admin/AdminUiUxPanel";
 import { AdminWebhookPanel } from "@/components/admin/AdminWebhookPanel";
 import { PlanQuickActionsPanel } from "@/components/admin/PlanQuickActionsPanel";
+import { AdminUserPlanForm } from "@/components/admin/AdminUserPlanForm";
 import { AdminShell } from "@/components/layout/AdminShell";
 import { PlanAlertOverview } from "@/components/plan/PlanAlertOverview";
 import { PlanTierPreview } from "@/components/plan/PlanTierPreview";
@@ -319,6 +320,7 @@ export default function AdminPage() {
         <AdminBillingPanel compact />
         <div className="space-y-6">
           <PlanQuickActionsPanel />
+          <AdminUserPlanForm />
           <PlanAlertOverview plan={alertPlan} loading={isAlertPlanLoading} error={alertPlanErrorMessage} />
           <AdminOrgRbacPanel compact />
           <AdminWebhookPanel />

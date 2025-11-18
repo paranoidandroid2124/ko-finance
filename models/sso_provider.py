@@ -49,7 +49,7 @@ class SsoProvider(Base):
     auto_provision_orgs = Column(Boolean, nullable=False, default=False)
     enabled = Column(Boolean, nullable=False, default=True)
     metadata_json = Column("metadata", JSONB, nullable=False, default=dict)
-    metadata = JSONMetadataProxy("metadata_json")
+    metadata = JSONMetadataProxy("metadata_json")  # type: ignore[assignment]
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -97,5 +97,4 @@ class ScimToken(Base):
     expires_at = Column(DateTime(timezone=True), nullable=True)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
     metadata_json = Column("metadata", JSONB, nullable=False, default=dict)
-    metadata = JSONMetadataProxy("metadata_json")
-
+    metadata = JSONMetadataProxy("metadata_json")  # type: ignore[assignment]

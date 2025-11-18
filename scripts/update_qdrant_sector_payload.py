@@ -13,7 +13,7 @@ The slug mapping below can be extended if future migrations rename additional se
 from __future__ import annotations
 
 import os
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple, cast
 
 from qdrant_client import QdrantClient, models
 
@@ -55,10 +55,12 @@ def _update_sector_payload(client: QdrantClient, old_slug: str, new_slug: str) -
             break
 
         point_ids = [point.id for point in points]
-        client.set_payload(
+        point_selector = models.PointIdsList(points=point_ids)
+        client_ref = cast(Any, client)
+        client_ref.set_payload(
             collection_name=COLLECTION_NAME,
             payload={"sector": new_slug},
-            points=point_ids,
+            points=point_selector,
         )
         total_points += len(point_ids)
         batches += 1

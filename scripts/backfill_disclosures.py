@@ -37,7 +37,8 @@ def backfill_disclosures(days_back: int | None = None, ticker: str | None = None
 
         client = DartClient()
         for filing in query:
-            if not filing.receipt_no:
+            receipt_no = getattr(filing, "receipt_no", None)
+            if not receipt_no:
                 continue
             try:
                 sync_additional_disclosures(db=session, client=client, filing=filing)
@@ -46,7 +47,7 @@ def backfill_disclosures(days_back: int | None = None, ticker: str | None = None
                     session.commit()
                     logger.info("Processed %s filings so far...", processed)
             except Exception as exc:  # pragma: no cover - defensive guard
-                logger.warning("Failed to sync filing %s (%s): %s", filing.receipt_no, filing.corp_name, exc, exc_info=True)
+                logger.warning("Failed to sync filing %s (%s): %s", receipt_no, getattr(filing, "corp_name", ""), exc, exc_info=True)
 
         session.commit()
         logger.info("Backfill complete. Synced %s filings.", processed)

@@ -7,7 +7,7 @@ import time
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Mapping, Optional, cast
 
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
@@ -71,8 +71,9 @@ def _enqueue_filing_task(filing_id: uuid.UUID) -> None:
         logger.warning("process_filing task not available yet. Skipping enqueue.")
         return
 
-    if hasattr(process_filing, "delay"):
-        process_filing.delay(str(filing_id))
+    task = cast(Any, process_filing)
+    if hasattr(task, "delay"):
+        task.delay(str(filing_id))
     else:
         logger.warning("process_filing task does not expose delay().")
 
@@ -206,7 +207,8 @@ def seed_recent_filings(
             }
 
             try:
-                filed_at = datetime.strptime(meta.get("rcept_dt"), "%Y%m%d") if meta.get("rcept_dt") else None
+                receipt_raw = meta.get("rcept_dt")
+                filed_at = datetime.strptime(receipt_raw, "%Y%m%d") if isinstance(receipt_raw, str) else None
             except ValueError:
                 filed_at = None
 
@@ -239,9 +241,10 @@ def seed_recent_filings(
 
             storage_meta = _ensure_storage_copy(receipt_no, pdf_path)
             if storage_meta:
-                urls = new_filing.urls or {}
+                existing_urls = cast(Optional[Mapping[str, Any]], new_filing.urls)
+                urls = dict(existing_urls) if isinstance(existing_urls, Mapping) else {}
                 urls.update(storage_meta)
-                new_filing.urls = urls
+                cast(Any, new_filing).urls = urls
                 db.commit()
 
             try:
@@ -254,7 +257,9 @@ def seed_recent_filings(
                     exc_info=True,
                 )
 
-            _enqueue_filing_task(new_filing.id)
+            filing_id = cast(Optional[uuid.UUID], new_filing.id)
+            if filing_id:
+                _enqueue_filing_task(filing_id)
             created_count += 1
 
         logger.info("Seeded %d new filings.", created_count)

@@ -10,7 +10,7 @@ from typing import Iterable, List, Optional, Sequence
 from qdrant_client import QdrantClient, models
 
 from services.memory.models import MemoryRecord
-from services.embedding_utils import embed_text
+from services.embedding_utils import embed_text, EMBEDDING_MODEL
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

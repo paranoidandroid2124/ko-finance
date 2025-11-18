@@ -6,7 +6,7 @@ import argparse
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, cast
 
 from scripts._path import add_root
 
@@ -85,8 +85,9 @@ def _enqueue_letter(letter) -> bool:
                 letter.id,
             )
             return False
-        if hasattr(process_filing, "delay"):
-            process_filing.delay(str(filing_id))
+        task_fn = cast(Any, process_filing)
+        if hasattr(task_fn, "delay"):
+            task_fn.delay(str(filing_id))
             return True
         logger.error("process_filing task does not expose delay(); skipping enqueue.")
         return False
@@ -114,6 +115,12 @@ def _handle_show(session, args) -> None:
     if not letter:
         print(f"DLQ entry {args.letter_id} not found.")
         return
+    next_run_at = letter.next_run_at if isinstance(letter.next_run_at, datetime) else None
+    created_at = letter.created_at if isinstance(letter.created_at, datetime) else None
+    updated_at = letter.updated_at if isinstance(letter.updated_at, datetime) else None
+    next_run_iso = next_run_at.isoformat() if next_run_at is not None else None
+    created_iso = created_at.isoformat() if created_at is not None else None
+    updated_iso = updated_at.isoformat() if updated_at is not None else None
     payload = {
         "id": str(letter.id),
         "task_name": letter.task_name,
@@ -124,9 +131,9 @@ def _handle_show(session, args) -> None:
         "payload": letter.payload,
         "error": letter.error,
         "retries": letter.retries,
-        "next_run_at": letter.next_run_at.isoformat() if letter.next_run_at else None,
-        "created_at": letter.created_at.isoformat() if letter.created_at else None,
-        "updated_at": letter.updated_at.isoformat() if letter.updated_at else None,
+        "next_run_at": next_run_iso,
+        "created_at": created_iso,
+        "updated_at": updated_iso,
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 

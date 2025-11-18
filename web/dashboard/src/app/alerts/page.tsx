@@ -12,25 +12,17 @@ import { PlanLock } from "@/components/ui/PlanLock";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { EmptyState } from "@/components/ui/EmptyState";
-import {
-  useAlertEventMatches,
-  useAlertRules,
-  useDeleteAlertRule,
-  useSimulateAlertRule,
-  useUpdateAlertRule,
-} from "@/hooks/useAlerts";
+import { useSimulateAlertRule } from "@/hooks/useAlerts";
 import {
   ApiError,
   type AlertEventMatch,
   type AlertPlanInfo,
   type AlertRule,
   type AlertRuleSimulationResponse,
-  type WatchlistRuleDetail,
 } from "@/lib/alertsApi";
-import { convertAlertRuleToDetail } from "@/components/watchlist/ruleDetail";
 import { formatDateTime, formatRelativeTime } from "@/lib/date";
-import { useToastStore } from "@/store/toastStore";
-import { usePlanContext } from "@/store/planStore";
+import { usePlanContext, isTierAtLeast } from "@/store/planStore";
+import { useWatchlistAlertsController } from "./useWatchlistAlertsController";
 
 const RECENT_EVENTS_LIMIT = 12;
 const SIMULATION_DEFAULT_WINDOW_MINUTES = 7 * 24 * 60;
@@ -38,152 +30,25 @@ const SIMULATION_DEFAULT_LIMIT = 12;
 
 // TODO: tighten plan-tier gating once PlanContext exposes a dedicated alert/watchlist entitlement.
 
-export default function AlertsWatchlistPage() {
-  const planContext = usePlanContext();
-  const showToast = useToastStore((state) => state.show);
-  const {
-    data,
-    isLoading,
-    error,
-    refetch: refetchAlertRules,
-  } = useAlertRules();
-  const {
-    data: matchesData,
-    isLoading: matchesLoading,
-    error: matchesError,
-  } = useAlertEventMatches({ limit: RECENT_EVENTS_LIMIT });
-  const updateRuleMutation = useUpdateAlertRule();
-  const deleteRuleMutation = useDeleteAlertRule();
+function AlertsWatchlistContent({ fallbackPlanTier }: { fallbackPlanTier: string }) {
+  const controller = useWatchlistAlertsController({ recentEventsLimit: RECENT_EVENTS_LIMIT });
+  const { matches, isLoading: matchesLoading, errorMessage: matchesErrorMessage } = controller.matchesState;
+  const { wizardState, simulationRule, mutatingRuleId, actions } = controller;
+  const plan = controller.plan;
 
-  const [localRules, setLocalRules] = useState<AlertRule[]>([]);
-  const [mutatingRuleId, setMutatingRuleId] = useState<string | null>(null);
-  const [wizardOpen, setWizardOpen] = useState(false);
-  const [wizardMode, setWizardMode] = useState<"create" | "edit">("create");
-  const [wizardInitialRule, setWizardInitialRule] = useState<WatchlistRuleDetail | null>(null);
-  const [simulationRule, setSimulationRule] = useState<AlertRule | null>(null);
-
-  useEffect(() => {
-    setLocalRules(data?.items ?? []);
-  }, [data?.items]);
-
-  const plan = data?.plan ?? null;
-  const totalRules = localRules.length;
-  const fallbackPlanTier = planContext.planTier?.toUpperCase() ?? "—";
-
-  if (error instanceof ApiError) {
-    const isPlanGuard = error.status === 402 || (error.code && error.code.startsWith("plan."));
+  if (controller.rulesErrorValue instanceof ApiError) {
+    const apiError = controller.rulesErrorValue;
+    const isPlanGuard = apiError.status === 402 || (apiError.code && apiError.code.startsWith("plan."));
     return (
       <AppShell>
         {isPlanGuard ? (
-          <PlanLock requiredTier="pro" title="알림 · 워치리스트" description={error.message} />
+          <PlanLock requiredTier="pro" title="알림 · 워치리스트" description={apiError.message} />
         ) : (
-          <ErrorState title="알림 · 워치리스트" description={error.message} />
+          <ErrorState title="알림 · 워치리스트" description={apiError.message} />
         )}
       </AppShell>
     );
   }
-
-  const isRulesError = Boolean(error);
-  const matches = matchesData?.matches ?? [];
-  const matchesErrorMessage =
-    matchesError instanceof ApiError
-      ? matchesError.message
-      : matchesError instanceof Error
-        ? matchesError.message
-        : null;
-
-  const handleOpenWizard = useCallback(() => {
-    setWizardMode("create");
-    setWizardInitialRule(null);
-    setWizardOpen(true);
-  }, []);
-
-  const handleCloseWizard = useCallback(() => {
-    setWizardOpen(false);
-    setWizardMode("create");
-    setWizardInitialRule(null);
-  }, []);
-
-  const handleEditRule = useCallback(
-    (rule: AlertRule) => {
-      setWizardMode("edit");
-      setWizardInitialRule(convertAlertRuleToDetail(rule));
-      setWizardOpen(true);
-    },
-    [convertAlertRuleToDetail],
-  );
-
-  const handleWizardCompleted = useCallback(
-    (rule: AlertRule) => {
-      setLocalRules((prev) => {
-        const exists = prev.some((item) => item.id === rule.id);
-        if (exists) {
-          return prev.map((item) => (item.id === rule.id ? rule : item));
-        }
-        return [rule, ...prev];
-      });
-      setSimulationRule(rule);
-      void refetchAlertRules();
-    },
-    [refetchAlertRules],
-  );
-
-  const handleToggleRule = useCallback(
-    async (rule: AlertRule) => {
-      const nextStatus = rule.status === "active" ? "paused" : "active";
-      setMutatingRuleId(rule.id);
-      try {
-        await updateRuleMutation.mutateAsync({ id: rule.id, payload: { status: nextStatus } });
-        showToast({
-          intent: "success",
-          message: nextStatus === "active" ? "알림을 다시 활성화했습니다." : "알림을 일시 중지했습니다.",
-        });
-        setLocalRules((prev) => prev.map((item) => (item.id === rule.id ? { ...item, status: nextStatus } : item)));
-        void refetchAlertRules();
-      } catch (cause) {
-        const message =
-          cause instanceof ApiError
-            ? cause.message
-            : cause instanceof Error
-              ? cause.message
-              : "알림 상태를 변경하지 못했어요.";
-        showToast({ intent: "error", message });
-      } finally {
-        setMutatingRuleId(null);
-      }
-    },
-    [refetchAlertRules, showToast, updateRuleMutation],
-  );
-
-  const handleDeleteRule = useCallback(
-    async (rule: AlertRule) => {
-      setMutatingRuleId(rule.id);
-      try {
-        await deleteRuleMutation.mutateAsync(rule.id);
-        showToast({
-          intent: "success",
-          message: `${rule.name} 알림을 삭제했습니다.`,
-        });
-        setLocalRules((prev) => prev.filter((item) => item.id !== rule.id));
-        void refetchAlertRules();
-      } catch (cause) {
-        const message =
-          cause instanceof ApiError
-            ? cause.message
-            : cause instanceof Error
-              ? cause.message
-              : "알림을 삭제하지 못했어요.";
-        showToast({ intent: "error", message });
-      } finally {
-        setMutatingRuleId(null);
-      }
-    },
-    [deleteRuleMutation, refetchAlertRules, showToast],
-  );
-
-  const handleSimulateRule = useCallback((rule: AlertRule) => {
-    setSimulationRule(rule);
-  }, []);
 
   return (
     <AppShell>
@@ -191,24 +56,24 @@ export default function AlertsWatchlistPage() {
         <AlertsHero
           plan={plan}
           fallbackPlanTier={fallbackPlanTier}
-          totalRules={totalRules}
-          onCreateRule={handleOpenWizard}
-          onOpenWizard={handleOpenWizard}
+          totalRules={controller.totalRules}
+          onCreateRule={actions.openWizard}
+          onOpenWizard={actions.openWizard}
         />
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
           <div className="space-y-4">
             <WatchlistRuleManager
               plan={plan}
-              rules={localRules}
-              isLoading={isLoading}
-              isError={isRulesError}
+              rules={controller.rules}
+              isLoading={controller.rulesLoading}
+              isError={controller.rulesError}
               mutatingRuleId={mutatingRuleId}
-              onCreate={handleOpenWizard}
-              onEdit={handleEditRule}
-              onToggle={handleToggleRule}
-              onDelete={handleDeleteRule}
-              onSimulate={handleSimulateRule}
+              onCreate={actions.openWizard}
+              onEdit={actions.editRule}
+              onToggle={actions.toggleRule}
+              onDelete={actions.deleteRule}
+              onSimulate={actions.simulateRule}
             />
           </div>
           <div className="space-y-4">
@@ -219,14 +84,14 @@ export default function AlertsWatchlistPage() {
       </div>
 
       <WatchlistRuleWizard
-        open={wizardOpen}
-        mode={wizardMode}
-        initialRule={wizardInitialRule}
-        onClose={handleCloseWizard}
-        onCompleted={handleWizardCompleted}
+        open={wizardState.open}
+        mode={wizardState.mode}
+        initialRule={wizardState.initialRule}
+        onClose={actions.closeWizard}
+        onCompleted={actions.completeWizard}
       />
 
-      {simulationRule ? <SimulationModal rule={simulationRule} onClose={() => setSimulationRule(null)} /> : null}
+      {simulationRule ? <SimulationModal rule={simulationRule} onClose={actions.clearSimulation} /> : null}
     </AppShell>
   );
 }
@@ -541,6 +406,37 @@ function SimulationModal({ rule, onClose }: SimulationModalProps) {
       </div>
     </div>
   );
+}
+
+export default function AlertsWatchlistPage() {
+  const planContext = usePlanContext();
+  const planReady = planContext.initialized && !planContext.loading;
+
+  if (!planReady) {
+    return (
+      <AppShell>
+        <div className="space-y-4">
+          <SkeletonBlock className="h-32 rounded-3xl" />
+        </div>
+      </AppShell>
+    );
+  }
+
+  const hasAccess = isTierAtLeast(planContext.planTier ?? "free", "pro");
+
+  if (!hasAccess) {
+    return (
+      <AppShell>
+        <PlanLock
+          requiredTier="pro"
+          title="워치리스트 알림은 Pro 이상에서 제공됩니다"
+          description="Slack/Email 알림과 Digest 자동화를 실행하려면 플랜을 업그레이드해 주세요."
+        />
+      </AppShell>
+    );
+  }
+
+  return <AlertsWatchlistContent fallbackPlanTier={planContext.planTier?.toUpperCase() ?? "—"} />;
 }
 
 function SimulationEventCard({

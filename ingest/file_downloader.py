@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
-from lxml import etree, html as lxml_html
+from lxml import etree, html as lxml_html  # type: ignore[reportMissingImports]
 
 from core.env import env_bool, env_str
 from ingest.legal_guard import evaluate_viewer_access
@@ -107,8 +107,8 @@ def _guess_content_type(data: bytes, header_value: Optional[str]) -> str:
 def _get_with_retry(client: httpx.Client, url: str) -> httpx.Response:
     last_error: Optional[Exception] = None
     for attempt in range(1, MAX_RETRIES + 1):
+        normalized_url = _force_https(url)
         try:
-            normalized_url = _force_https(url)
             response = client.get(normalized_url)
             response.raise_for_status()
             return response
@@ -133,6 +133,24 @@ class FilingPackage(TypedDict, total=False):
     pdf: Optional[str]
     xml: List[str]
     attachments: List[AttachmentInfo]
+
+
+def _ensure_attachment_bucket(pkg: FilingPackage) -> List[AttachmentInfo]:
+    attachments = pkg.get("attachments")
+    if isinstance(attachments, list):
+        return attachments
+    bucket: List[AttachmentInfo] = []
+    pkg["attachments"] = bucket
+    return bucket
+
+
+def _ensure_xml_bucket(pkg: FilingPackage) -> List[str]:
+    xml_entries = pkg.get("xml")
+    if isinstance(xml_entries, list):
+        return xml_entries
+    bucket: List[str] = []
+    pkg["xml"] = bucket
+    return bucket
 
 
 @dataclass
@@ -196,17 +214,19 @@ def parse_filing_bundle(
                 path_str = str(output_path.resolve())
                 lower_name = member.filename.lower()
                 if lower_name.endswith((".xml", ".xbrl")):
-                    package["xml"].append(path_str)
+                    _ensure_xml_bucket(package).append(path_str)
                 elif lower_name.endswith(".pdf"):
                     if package["pdf"] is None:
                         package["pdf"] = path_str
-                    package["attachments"].append({"name": member.filename, "path": path_str, "type": "pdf"})
+                    _ensure_attachment_bucket(package).append(
+                        {"name": member.filename, "path": path_str, "type": "pdf"}
+                    )
                 else:
-                    package["attachments"].append(
+                    _ensure_attachment_bucket(package).append(
                         {"name": member.filename, "path": path_str, "type": output_path.suffix.lower() or "file"}
                     )
 
-        if not package["xml"]:
+        if not _ensure_xml_bucket(package):
             logger.warning("No XML/XBRL files found in ZIP for %s.", receipt_no)
 
     elif content_type.startswith("application/pdf"):
@@ -227,7 +247,7 @@ def parse_filing_bundle(
             # advertise XML explicitly).
             xml_path = base_dir / f"{receipt_no}.xml"
             xml_path.write_bytes(data)
-            package["xml"].append(str(xml_path.resolve()))
+            _ensure_xml_bucket(package).append(str(xml_path.resolve()))
             return package
 
         logger.error("Unsupported content type %s while parsing receipt %s.", content_type, receipt_no)
@@ -433,7 +453,7 @@ def _download_from_candidate_urls(
         output_path.write_bytes(data)
         attachment_type = output_path.suffix.lower().lstrip(".") or "pdf"
         pkg["pdf"] = pkg.get("pdf") or str(output_path.resolve())
-        pkg["attachments"].append(
+        _ensure_attachment_bucket(pkg).append(
             {"name": filename, "path": str(output_path.resolve()), "type": attachment_type}
         )
 
@@ -484,7 +504,7 @@ def fetch_viewer_bundle(viewer_url: str, save_dir: str) -> Optional[FilingPackag
 
             for btn in download_soup.select("a.btnFile"):
                 href = btn.get("href")
-                if not href:
+                if not isinstance(href, str) or not href.strip():
                     continue
                 full_url = urljoin("https://dart.fss.or.kr", href)
                 file_response = _get_with_retry(client, _force_https(full_url))
@@ -513,8 +533,9 @@ def fetch_viewer_bundle(viewer_url: str, save_dir: str) -> Optional[FilingPackag
                 elif parsed_url.path:
                     filename = os.path.basename(parsed_url.path)
 
+                attachments_bucket = _ensure_attachment_bucket(pkg)
                 if not filename:
-                    filename = f"{receipt_no}_{len(pkg['attachments'])}.dat"
+                    filename = f"{receipt_no}_{len(attachments_bucket)}.dat"
 
                 output_path = base_dir / filename
                 output_path.write_bytes(data)
@@ -523,11 +544,9 @@ def fetch_viewer_bundle(viewer_url: str, save_dir: str) -> Optional[FilingPackag
                     if pkg.get("pdf") is None:
                         pkg["pdf"] = str(output_path.resolve())
                 elif attachment_type in {"xml", "xbrl"}:
-                    pkg["xml"].append(str(output_path.resolve()))
+                    _ensure_xml_bucket(pkg).append(str(output_path.resolve()))
 
-                pkg["attachments"].append(
-                    {"name": filename, "path": str(output_path.resolve()), "type": attachment_type}
-                )
+                attachments_bucket.append({"name": filename, "path": str(output_path.resolve()), "type": attachment_type})
 
             if package:
                 return package

@@ -385,8 +385,8 @@ class WatchlistDigestScheduleCreateRequest(BaseModel):
     weekdaysOnly: bool = Field(default=True)
     windowMinutes: int = Field(default=1440, ge=5, le=7 * 24 * 60)
     limit: int = Field(default=20, ge=1, le=200)
-    slackTargets: List[str] = Field(default_factory=list, max_items=20)
-    emailTargets: List[str] = Field(default_factory=list, max_items=20)
+    slackTargets: List[str] = Field(default_factory=list)
+    emailTargets: List[str] = Field(default_factory=list)
     enabled: bool = Field(default=True)
 
 
@@ -397,8 +397,8 @@ class WatchlistDigestScheduleUpdateRequest(BaseModel):
     weekdaysOnly: Optional[bool] = None
     windowMinutes: Optional[int] = Field(default=None, ge=5, le=7 * 24 * 60)
     limit: Optional[int] = Field(default=None, ge=1, le=200)
-    slackTargets: Optional[List[str]] = Field(default=None, max_items=20)
-    emailTargets: Optional[List[str]] = Field(default=None, max_items=20)
+    slackTargets: Optional[List[str]] = Field(default=None)
+    emailTargets: Optional[List[str]] = Field(default=None)
     enabled: Optional[bool] = None
 
 

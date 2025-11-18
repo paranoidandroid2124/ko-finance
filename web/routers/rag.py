@@ -8,8 +8,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 
-from database import get_db
+from database import get_db, SessionLocal
 from schemas.api.rag import (
     RAGDeeplinkPayload,
     RAGQueryRequest,
@@ -25,10 +26,21 @@ from schemas.api.rag_v2 import (
     RagQueryResponse as RagQueryV2Response,
 )
 from services.plan_service import PlanContext
+from services.web_utils import parse_uuid
 from services import rag_service
 from web.deps import require_plan_feature
+from web.quota_guard import enforce_quota
 
 router = APIRouter(prefix="/rag", tags=["RAG"])
+
+
+def _enforce_rag_chat_quota(plan: PlanContext, x_user_id: Optional[str], x_org_id: Optional[str]) -> None:
+    enforce_quota(
+        "rag.chat",
+        plan=plan,
+        user_id=parse_uuid(x_user_id),
+        org_id=parse_uuid(x_org_id),
+    )
 
 
 @router.get(
@@ -64,6 +76,7 @@ def query_rag(
     plan: PlanContext = Depends(require_plan_feature("rag.core")),
     db: Session = Depends(get_db),
 ) -> RAGQueryResponse:
+    _enforce_rag_chat_quota(plan, x_user_id, x_org_id)
     return rag_service.query_rag(request, x_user_id, x_org_id, idempotency_key_header, plan, db)
 
 
@@ -74,9 +87,27 @@ def query_rag_stream(
     x_org_id: Optional[str] = Header(default=None),
     idempotency_key_header: Optional[str] = Header(default=None, convert_underscores=False, alias="Idempotency-Key"),
     plan: PlanContext = Depends(require_plan_feature("rag.core")),
-    db: Session = Depends(get_db),
 ) -> StreamingResponse:
-    return rag_service.query_rag_stream(request, x_user_id, x_org_id, idempotency_key_header, plan, db)
+    _enforce_rag_chat_quota(plan, x_user_id, x_org_id)
+    session = SessionLocal()
+    try:
+        response = rag_service.query_rag_stream(request, x_user_id, x_org_id, idempotency_key_header, plan, session)
+    except Exception:
+        session.close()
+        raise
+    if response.background is None:
+        response.background = BackgroundTask(session.close)
+    else:
+        original_background = response.background
+
+        def _combined_background() -> None:
+            try:
+                original_background()
+            finally:
+                session.close()
+
+        response.background = BackgroundTask(_combined_background)
+    return response
 
 
 @router.post(
@@ -91,6 +122,7 @@ def query_rag_v2(
     plan: PlanContext = Depends(require_plan_feature("rag.core")),
     db: Session = Depends(get_db),
 ) -> RagQueryV2Response:
+    _enforce_rag_chat_quota(plan, x_user_id, x_org_id)
     return rag_service.query_rag_v2(payload, x_user_id, x_org_id, plan, db)
 
 
@@ -106,6 +138,7 @@ def query_rag_grid(
     plan: PlanContext = Depends(require_plan_feature("rag.core")),
     db: Session = Depends(get_db),
 ) -> RagGridResponse:
+    _enforce_rag_chat_quota(plan, x_user_id, x_org_id)
     return rag_service.query_rag_grid(payload, x_user_id, x_org_id, plan, db)
 
 
@@ -122,6 +155,7 @@ def create_rag_grid_job(
     plan: PlanContext = Depends(require_plan_feature("rag.core")),
     db: Session = Depends(get_db),
 ) -> RagGridJobResponse:
+    _enforce_rag_chat_quota(plan, x_user_id, x_org_id)
     return rag_service.create_rag_grid_job(payload, x_user_id, x_org_id, plan, db)
 
 

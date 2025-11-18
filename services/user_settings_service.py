@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,18 +10,14 @@ from threading import RLock
 from typing import Dict, Optional
 
 from core.logging import get_logger
+from services.json_store import read_json_document, write_json_document
 
 logger = get_logger(__name__)
 
-_SETTINGS_DIR = Path("uploads") / "user_settings"
-_LIGHTMEM_PATH = _SETTINGS_DIR / "lightmem_preferences.json"
+_LIGHTMEM_PATH = Path("uploads") / "user_settings" / "lightmem_preferences.json"
 
 _STORE_LOCK = RLock()
 _STORE_CACHE: Optional[Dict[str, Dict[str, object]]] = None
-
-
-def _ensure_settings_dir() -> None:
-    _SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _load_store() -> Dict[str, Dict[str, object]]:
@@ -30,28 +25,18 @@ def _load_store() -> Dict[str, Dict[str, object]]:
     if _STORE_CACHE is not None:
         return _STORE_CACHE
 
-    _ensure_settings_dir()
-    if not _LIGHTMEM_PATH.exists():
-        _STORE_CACHE = {}
-        return _STORE_CACHE
-
-    try:
-        payload = json.loads(_LIGHTMEM_PATH.read_text(encoding="utf-8"))
-        if isinstance(payload, dict):
-            _STORE_CACHE = payload
-        else:
-            logger.warning("LightMem user settings file is malformed; resetting cache.")
-            _STORE_CACHE = {}
-    except json.JSONDecodeError as exc:
-        logger.warning("Failed to parse LightMem user settings: %s", exc)
+    payload = read_json_document(_LIGHTMEM_PATH, default=dict)
+    if isinstance(payload, dict):
+        _STORE_CACHE = payload
+    else:
+        logger.warning("LightMem user settings file is malformed; resetting cache.")
         _STORE_CACHE = {}
     return _STORE_CACHE
 
 
 def _save_store(store: Dict[str, Dict[str, object]]) -> None:
     global _STORE_CACHE  # pylint: disable=global-statement
-    _ensure_settings_dir()
-    _LIGHTMEM_PATH.write_text(json.dumps(store, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_document(_LIGHTMEM_PATH, store)
     _STORE_CACHE = dict(store)
 
 

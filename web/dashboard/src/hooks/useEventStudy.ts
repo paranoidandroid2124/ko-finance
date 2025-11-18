@@ -48,6 +48,8 @@ export type EventStudyEvent = {
   viewerUrl?: string | null;
   capBucket?: string | null;
   marketCap?: number | null;
+  salience?: number | null;
+  isRestatement?: boolean;
 };
 
 export type EventStudyEventsResponse = {

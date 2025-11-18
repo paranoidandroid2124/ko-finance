@@ -40,7 +40,8 @@ def backfill(dry_run: bool = False) -> int:
     skipped = set(_existing_rule_ids())
     try:
         for rule in _iter_preset_rules(session):
-            preset_id = (rule.extras or {}).get("presetId") or (rule.extras or {}).get("preset_id")
+            extras = rule.extras if isinstance(rule.extras, dict) else {}
+            preset_id = extras.get("presetId") or extras.get("preset_id")
             if not preset_id:
                 continue
             rule_identifier = str(rule.id)
@@ -48,20 +49,25 @@ def backfill(dry_run: bool = False) -> int:
                 continue
             channels = []
             for entry in rule.channels or []:
-                channel_type = entry.get("type")
-                if channel_type:
-                    channels.append(str(channel_type))
+                if isinstance(entry, dict):
+                    channel_type = entry.get("type")
+                    if channel_type:
+                        channels.append(str(channel_type))
             if not channels:
                 channels.append("email")
+            plan_tier_value = str(rule.plan_tier) if getattr(rule, "plan_tier", None) else None
+            user_uuid = rule.user_id if isinstance(rule.user_id, uuid.UUID) else None
+            org_uuid = rule.org_id if isinstance(rule.org_id, uuid.UUID) else None
+            rule_uuid = rule.id if isinstance(rule.id, uuid.UUID) else None
             if not dry_run:
                 preset_usage_service.record_usage(
                     preset_id=str(preset_id),
-                    bundle=(rule.extras or {}).get("presetBundle"),
-                    plan_tier=rule.plan_tier,
+                    bundle=extras.get("presetBundle"),
+                    plan_tier=plan_tier_value,
                     channel_types=channels,
-                    user_id=rule.user_id if isinstance(rule.user_id, uuid.UUID) else None,
-                    org_id=rule.org_id if isinstance(rule.org_id, uuid.UUID) else None,
-                    rule_id=rule.id if isinstance(rule.id, uuid.UUID) else None,
+                    user_id=user_uuid,
+                    org_id=org_uuid,
+                    rule_id=rule_uuid,
                 )
             processed += 1
     finally:

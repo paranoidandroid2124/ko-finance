@@ -6,16 +6,28 @@ Usage:
 """
 
 import argparse
+import importlib
 import logging
-from typing import Dict, List, Optional
+from types import ModuleType
+from typing import Any, Dict, List, Optional
+
+answer_relevancy: Optional[Any] = None
+faithfulness: Optional[Any] = None
+evaluate: Optional[Any] = None
+
+ragas_metrics_module: Optional[ModuleType] = None
+ragas_module: Optional[ModuleType] = None
 
 try:
-    from ragas.metrics import answer_relevancy, faithfulness
-    from ragas import evaluate
+    ragas_metrics_module = importlib.import_module("ragas.metrics")
+    ragas_module = importlib.import_module("ragas")
 except ImportError:  # pragma: no cover - optional dependency
-    answer_relevancy = None  # type: ignore[assignment]
-    faithfulness = None  # type: ignore[assignment]
-    evaluate = None
+    ragas_metrics_module = None
+    ragas_module = None
+else:
+    answer_relevancy = getattr(ragas_metrics_module, "answer_relevancy", None)
+    faithfulness = getattr(ragas_metrics_module, "faithfulness", None)
+    evaluate = getattr(ragas_module, "evaluate", None)
 
 from services import vector_service
 from llm import llm_service

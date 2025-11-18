@@ -12,7 +12,7 @@ type EvidencePanelStoreState = {
   diffActive: boolean;
   pdfStatus: EvidencePdfStatus;
   pdfError: string | null;
-  setSelectedUrnId: (urnId?: string) => void;
+  setSelectedUrnId: (urnId: string | undefined | ((prev?: string) => string | undefined)) => void;
   setHoveredUrnId: (urnId?: string) => void;
   setDiffActive: (value: boolean | ((prev: boolean) => boolean)) => void;
   setPdfState: (status: EvidencePdfStatus, error?: string | null) => void;
@@ -26,7 +26,10 @@ const buildStore = (initial?: Partial<EvidencePanelStoreState>) =>
     diffActive: initial?.diffActive ?? false,
     pdfStatus: initial?.pdfStatus ?? "idle",
     pdfError: initial?.pdfError ?? null,
-    setSelectedUrnId: (urnId) => set({ selectedUrnId: urnId }),
+    setSelectedUrnId: (urnId) =>
+      set((state) => ({
+        selectedUrnId: typeof urnId === "function" ? urnId(state.selectedUrnId) : urnId,
+      })),
     setHoveredUrnId: (urnId) => set({ hoveredUrnId: urnId }),
     setDiffActive: (value) =>
       set((state) => ({

@@ -6,7 +6,7 @@ import logging
 import re
 import hashlib
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
@@ -175,11 +175,18 @@ def _looks_like_footnote(tag: Tag, text: str) -> bool:
     if name in {"document", "body", "cover"}:
         return False
 
-    classes = " ".join(tag.get("class", []) or [])
+    classes_attr = tag.get("class")
+    if isinstance(classes_attr, str):
+        classes = classes_attr
+    elif isinstance(classes_attr, (list, tuple)):
+        classes = " ".join(str(entry) for entry in classes_attr)
+    else:
+        classes = ""
     if "footnote" in classes.lower():
         return True
 
-    usermark = str(tag.get("usermark") or "").lower()
+    usermark_value = tag.get("usermark")
+    usermark = str(usermark_value or "").lower()
     if "footnote" in usermark:
         return True
 
@@ -225,7 +232,7 @@ def _append_chunk(
     )
 
 
-def _extract_table_payload(table_tag: Tag) -> Tuple[Optional[str], Dict[str, object]]:
+def _extract_table_payload(table_tag: Tag) -> Tuple[Optional[str], Dict[str, Any]]:
     rows: List[List[str]] = []
     for row in table_tag.find_all("tr"):
         cells: List[str] = []
@@ -237,7 +244,7 @@ def _extract_table_payload(table_tag: Tag) -> Tuple[Optional[str], Dict[str, obj
     table_text = "\n".join(" \t ".join(r) for r in rows if any(cell.strip() for cell in r))
     if not table_text:
         table_text = normalize_text(table_tag.get_text(" ", strip=True))
-    metadata_extra = {"table_rows": rows}
+    metadata_extra: Dict[str, Any] = {"table_rows": rows}
     return (table_text or None), metadata_extra
 
 
