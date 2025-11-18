@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
+import { FilingHeaderNotice } from "@/components/legal/FilingLegal";
+import { ChatInputDisclaimer } from "@/components/legal/ChatLegal";
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 type PublicFiling = {
@@ -133,6 +136,7 @@ export default function PublicPreviewPage() {
             <p className="mt-1 text-sm text-slate-400">
               로그인 없이도 최근 공시 흐름을 살짝 확인해 보세요.
             </p>
+            <FilingHeaderNotice className="mt-2 text-xs text-slate-500" />
             {loadingFilings && <p className="mt-6 text-sm text-slate-400">공시를 불러오는 중...</p>}
             {filingError && (
               <p className="mt-6 rounded-lg border border-red-500/60 bg-red-500/10 px-3 py-2 text-sm text-red-200">
@@ -206,6 +210,7 @@ export default function PublicPreviewPage() {
                 placeholder="예: 최근 에너지 업종 사업보고 주요 이슈 알려줘"
                 className="h-28 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none"
               />
+              <ChatInputDisclaimer className="text-xs text-slate-500" />
               {chatError ? <p className="text-sm text-red-300">{chatError}</p> : null}
               <button
                 type="submit"

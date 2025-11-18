@@ -125,7 +125,7 @@ export function FinancialStatementsBoard({
     [activeStatement, statements],
   );
 
-  const rows = currentStatement?.rows ?? [];
+  const rows = useMemo(() => currentStatement?.rows ?? [], [currentStatement]);
   const currentRow =
     rows.find((row) => row.metricCode === activeMetric) ?? rows[0] ?? null;
 

@@ -9,6 +9,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAlertRules } from "@/hooks/useAlerts";
 import { UserLightMemSettingsCard } from "@/components/settings/UserLightMemSettingsCard";
+import { LegalDataCard } from "@/components/settings/LegalDataCard";
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
@@ -65,6 +66,8 @@ export default function SettingsPage() {
             className="border-none bg-transparent px-0 py-6 text-xs text-text-secondaryLight dark:text-text-secondaryDark"
           />
         </section>
+
+        <LegalDataCard />
       </div>
     </AppShell>
   );

@@ -225,6 +225,36 @@ class AlertRuleLastDelivery(BaseModel):
     createdAt: Optional[str] = None
 
 
+class AlertRuleSimulationRequest(BaseModel):
+    windowMinutes: Optional[int] = Field(
+        default=None,
+        ge=5,
+        le=7 * 24 * 60,
+        description="Optional override for rule lookback window.",
+    )
+    limit: Optional[int] = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="Max number of matched events to return.",
+    )
+
+
+class AlertRuleSimulationResponse(BaseModel):
+    ruleId: str
+    planTier: str
+    evaluatedAt: str
+    matches: bool
+    eventType: str
+    message: str
+    windowMinutes: int
+    windowStart: str
+    windowEnd: str
+    eventCount: int
+    events: List[Dict[str, Any]] = Field(default_factory=list)
+    snapshot: Dict[str, Any] = Field(default_factory=dict)
+
+
 class AlertRuleStatsResponse(BaseModel):
     ruleId: str
     windowMinutes: Optional[int] = None
@@ -370,6 +400,16 @@ class WatchlistDigestScheduleUpdateRequest(BaseModel):
     slackTargets: Optional[List[str]] = Field(default=None, max_items=20)
     emailTargets: Optional[List[str]] = Field(default=None, max_items=20)
     enabled: Optional[bool] = None
+
+
+class WatchlistDigestPreviewRequest(BaseModel):
+    windowMinutes: Optional[int] = Field(default=None, ge=5, le=7 * 24 * 60)
+    limit: Optional[int] = Field(default=None, ge=1, le=500)
+
+
+class WatchlistDigestPreviewResponse(BaseModel):
+    schedule: WatchlistDigestScheduleSchema
+    payload: Dict[str, Any]
 
 
 class WatchlistRuleChannelSummary(BaseModel):

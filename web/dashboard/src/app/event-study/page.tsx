@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
@@ -8,349 +8,501 @@ import { AppShell } from "@/components/layout/AppShell";
 import { FilterChip } from "@/components/ui/FilterChip";
 import { EmptyState } from "@/components/ui/EmptyState";
 import {
-  useEventStudyMetrics,
-  useEventStudyWindows,
+  useEventStudyBoard,
+  useEventStudyEventDetail,
+  type EventStudyBoardResponse,
   type EventStudyEvent,
-  type EventStudyWindowPreset,
+  type EventStudyEventDetailResponse,
 } from "@/hooks/useEventStudy";
+import {
+  EvidencePanel,
+  type EvidenceItem,
+  type EvidencePanelStatus,
+} from "@/components/evidence/EvidencePanel";
+import { usePlanTier } from "@/store/planStore";
+import type { PlanTier } from "@/store/planStore/types";
+import { EventStudyBoardHeader, RestatementRadarFooter } from "@/components/legal/EventStudyLegal";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
-type EventType = "BUYBACK" | "SEO" | "DIVIDEND" | "RESTATEMENT" | "CONVERTIBLE" | "CONTRACT";
-
-const EVENT_TYPE_OPTIONS: Array<{ value: EventType; label: string }> = [
-  { value: "BUYBACK", label: "자사주 매입·소각" },
-  { value: "SEO", label: "유상증자(SEO)" },
+const EVENT_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "BUYBACK", label: "자사주 매입" },
+  { value: "SEO", label: "유상증자" },
   { value: "DIVIDEND", label: "배당" },
   { value: "RESTATEMENT", label: "정정 공시" },
-  { value: "CONVERTIBLE", label: "CB/BW 발행" },
   { value: "CONTRACT", label: "대형 계약" },
+  { value: "MNA", label: "M&A" },
 ];
 
-const CAP_BUCKET_OPTIONS: Array<{ value: string; label: string }> = [
+const CAP_BUCKET_OPTIONS = [
   { value: "ALL", label: "전체" },
   { value: "LARGE", label: "대형" },
   { value: "MID", label: "중형" },
   { value: "SMALL", label: "소형" },
 ];
 
-const MARKET_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "KOSPI", label: "KOSPI" },
-  { value: "KOSDAQ", label: "KOSDAQ" },
+const RANGE_OPTIONS = [
+  { value: 7, label: "7일" },
+  { value: 30, label: "30일" },
+  { value: 90, label: "90일" },
 ];
 
-const SIGNIFICANCE_OPTIONS = [0.05, 0.1, 0.2];
-
-const formatPercent = (value: number, digits = 2) => `${value >= 0 ? "+" : ""}${(value * 100).toFixed(digits)}%`;
-const formatNullablePercent = (value?: number | null, digits = 2) => (value == null ? "—" : formatPercent(value, digits));
-const formatNumber = (value?: number | null) =>
-  value == null ? "—" : new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 0 }).format(value);
-
-const buildCaarOption = (points: Array<{ t: number; value: number }>, label: string) => ({
-  tooltip: { trigger: "axis" },
-  grid: { left: 32, right: 12, top: 16, bottom: 32 },
-  xAxis: {
-    type: "category",
-    data: points.map((point) => point.t),
-    name: "Event Day",
-  },
-  yAxis: {
-    type: "value",
-    axisLabel: {
-      formatter: (value: number) => `${(value * 100).toFixed(1)}%`,
-    },
-  },
-  series: [
-    {
-      name: `CAAR ${label}`,
-      type: "line",
-      smooth: true,
-      showSymbol: false,
-      lineStyle: { width: 3 },
-      data: points.map((point) => Number(point.value.toFixed(6))),
-    },
-  ],
-});
-
-const buildHistogramOption = (bins: Array<{ bin: number; range: [number, number]; count: number }> = []) => ({
-  tooltip: {
-    trigger: "item",
-    formatter: (params: { data?: { range?: [number, number]; value?: number } }) => {
-      if (!params?.data?.range) return "";
-      const [start, end] = params.data.range;
-      const count = params.data.value ?? 0;
-      return `${formatPercent(start, 2)} ~ ${formatPercent(end, 2)} · ${count}건`;
-    },
-  },
-  grid: { left: 24, right: 12, top: 12, bottom: 24 },
-  xAxis: {
-    type: "category",
-    data: bins.map((bin) => `${formatPercent(bin.range[0], 1)} ~ ${formatPercent(bin.range[1], 1)}`),
-    axisLabel: { rotate: 35 },
-  },
-  yAxis: { type: "value" },
-  series: [
-    {
-      type: "bar",
-      barWidth: "70%",
-      data: bins.map((bin) => ({ value: bin.count, range: bin.range })),
-    },
-  ],
-});
-
-
-export default function EventStudyPage() {
-  const [tickerInput, setTickerInput] = useState("");
-  const [eventType, setEventType] = useState<EventType>("BUYBACK");
+const formatDate = (input: Date) => input.toISOString().slice(0, 10);
+const formatPercent = (value?: number | null, digits = 2) =>
+  value == null ? "—" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(digits)}%`;
+export default function EventStudyBoardPage() {
+  const [rangePreset, setRangePreset] = useState(30);
+  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [capBucket, setCapBucket] = useState("ALL");
-  const [selectedMarkets, setSelectedMarkets] = useState<string[]>(["KOSPI", "KOSDAQ"]);
-  const [windowKey, setWindowKey] = useState<string | null>(null);
-  const [significance, setSignificance] = useState(0.1);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [sectorInput, setSectorInput] = useState("");
+  const [minSalience, setMinSalience] = useState(0);
+  const [selectedReceipt, setSelectedReceipt] = useState<string | null>(null);
+  const planTier = usePlanTier();
 
-  const { data: windowData, isLoading: isWindowLoading } = useEventStudyWindows();
-  const resolvedWindowKey = windowKey ?? windowData?.defaultKey;
-  const normalizedTicker = tickerInput.trim().toUpperCase();
+  const endDate = useMemo(() => new Date(), []);
+  const startDate = useMemo(() => {
+    const date = new Date();
+    date.setDate(date.getDate() - rangePreset);
+    return date;
+  }, [rangePreset]);
 
-  const metricsParams = useMemo(
+  const boardQuery = useMemo(
     () => ({
-      windowKey: resolvedWindowKey ?? undefined,
-      eventType,
-      ticker: normalizedTicker,
-      sig: significance,
+      startDate: formatDate(startDate),
+      endDate: formatDate(endDate),
+      eventTypes: selectedTypes.length ? selectedTypes : undefined,
       capBuckets: capBucket === "ALL" ? undefined : [capBucket],
-      markets: selectedMarkets,
-      search: searchTerm.trim() || undefined,
+      sectorSlugs: sectorInput.trim() ? [sectorInput.trim()] : undefined,
+      minSalience: minSalience > 0 ? minSalience : undefined,
+      limit: 50,
+      offset: 0,
     }),
-    [capBucket, eventType, normalizedTicker, resolvedWindowKey, searchTerm, selectedMarkets, significance],
+    [startDate, endDate, selectedTypes, capBucket, sectorInput, minSalience],
   );
 
-  const metricsEnabled = Boolean(resolvedWindowKey && normalizedTicker);
-  const {
-    data: metrics,
-    isLoading: isMetricsLoading,
-    isFetching: isMetricsFetching,
-    isError: isMetricsError,
-    error: metricsError,
-  } = useEventStudyMetrics(metricsParams, { enabled: metricsEnabled });
+  const { data, isLoading, isError } = useEventStudyBoard(boardQuery);
+  const detailParams = useMemo(() => ({ windowKey: data?.window.key }), [data?.window.key]);
+  const { data: detail, isLoading: isDetailLoading } = useEventStudyEventDetail(selectedReceipt, detailParams, {
+    enabled: Boolean(selectedReceipt),
+  });
 
-  const windowOptions: EventStudyWindowPreset[] = windowData?.windows ?? [];
-  const events: EventStudyEvent[] = metrics?.events.events ?? [];
-  const hasData = Boolean(metrics && metrics.n > 0);
+  const handleToggleEventType = (value: string) => {
+    setSelectedTypes((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value],
+    );
+  };
+
+  const handleSelectEvent = (event: EventStudyEvent) => {
+    setSelectedReceipt(event.receiptNo);
+  };
 
   return (
-    <AppShell>
-      <div className="space-y-8">
-        <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-text-secondaryLight dark:text-text-secondaryDark">
-                티커 (필수)
-              </label>
-              <input
-                className="rounded-lg border border-border-light bg-background-light px-3 py-2 text-sm outline-none ring-primary focus:ring-2 dark:border-border-dark dark:bg-background-dark"
-                value={tickerInput}
-                onChange={(event) => setTickerInput(event.target.value)}
-                placeholder="예: 005930"
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-text-secondaryLight dark:text-text-secondaryDark">
-                윈도우 프리셋
-              </label>
-              <select
-                className="rounded-lg border border-border-light bg-background-light px-3 py-2 text-sm dark:border-border-dark dark:bg-background-dark"
-                disabled={isWindowLoading || !windowOptions.length}
-                value={resolvedWindowKey ?? ""}
-                onChange={(event) => setWindowKey(event.target.value)}
-              >
-                {windowOptions.map((option) => (
-                  <option key={option.key} value={option.key}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-text-secondaryLight dark:text-text-secondaryDark">
-                검색어 (기업/이벤트)
-              </label>
-              <input
-                className="rounded-lg border border-border-light bg-background-light px-3 py-2 text-sm outline-none ring-primary focus:ring-2 dark:border-border-dark dark:bg-background-dark"
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                placeholder="기업명·키워드 등을 입력하세요"
-              />
-            </div>
+    <AppShell title="Event Study 보드" description="기간별 이벤트 성과와 근거를 한눈에 살펴보세요.">
+      <div className="flex flex-col gap-6">
+        <FilterPanel
+          rangePreset={rangePreset}
+          onRangeChange={setRangePreset}
+          selectedTypes={selectedTypes}
+          onToggleEventType={handleToggleEventType}
+          capBucket={capBucket}
+          onCapBucketChange={setCapBucket}
+          sectorInput={sectorInput}
+          onSectorInputChange={setSectorInput}
+          minSalience={minSalience}
+          onSalienceChange={setMinSalience}
+        />
+        <EventStudyBoardHeader className="text-xs text-muted-foreground" />
+        {isLoading ? (
+          <div className="flex items-center justify-center py-20 text-muted-foreground">
+            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+            데이터를 불러오는 중입니다...
           </div>
-          <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <div className="flex flex-wrap gap-2">
-              {EVENT_TYPE_OPTIONS.map((option) => (
-                <FilterChip key={option.value} active={eventType === option.value} onClick={() => setEventType(option.value)}>
-                  {option.label}
-                </FilterChip>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {CAP_BUCKET_OPTIONS.map((option) => (
-                <FilterChip key={option.value} active={capBucket === option.value} onClick={() => setCapBucket(option.value)}>
-                  시가총액 {option.label}
-                </FilterChip>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {MARKET_OPTIONS.map((option) => {
-                const active = selectedMarkets.includes(option.value);
-                return (
-                  <FilterChip
-                    key={option.value}
-                    active={active}
-                    onClick={() =>
-                      setSelectedMarkets((prev) =>
-                        prev.includes(option.value)
-                          ? prev.filter((value) => value !== option.value)
-                          : [...prev, option.value],
-                      )
-                    }
-                  >
-                    {option.label}
-                  </FilterChip>
-                );
-              })}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {SIGNIFICANCE_OPTIONS.map((option) => (
-                <FilterChip key={option} active={significance === option} onClick={() => setSignificance(option)}>
-                  유의수준 {Math.round(option * 100)}%
-                </FilterChip>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {!normalizedTicker ? (
-          <EmptyState
-            title="분석할 티커를 입력해주세요"
-            description="좌측 상단에 티커를 입력하면 이벤트 효과와 CAAR/HIT 지표를 바로 확인할 수 있습니다."
-          />
-        ) : isMetricsLoading ? (
-          <div className="flex h-64 items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-primary" />
-          </div>
-        ) : isMetricsError ? (
-          <EmptyState title="지표를 불러오지 못했어요" description={(metricsError as Error)?.message ?? "잠시 후 다시 시도해주세요."} />
-        ) : !hasData ? (
-          <EmptyState title="일치하는 이벤트가 없어요" description="필터 조건을 조정하거나 분석 기간을 확장해 보세요." />
+        ) : isError ? (
+          <EmptyState title="보드를 불러오지 못했습니다." body="잠시 후 다시 시도해주세요." />
+        ) : !data || data.events.total === 0 ? (
+          <EmptyState title="표시할 이벤트가 없습니다." body="필터를 변경해 다시 검색해 보세요." />
         ) : (
-          <div className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <MetricCard title="표본 수" value={formatNumber(metrics?.n)} description="해당 조건에 포함된 이벤트 수" />
-              <MetricCard title="Hit Rate" value={formatNullablePercent(metrics?.hitRate)} description="양(+)의 CAR 비중" />
-              <MetricCard title="평균 CAAR" value={formatNullablePercent(metrics?.meanCaar)} description="윈도우 종료 시점의 평균 CAR" />
-              <MetricCard title="p-value" value={metrics ? metrics.pValue.toFixed(4) : "—"} description="단일표본 z-test 결과" />
-            </div>
-
-            <div className="grid gap-6 md:grid-cols-5">
-              <div className="rounded-2xl border border-border-light bg-background-cardLight p-4 shadow-card dark:border-border-dark dark:bg-background-cardDark md:col-span-3">
-                <div className="mb-3 flex items-center justify-between">
-                  <div>
-                    <p className="text-xs uppercase text-text-secondaryLight dark:text-text-secondaryDark">CAAR</p>
-                    <p className="text-lg font-semibold">{metrics?.windowLabel}</p>
-                  </div>
-                  {isMetricsFetching ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : null}
-                </div>
-                {metrics?.caar.length ? (
-                  <ReactECharts notMerge style={{ height: 280 }} option={buildCaarOption(metrics.caar, metrics.windowLabel)} />
-                ) : (
-                  <EmptyState title="데이터 없음" description="CAAR 시계열을 계산할 수 있는 이벤트가 부족합니다." />
-                )}
-              </div>
-              <div className="rounded-2xl border border-border-light bg-background-cardLight p-4 shadow-card dark:border-border-dark dark:bg-background-cardDark md:col-span-2">
-                <div className="mb-3">
-                  <p className="text-xs uppercase text-text-secondaryLight dark:text-text-secondaryDark">Distribution</p>
-                  <p className="text-lg font-semibold">CAAR Histogram</p>
-                </div>
-                {metrics?.dist.length ? (
-                  <ReactECharts notMerge style={{ height: 280 }} option={buildHistogramOption(metrics.dist)} />
-                ) : (
-                  <EmptyState title="분포 데이터 없음" description="해당 조건을 만족하는 이벤트가 없습니다." />
-                )}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-border-light bg-background-cardLight p-4 shadow-card dark:border-border-dark dark:bg-background-cardDark">
-              <div className="mb-4 flex items-center justify-between">
-                <div>
-                  <p className="text-xs uppercase text-text-secondaryLight dark:text-text-secondaryDark">Event Breakdown</p>
-                  <p className="text-lg font-semibold">총 이벤트 {formatNumber(metrics?.events.total)}</p>
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-border-light text-xs uppercase text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
-                      <th className="px-2 py-2">날짜</th>
-                      <th className="px-2 py-2">기업</th>
-                      <th className="px-2 py-2">CAAR</th>
-                      <th className="px-2 py-2">피크 시점</th>
-                      <th className="px-2 py-2">원문</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {events.map((event) => (
-                      <tr key={event.receiptNo} className="border-b border-border-light last:border-0 dark:border-border-dark">
-                        <td className="px-2 py-2 text-text-secondaryLight dark:text-text-secondaryDark">{formatEventDate(event.eventDate)}</td>
-                        <td className="px-2 py-2 font-semibold">
-                          <div>{event.corpName ?? "—"}</div>
-                          <div className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">{event.ticker}</div>
-                        </td>
-                        <td className="px-2 py-2">{formatNullablePercent(event.caar)}</td>
-                        <td className="px-2 py-2">{event.aarPeakDay == null ? "—" : `T${event.aarPeakDay >= 0 ? "+" : ""}${event.aarPeakDay}`}</td>
-                        <td className="px-2 py-2">
-                          {event.viewerUrl ? (
-                            <a
-                              href={event.viewerUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-primary underline-offset-2 hover:underline"
-                            >
-                              공시 보기
-                            </a>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
+          <>
+            <SummarySection board={data} />
+            <HeatmapSection board={data} />
+            {data.restatementHighlights.length > 0 ? (
+              <RestatementSection highlights={data.restatementHighlights} onSelectEvent={handleSelectEvent} />
+            ) : null}
+            <EventTable
+              board={data}
+              selectedReceipt={selectedReceipt}
+              onSelectEvent={handleSelectEvent}
+              isDetailLoading={isDetailLoading}
+              detail={detail}
+              planTier={planTier}
+            />
+          </>
         )}
       </div>
     </AppShell>
   );
 }
 
-function MetricCard({ title, value, description }: { title: string; value: string; description?: string }) {
+type FilterPanelProps = {
+  rangePreset: number;
+  onRangeChange: (value: number) => void;
+  selectedTypes: string[];
+  onToggleEventType: (value: string) => void;
+  capBucket: string;
+  onCapBucketChange: (value: string) => void;
+  sectorInput: string;
+  onSectorInputChange: (value: string) => void;
+  minSalience: number;
+  onSalienceChange: (value: number) => void;
+};
+
+function FilterPanel({
+  rangePreset,
+  onRangeChange,
+  selectedTypes,
+  onToggleEventType,
+  capBucket,
+  onCapBucketChange,
+  sectorInput,
+  onSectorInputChange,
+  minSalience,
+  onSalienceChange,
+}: FilterPanelProps) {
   return (
-    <div className="rounded-2xl border border-border-light bg-background-cardLight p-4 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
-      <p className="text-xs uppercase text-text-secondaryLight dark:text-text-secondaryDark">{title}</p>
-      <p className="mt-2 text-2xl font-semibold">{value}</p>
-      {description ? (
-        <p className="mt-1 text-xs text-text-secondaryLight dark:text-text-secondaryDark">{description}</p>
-      ) : null}
-    </div>
+    <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-sm font-semibold text-muted-foreground">기간</span>
+        {RANGE_OPTIONS.map((option) => (
+          <FilterChip
+            key={option.value}
+            label={option.label}
+            selected={rangePreset === option.value}
+            onClick={() => onRangeChange(option.value)}
+          />
+        ))}
+      </div>
+      <div className="mt-4">
+        <span className="mb-2 block text-sm font-semibold text-muted-foreground">이벤트 타입</span>
+        <div className="flex flex-wrap gap-2">
+          {EVENT_TYPE_OPTIONS.map((option) => (
+            <FilterChip
+              key={option.value}
+              label={option.label}
+              selected={selectedTypes.includes(option.value)}
+              onClick={() => onToggleEventType(option.value)}
+            />
+          ))}
+        </div>
+      </div>
+      <div className="mt-6 grid gap-4 md:grid-cols-3">
+        <label className="flex flex-col gap-2 text-sm font-medium">
+          시가총액 구간
+          <select
+            className="rounded-xl border border-border bg-transparent px-3 py-2 text-base"
+            value={capBucket}
+            onChange={(event) => onCapBucketChange(event.target.value)}
+          >
+            {CAP_BUCKET_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-2 text-sm font-medium">
+          섹터 필터(슬러그)
+          <input
+            type="text"
+            placeholder="semiconductor, mobile..."
+            className="rounded-xl border border-border bg-transparent px-3 py-2 text-base"
+            value={sectorInput}
+            onChange={(event) => onSectorInputChange(event.target.value)}
+          />
+        </label>
+        <label className="flex flex-col gap-2 text-sm font-medium">
+          최소 Salience
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={minSalience}
+            onChange={(event) => onSalienceChange(Number(event.target.value))}
+          />
+          <span className="text-xs text-muted-foreground">{(minSalience * 100).toFixed(0)}% 이상</span>
+        </label>
+      </div>
+    </section>
   );
 }
 
-function formatEventDate(value?: string | null) {
-  if (!value) return "—";
-  try {
-    return new Date(value).toLocaleDateString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit" });
-  } catch {
-    return value;
+type SummarySectionProps = {
+  board: EventStudyBoardResponse;
+};
+
+function SummarySection({ board }: SummarySectionProps) {
+  if (!board.summary.length) {
+    return null;
   }
+  return (
+    <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium text-muted-foreground">요약</p>
+          <p className="text-lg font-semibold">{board.window.label} 윈도우</p>
+        </div>
+        <p className="text-xs text-muted-foreground">업데이트: {new Date(board.asOf).toLocaleString()}</p>
+      </div>
+      <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {board.summary.map((item) => (
+          <div key={`${item.eventType}-${item.capBucket ?? "all"}`} className="rounded-2xl border border-border p-4">
+            <p className="text-sm font-semibold uppercase text-muted-foreground">{item.eventType}</p>
+            <p className="text-2xl font-bold text-primary">{formatPercent(item.meanCaar)}</p>
+            <div className="mt-2 text-sm text-muted-foreground">
+              <div>Hit Rate: {formatPercent(item.hitRate, 1)}</div>
+              <div>샘플: {item.n.toLocaleString()}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
+type RestatementSectionProps = {
+  highlights: EventStudyEvent[];
+  onSelectEvent: (event: EventStudyEvent) => void;
+};
+
+function RestatementSection({ highlights, onSelectEvent }: RestatementSectionProps) {
+  const subset = highlights.slice(0, 4);
+  return (
+    <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium text-muted-foreground">정정 공시 하이라이트</p>
+          <p className="text-lg font-semibold">최근 정정 이벤트</p>
+        </div>
+        <p className="text-xs text-muted-foreground">정정 이벤트 {highlights.length.toLocaleString()}건</p>
+      </div>
+      <div className="mt-4 grid gap-4 md:grid-cols-2">
+        {subset.map((event) => (
+          <button
+            key={event.receiptNo}
+            type="button"
+            onClick={() => onSelectEvent(event)}
+            className="flex flex-col rounded-2xl border border-destructive/60 bg-destructive/5 px-4 py-3 text-left transition hover:border-destructive hover:bg-destructive/10"
+          >
+            <div className="text-xs font-semibold text-destructive">정정</div>
+            <div className="text-base font-semibold">{event.corpName ?? event.ticker ?? "알 수 없음"}</div>
+            <div className="text-sm text-muted-foreground">{event.eventType}</div>
+            <div className="mt-2 flex items-center justify-between text-sm">
+              <span>{event.eventDate ?? "—"}</span>
+              <span className="font-semibold text-destructive">{formatPercent(event.caar)}</span>
+            </div>
+          </button>
+        ))}
+      </div>
+      <RestatementRadarFooter className="mt-4 text-[11px] text-muted-foreground" />
+    </section>
+  );
+}
+
+type HeatmapSectionProps = {
+  board: EventStudyBoardResponse;
+};
+
+function HeatmapSection({ board }: HeatmapSectionProps) {
+  if (!board.heatmap.length) {
+    return null;
+  }
+  const grouped = board.heatmap.reduce<Record<string, typeof board.heatmap>>((acc, bucket) => {
+    acc[bucket.eventType] = acc[bucket.eventType] || [];
+    acc[bucket.eventType].push(bucket);
+    return acc;
+  }, {});
+  return (
+    <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+      <p className="text-sm font-medium text-muted-foreground">히트맵 (주차별 평균 CAAR)</p>
+      <div className="mt-4 space-y-4">
+        {Object.entries(grouped).map(([eventType, buckets]) => (
+          <div key={eventType}>
+            <p className="mb-2 text-sm font-semibold">{eventType}</p>
+            <div className="grid gap-3 md:grid-cols-3">
+              {buckets.map((bucket) => (
+                <div key={`${eventType}-${bucket.bucketStart}`} className="rounded-xl border border-border p-3">
+                  <p className="text-xs text-muted-foreground">
+                    {bucket.bucketStart} ~ {bucket.bucketEnd}
+                  </p>
+                  <p className="text-lg font-bold">{formatPercent(bucket.avgCaar)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {bucket.count.toLocaleString()}건 · 정정 비중 {formatPercent(bucket.restatementRatio, 1)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+type EventTableProps = {
+  board: EventStudyBoardResponse;
+  selectedReceipt: string | null;
+  onSelectEvent: (event: EventStudyEvent) => void;
+  detail?: ReturnType<typeof useEventStudyEventDetail>["data"];
+  isDetailLoading: boolean;
+  planTier: PlanTier;
+};
+
+function EventTable({ board, selectedReceipt, onSelectEvent, detail, isDetailLoading, planTier }: EventTableProps) {
+  return (
+    <section className="grid gap-6 lg:grid-cols-[2fr,1fr]">
+      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+        <table className="min-w-full divide-y divide-border text-sm">
+          <thead>
+            <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <th className="px-4 py-3">날짜</th>
+              <th className="px-4 py-3">회사</th>
+              <th className="px-4 py-3">이벤트</th>
+              <th className="px-4 py-3">CAAR</th>
+              <th className="px-4 py-3">Salience</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {board.events.events.map((event) => (
+              <tr
+                key={event.receiptNo}
+                className={`cursor-pointer ${selectedReceipt === event.receiptNo ? "bg-muted/40" : "hover:bg-muted/20"}`}
+                onClick={() => onSelectEvent(event)}
+              >
+                <td className="px-4 py-3">{event.eventDate ?? "—"}</td>
+                <td className="px-4 py-3">
+                  <div className="font-semibold">{event.corpName ?? event.ticker ?? "알 수 없음"}</div>
+                  <div className="text-xs text-muted-foreground">{event.ticker ?? "-"}</div>
+                </td>
+                <td className="px-4 py-3">
+                  <div>{event.eventType}</div>
+                  {event.isRestatement ? <span className="text-xs text-rose-500">정정</span> : null}
+                </td>
+                <td className="px-4 py-3 font-semibold">{formatPercent(event.caar)}</td>
+                <td className="px-4 py-3">{formatPercent(event.salience)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+        {!selectedReceipt ? (
+          <p className="text-sm text-muted-foreground">왼쪽 테이블에서 이벤트를 선택하면 상세 정보가 표시됩니다.</p>
+        ) : isDetailLoading || !detail ? (
+          <div className="flex items-center text-muted-foreground">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            상세 정보를 불러오는 중입니다...
+          </div>
+        ) : (
+          <DetailPanel detail={detail} planTier={planTier} />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function DetailPanel({ detail, planTier }: { detail: EventStudyEventDetailResponse; planTier: PlanTier }) {
+  const chartOption = useMemo(() => {
+    if (!detail.series.length) {
+      return null;
+    }
+    return {
+      tooltip: { trigger: "axis" },
+      grid: { left: 24, right: 12, top: 16, bottom: 24 },
+      xAxis: { type: "category", data: detail.series.map((point) => point.t) },
+      yAxis: {
+        type: "value",
+        axisLabel: {
+          formatter: (value: number) => `${(value * 100).toFixed(1)}%`,
+        },
+      },
+      series: [
+        {
+          name: "CAR",
+          type: "line",
+          smooth: true,
+          data: detail.series.map((point) => Number((point.car ?? 0).toFixed(6))),
+        },
+      ],
+    };
+  }, [detail.series]);
+  const evidenceItems = useMemo<EvidenceItem[]>(() => {
+    if (!detail.evidence.length) {
+      return [];
+    }
+    return detail.evidence.map((entry, index) => ({
+      urnId: entry.urnId ?? `${detail.receiptNo}-evidence-${index}`,
+      quote: entry.quote ?? undefined,
+      section: entry.section ?? undefined,
+      pageNumber: entry.pageNumber ?? undefined,
+      viewerUrl: entry.viewerUrl ?? entry.documentUrl ?? detail.viewerUrl ?? undefined,
+      documentTitle: entry.documentTitle ?? undefined,
+      documentUrl: entry.documentUrl ?? entry.viewerUrl ?? detail.viewerUrl ?? undefined,
+      documentMeta: {
+        title: entry.documentTitle ?? detail.corpName ?? detail.ticker ?? undefined,
+        corpName: detail.corpName ?? undefined,
+        ticker: detail.ticker ?? undefined,
+        receiptNo: detail.receiptNo,
+        viewerUrl: entry.viewerUrl ?? detail.viewerUrl ?? undefined,
+        publishedAt: detail.eventDate ?? undefined,
+      },
+    }));
+  }, [detail]);
+  const evidenceStatus: EvidencePanelStatus = evidenceItems.length ? "ready" : "empty";
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="text-xs uppercase text-muted-foreground">{detail.eventType}</p>
+        <p className="text-lg font-semibold">{detail.corpName ?? detail.ticker}</p>
+        <p className="text-xs text-muted-foreground">윈도우 {detail.window}</p>
+      </div>
+      {chartOption ? <ReactECharts option={chartOption} style={{ height: 200 }} /> : null}
+      <div className="rounded-xl bg-muted/40 p-3 text-sm">
+        <div className="flex justify-between">
+          <span>CAAR</span>
+          <span className="font-semibold">{formatPercent(detail.series.at(-1)?.car ?? null)}</span>
+        </div>
+        <div className="flex justify-between text-muted-foreground">
+          <span>Salience</span>
+          <span>{formatPercent(detail.salience)}</span>
+        </div>
+      </div>
+      <div className="space-y-2">
+        <p className="text-xs font-semibold text-muted-foreground">근거/문서</p>
+        {detail.documents.length ? (
+          detail.documents.map((doc) => (
+            <a
+              key={`${doc.viewerUrl ?? doc.title ?? ""}`}
+              href={doc.viewerUrl ?? "#"}
+              target="_blank"
+              className="block rounded-xl border border-border px-3 py-2 text-sm hover:border-primary"
+              rel="noreferrer"
+            >
+              <p className="font-medium">{doc.title ?? "공시 원문"}</p>
+              <p className="text-xs text-muted-foreground">{doc.publishedAt ?? "—"}</p>
+            </a>
+          ))
+        ) : (
+          <p className="text-xs text-muted-foreground">연결된 문서가 없습니다.</p>
+        )}
+      </div>
+      <EvidencePanel
+        planTier={planTier}
+        status={evidenceStatus}
+        items={evidenceItems}
+        inlinePdfEnabled={false}
+        pdfUrl={detail.viewerUrl}
+      />
+    </div>
+  );
+}

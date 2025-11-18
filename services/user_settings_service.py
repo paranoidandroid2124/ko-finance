@@ -146,9 +146,21 @@ def write_user_lightmem_settings(
     )
 
 
+def delete_user_lightmem_settings(user_id: uuid.UUID) -> bool:
+    """Remove persisted LightMem preferences for ``user_id`` if they exist."""
+    with _STORE_LOCK:
+        store = dict(_load_store())
+        removed = store.pop(str(user_id), None)
+        if removed is None:
+            return False
+        _save_store(store)
+        return True
+
+
 __all__ = [
     "UserLightMemSettings",
     "UserLightMemSettingsRecord",
     "read_user_lightmem_settings",
     "write_user_lightmem_settings",
+    "delete_user_lightmem_settings",
 ]

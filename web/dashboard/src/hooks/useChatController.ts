@@ -34,6 +34,7 @@ import { usePlanTier, usePlanStore } from '@/store/planStore';
 import type { PlanTier } from "@/store/planStore/types";
 import { useToastStore } from '@/store/toastStore';
 import { PLAN_TIER_CONFIG } from "@/config/planConfig";
+import { LEGAL_COPY } from "@/components/legal/LegalCopy";
 
 const isPlanTier = (value: string | undefined): value is PlanTier =>
   value === 'free' || value === 'starter' || value === 'pro' || value === 'enterprise';
@@ -1197,11 +1198,7 @@ export function useChatController(): ChatController {
   const sessionTitle = activeSession?.title ?? '새 세션';
   const showEmptyState = messages.length === 0;
   const hasContextBanner = useMemo(() => Boolean(contextSummary), [contextSummary]);
-  const disclaimer = useMemo(
-    () =>
-      '본 서비스는 일반 정보 제공용입니다. 투자·법률·세무 자문이 아니며 전문 자문을 대체하지 않습니다. 제공 정보의 정확성·완전성·적시성은 보장되지 않습니다. 매수/매도·소송·계약 등 의사결정은 사용자 책임입니다.',
-    [],
-  );
+  const disclaimer = useMemo(() => LEGAL_COPY.chat.sessionDisclaimer, []);
 
   return {
     plan: {

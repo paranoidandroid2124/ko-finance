@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 ALERTS_ENABLE_MODEL = env_bool("ALERTS_ENABLE_MODEL", True)
 ALERTS_ENFORCE_RL = env_bool("ALERTS_ENFORCE_RL", False)
 ALERT_CHANNEL_FAILURE_COOLDOWN_MINUTES = env_int("ALERTS_CHANNEL_FAILURE_COOLDOWN_MINUTES", 15, minimum=1)
+ALERTS_EVALUATION_PREFETCH_FACTOR = env_int("ALERTS_EVALUATION_PREFETCH_FACTOR", 4, minimum=1)
+ALERTS_EVALUATION_MAX_WORKSET = env_int("ALERTS_EVALUATION_MAX_WORKSET", 1000, minimum=10)
 ENTITLEMENT_ACTION_RULE_WRITE = "alerts.rules.max"
 
 ERROR_BACKOFF_SEQUENCE = (5, 15, 60)
@@ -428,6 +430,14 @@ def _apply_daily_cap(db: Session, rule: AlertRule, now: datetime) -> bool:
     return (count or 0) < rule.max_triggers_per_day
 
 
+def _normalize_event_limit(limit: Optional[int]) -> int:
+    try:
+        candidate = int(limit) if limit is not None else 10
+    except (TypeError, ValueError):
+        candidate = 10
+    return max(1, min(candidate, 50))
+
+
 def _query_filings(
     db: Session,
     *,
@@ -436,6 +446,7 @@ def _query_filings(
     keywords: Sequence[str],
     entities: Sequence[str],
     since: datetime,
+    limit: Optional[int] = None,
 ) -> List[Filing]:
     since_naive = since.replace(tzinfo=None)
     query = db.query(Filing).filter(Filing.filed_at.isnot(None))
@@ -460,7 +471,7 @@ def _query_filings(
             entity_clauses.append(func.lower(Filing.corp_name).like(pattern))
         query = query.filter(or_(*entity_clauses))
     query = query.order_by(Filing.filed_at.desc())
-    return list(query.limit(10).all())
+    return list(query.limit(_normalize_event_limit(limit)).all())
 
 
 def _query_news(
@@ -472,6 +483,7 @@ def _query_news(
     entities: Sequence[str],
     min_sentiment: Optional[float],
     since: datetime,
+    limit: Optional[int] = None,
 ) -> List[NewsSignal]:
     query = db.query(NewsSignal).filter(NewsSignal.published_at >= since)
     if tickers:
@@ -504,7 +516,7 @@ def _query_news(
     if min_sentiment is not None:
         query = query.filter(NewsSignal.sentiment.isnot(None), NewsSignal.sentiment >= float(min_sentiment))
     query = query.order_by(NewsSignal.published_at.desc())
-    return list(query.limit(10).all())
+    return list(query.limit(_normalize_event_limit(limit)).all())
 
 
 def _build_event_context(events: Sequence[Any], event_type: str) -> List[Dict[str, Any]]:
@@ -790,12 +802,13 @@ def evaluate_due_alerts(
     *,
     now: Optional[datetime] = None,
     limit: int = 100,
+    prefetch_factor: Optional[int] = None,
     task_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Evaluate alert rules that are due and dispatch notifications."""
     now = now or _now_utc()
     limit = max(limit, 1)
-    rules = _fetch_active_rules(db, limit)
+    rules = _load_due_rules(db, now=now, limit=limit, prefetch_factor=prefetch_factor)
     stats = _EvaluationAccumulator()
 
     for rule in rules:
@@ -804,14 +817,48 @@ def evaluate_due_alerts(
     return stats.as_dict()
 
 
-def _fetch_active_rules(db: Session, limit: int) -> List[AlertRule]:
+def _candidate_rule_query(db: Session, now: datetime):
+    """Return base query for active, uncooled rules."""
     return (
         db.query(AlertRule)
-        .filter(AlertRule.status == "active")
-        .order_by(AlertRule.updated_at.asc())
-        .limit(limit)
-        .all()
+        .filter(
+            AlertRule.status == "active",
+            or_(AlertRule.cooled_until.is_(None), AlertRule.cooled_until <= now),
+        )
+        .order_by(
+            func.coalesce(AlertRule.last_evaluated_at, AlertRule.created_at, func.now()).asc(),
+            AlertRule.id.asc(),
+        )
     )
+
+
+def _load_due_rules(
+    db: Session,
+    *,
+    now: datetime,
+    limit: int,
+    prefetch_factor: Optional[int] = None,
+) -> List[AlertRule]:
+    """Fetch alert rules that are likely due for evaluation."""
+    if limit <= 0:
+        return []
+    factor = prefetch_factor or ALERTS_EVALUATION_PREFETCH_FACTOR
+    try:
+        factor_int = int(factor)
+    except (TypeError, ValueError):
+        factor_int = ALERTS_EVALUATION_PREFETCH_FACTOR
+    factor_int = max(factor_int, 1)
+    fetch_count = max(limit * factor_int, limit)
+    fetch_count = min(fetch_count, ALERTS_EVALUATION_MAX_WORKSET)
+    candidates = list(_candidate_rule_query(db, now).limit(fetch_count).all())
+    due: List[AlertRule] = []
+    for rule in candidates:
+        if _rule_not_due(rule, now):
+            continue
+        due.append(rule)
+        if len(due) >= limit:
+            break
+    return due
 
 
 def _process_rule(
@@ -1006,6 +1053,40 @@ def _dispatch_rule_notifications(
     return channel_failures, failure_details
 
 
+def preview_alert_rule(
+    db: Session,
+    *,
+    rule: AlertRule,
+    window_minutes: Optional[int] = None,
+    limit: Optional[int] = None,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Evaluate a rule without mutating state to provide a preview."""
+    now = now or _now_utc()
+    evaluation = _evaluate_rule(
+        db,
+        rule,
+        now,
+        window_override=window_minutes,
+        max_events=limit,
+    )
+    snapshot_payload = evaluation.snapshot.as_dict()
+    return {
+        "ruleId": str(rule.id),
+        "planTier": rule.plan_tier,
+        "evaluatedAt": now.isoformat(),
+        "matches": evaluation.matches,
+        "eventType": evaluation.event_type,
+        "message": evaluation.message,
+        "windowMinutes": evaluation.snapshot.window_minutes,
+        "windowStart": evaluation.window_start.isoformat(),
+        "windowEnd": now.isoformat(),
+        "eventCount": len(evaluation.events_json),
+        "events": evaluation.events_json,
+        "snapshot": snapshot_payload,
+    }
+
+
 def _rule_is_throttled(rule: AlertRule, now: datetime) -> bool:
     return bool(rule.cooled_until and rule.cooled_until > now)
 
@@ -1041,15 +1122,20 @@ def _evaluate_rule(
     db: Session,
     rule: AlertRule,
     now: datetime,
+    *,
+    window_override: Optional[int] = None,
+    max_events: Optional[int] = None,
 ) -> _RuleEvaluationResult:
     condition = rule.trigger or {}
+    effective_window = window_override if window_override is not None else rule.window_minutes
     plan = compile_trigger(
         condition,
-        default_window_minutes=rule.window_minutes,
+        default_window_minutes=effective_window,
         default_source=str(condition.get("type") or "filing").lower(),
     )
     event_type = plan.source if plan.source in {"news", "filing"} else "filing"
     window_start = _window_start(rule, now, override_minutes=plan.window_minutes)
+    event_limit = _normalize_event_limit(max_events)
 
     if event_type == "news":
         events: Sequence[Any] = _query_news(
@@ -1060,6 +1146,7 @@ def _evaluate_rule(
             entities=plan.entities,
             min_sentiment=plan.min_sentiment,
             since=window_start,
+            limit=event_limit,
         )
     else:
         events = _query_filings(
@@ -1069,6 +1156,7 @@ def _evaluate_rule(
             keywords=plan.keywords,
             entities=plan.entities,
             since=window_start,
+            limit=event_limit,
         )
 
     events_list = list(events)

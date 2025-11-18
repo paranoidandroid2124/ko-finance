@@ -7,16 +7,14 @@ import type { Route } from "next";
 
 import { usePlanContext } from "@/store/planStore";
 import { getTrialCountdownLabel } from "@/lib/trialUtils";
-import { usePlanUpgrade } from "@/hooks/usePlanUpgrade";
 import { logEvent } from "@/lib/telemetry";
-import { recordKpiEvent } from "@/lib/kpi";
 import { FEATURE_STARTER_ENABLED } from "@/config/features";
 import { getPlanBadgeTone, getPlanLabel } from "@/lib/planTier";
 import { usePlanCatalog } from "@/hooks/usePlanCatalog";
 import { resolvePlanMarketingCopy } from "@/lib/planContext";
 import { usePlanTrialCta } from "@/hooks/usePlanTrialCta";
 import { PLAN_ENTITLEMENT_LABELS } from "@/constants/planMetadata";
-import { useToastStore } from "@/store/toastStore";
+import { PlanTierCTA } from "@/components/plan/PlanTierCTA";
 
 const friendlyEntitlement = (entitlement: string) => PLAN_ENTITLEMENT_LABELS[entitlement] ?? entitlement;
 
@@ -48,7 +46,6 @@ type PlanSummaryCardProps = {
 
 export function PlanSummaryCard({ className }: PlanSummaryCardProps) {
   const router = useRouter();
-  const pushToast = useToastStore((state) => state.show);
   const pushRoute = useCallback(
     (href: string) => {
       router.push(href as Route);
@@ -57,37 +54,16 @@ export function PlanSummaryCard({ className }: PlanSummaryCardProps) {
   );
   const { planTier, expiresAt, entitlements, quota, loading, initialized, error } = usePlanContext();
   const { catalog } = usePlanCatalog();
-  const { requestUpgrade, isPreparing } = usePlanUpgrade();
   const { trial, trialActive, trialAvailable, trialDurationDays, trialStarting, startTrialCta } = usePlanTrialCta();
   const trialEndsLabel = trialActive ? getTrialCountdownLabel(trial?.endsAt) : null;
   const marketingCopy = useMemo(() => resolvePlanMarketingCopy(planTier, catalog), [planTier, catalog]);
+  const starterPlanCopy = useMemo(() => resolvePlanMarketingCopy("starter", catalog), [catalog]);
 
   const handleStartTrial = useCallback(() => {
     startTrialCta({ source: "plan-summary-card" }).catch(() => undefined);
   }, [startTrialCta]);
 
-  const handleStarterUpgrade = useCallback(async () => {
-    if (!FEATURE_STARTER_ENABLED) {
-      return;
-    }
-    const redirectPath =
-      typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}` : "/settings";
-    logEvent("plan.starter_upgrade.cta", { currentPlan: planTier });
-    void recordKpiEvent("campaign.starter.settings_cta_click", { currentPlan: planTier }).catch(() => undefined);
-    try {
-      await requestUpgrade("starter", { redirectPath });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Starter 업그레이드를 준비하지 못했어요.";
-      pushToast({
-        id: "plan-starter-upgrade-error",
-        title: "Starter 업그레이드를 진행하지 못했어요",
-        message,
-        intent: "error",
-      });
-    }
-  }, [planTier, pushToast, requestUpgrade]);
-
-  const content = useMemo(() => {
+  const content = (() => {
     if (!initialized || loading) {
       return (
         <div className="space-y-4">
@@ -166,20 +142,19 @@ export function PlanSummaryCard({ className }: PlanSummaryCardProps) {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">
-                    Starter 플랜으로 알림 자동화를 바로 시작하세요
+                    {starterPlanCopy.title} 플랜으로 자동화를 시작해 보세요
                   </p>
                   <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-                    워치리스트 50개 · 알림 룰 10개 · 하루 80회 RAG가 포함돼요.
+                    {starterPlanCopy.tagline}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleStarterUpgrade}
-                  disabled={isPreparing}
-                  className="rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-sky-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isPreparing ? "연결 중..." : "Starter 업그레이드"}
-                </button>
+                <PlanTierCTA
+                  tier="starter"
+                  action={starterPlanCopy.primaryAction}
+                  variant="secondary"
+                  className="border-sky-400 text-sky-600 hover:border-sky-500 hover:text-sky-700 dark:border-sky-300 dark:text-sky-200"
+                  onBeforeUpgrade={() => logEvent("plan.starter_upgrade.cta", { source: "plan-summary-card" })}
+                />
               </div>
             </div>
           ) : null}
@@ -257,26 +232,28 @@ export function PlanSummaryCard({ className }: PlanSummaryCardProps) {
             ))}
           </div>
         </section>
+
+        <footer className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border-light pt-4 text-xs text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">다음 단계</p>
+            <p className="mt-1">
+              {marketingCopy.supportNote ?? "플랜을 업그레이드하면 더 많은 기능을 바로 사용할 수 있어요."}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <PlanTierCTA
+              tier={planTier}
+              action={marketingCopy.primaryAction}
+              onBeforeUpgrade={() => logEvent("plan.summary.upgrade_click", { currentPlan: planTier })}
+            />
+            {marketingCopy.secondaryAction ? (
+              <PlanTierCTA tier={planTier} action={marketingCopy.secondaryAction} variant="secondary" />
+            ) : null}
+          </div>
+        </footer>
       </>
     );
-  }, [
-    initialized,
-    loading,
-    error,
-    planTier,
-    expiresAt,
-    entitlements,
-    quota,
-    trialActive,
-    trialAvailable,
-    trialDurationDays,
-    trialEndsLabel,
-    handleStartTrial,
-    handleStarterUpgrade,
-    isPreparing,
-    trialStarting,
-    router,
-  ]);
+  })();
 
   return (
     <section

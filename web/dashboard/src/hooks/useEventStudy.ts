@@ -58,6 +58,60 @@ export type EventStudyEventsResponse = {
   events: EventStudyEvent[];
 };
 
+export type EventStudyEventDocument = {
+  title?: string | null;
+  viewerUrl?: string | null;
+  publishedAt?: string | null;
+  source?: string | null;
+};
+
+export type EventStudyEventLink = {
+  label: string;
+  url: string;
+  kind: string;
+};
+
+export type EventStudyEventEvidence = {
+  urnId?: string | null;
+  quote?: string | null;
+  section?: string | null;
+  pageNumber?: number | null;
+  viewerUrl?: string | null;
+  documentTitle?: string | null;
+  documentUrl?: string | null;
+};
+
+export type EventStudyEventSeriesPoint = {
+  t: number;
+  ar?: number | null;
+  car?: number | null;
+};
+
+export type EventStudyEventDetailResponse = {
+  receiptNo: string;
+  corpCode?: string | null;
+  corpName?: string | null;
+  ticker?: string | null;
+  eventType: string;
+  eventDate?: string | null;
+  market?: string | null;
+  scope: string;
+  window: string;
+  viewerUrl?: string | null;
+  capBucket?: string | null;
+  marketCap?: number | null;
+  sectorSlug?: string | null;
+  sectorName?: string | null;
+  subtype?: string | null;
+  confidence?: number | null;
+  salience?: number | null;
+  isRestatement: boolean;
+  series: EventStudyEventSeriesPoint[];
+  documents: EventStudyEventDocument[];
+  links: EventStudyEventLink[];
+  evidence: EventStudyEventEvidence[];
+};
+
 export type EventStudyWindowPreset = {
   key: string;
   label: string;
@@ -107,6 +161,39 @@ export type EventStudyMetricsResponse = {
   events: EventStudyEventsResponse;
 };
 
+export type EventStudyBoardFilters = {
+  startDate: string;
+  endDate: string;
+  eventTypes: string[];
+  sectorSlugs: string[];
+  capBuckets: string[];
+  markets: string[];
+  minMarketCap?: number | null;
+  maxMarketCap?: number | null;
+  minSalience?: number | null;
+  includeRestatement: boolean;
+  search?: string | null;
+};
+
+export type EventStudyHeatmapBucket = {
+  eventType: string;
+  bucketStart: string;
+  bucketEnd: string;
+  avgCaar?: number | null;
+  count: number;
+  restatementRatio?: number | null;
+};
+
+export type EventStudyBoardResponse = {
+  window: EventStudyWindowPreset;
+  filters: EventStudyBoardFilters;
+  summary: EventStudySummaryItem[];
+  heatmap: EventStudyHeatmapBucket[];
+  events: EventStudyEventsResponse;
+  restatementHighlights: EventStudyEvent[];
+  asOf: string;
+};
+
 export type EventStudySummaryQuery = {
   start: number;
   end: number;
@@ -126,6 +213,24 @@ export type EventStudyEventsQuery = {
   search?: string;
   startDate?: string;
   endDate?: string;
+};
+
+export type EventStudyBoardQuery = {
+  startDate?: string;
+  endDate?: string;
+  windowKey?: string;
+  eventTypes?: string[];
+  sectorSlugs?: string[];
+  capBuckets?: string[];
+  markets?: string[];
+  minMarketCap?: number;
+  maxMarketCap?: number;
+  minSalience?: number;
+  includeRestatement?: boolean;
+  search?: string;
+  sig?: number;
+  limit?: number;
+  offset?: number;
 };
 
 const appendListParam = (params: URLSearchParams, key: string, values?: string[]) => {
@@ -190,6 +295,70 @@ const fetchEventStudyEvents = async (query: EventStudyEventsQuery): Promise<Even
     throw new Error("이벤트 목록을 불러오지 못했습니다.");
   }
   return (await response.json()) as EventStudyEventsResponse;
+};
+
+const fetchEventStudyBoard = async (query: EventStudyBoardQuery): Promise<EventStudyBoardResponse> => {
+  const params = new URLSearchParams();
+  if (query.startDate) {
+    params.set("startDate", query.startDate);
+  }
+  if (query.endDate) {
+    params.set("endDate", query.endDate);
+  }
+  if (query.windowKey) {
+    params.set("windowKey", query.windowKey);
+  }
+  appendListParam(params, "eventTypes", query.eventTypes);
+  appendListParam(params, "sectorSlugs", query.sectorSlugs);
+  appendListParam(params, "capBuckets", query.capBuckets);
+  appendListParam(params, "markets", query.markets);
+  if (typeof query.minMarketCap === "number") {
+    params.set("minMarketCap", String(query.minMarketCap));
+  }
+  if (typeof query.maxMarketCap === "number") {
+    params.set("maxMarketCap", String(query.maxMarketCap));
+  }
+  if (typeof query.minSalience === "number") {
+    params.set("minSalience", String(query.minSalience));
+  }
+  if (query.includeRestatement === false) {
+    params.set("includeRestatement", "false");
+  }
+  if (query.search) {
+    params.set("search", query.search);
+  }
+  if (typeof query.sig === "number") {
+    params.set("sig", String(query.sig));
+  }
+  params.set("limit", String(query.limit ?? 50));
+  params.set("offset", String(query.offset ?? 0));
+
+  const response = await fetch(`${resolveApiBase()}/api/v1/event-study/board?${params.toString()}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error("이벤트 스터디 보드를 불러오지 못했습니다.");
+  }
+  return (await response.json()) as EventStudyBoardResponse;
+};
+
+const fetchEventStudyEventDetail = async (
+  receiptNo: string,
+  query?: { windowKey?: string },
+): Promise<EventStudyEventDetailResponse> => {
+  const params = new URLSearchParams();
+  if (query?.windowKey) {
+    params.set("windowKey", query.windowKey);
+  }
+  params.set("includeEvidence", "true");
+  const response = await fetch(
+    `${resolveApiBase()}/api/v1/event-study/events/${encodeURIComponent(receiptNo)}?${params.toString()}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    throw new Error("이벤트 상세 정보를 불러오지 못했습니다.");
+  }
+  return (await response.json()) as EventStudyEventDetailResponse;
 };
 
 const fetchEventStudyWindows = async (): Promise<EventStudyWindowListResponse> => {
@@ -282,6 +451,31 @@ export const useEventStudyMetrics = (
     staleTime: 30_000,
     placeholderData: keepPreviousData,
     enabled: options?.enabled ?? true,
+  });
+};
+
+export const useEventStudyBoard = (
+  params: EventStudyBoardQuery,
+  options?: { enabled?: boolean },
+) => {
+  return useQuery<EventStudyBoardResponse>({
+    queryKey: ["event-study-board", params],
+    queryFn: () => fetchEventStudyBoard(params),
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+    enabled: options?.enabled ?? true,
+  });
+};
+
+export const useEventStudyEventDetail = (
+  receiptNo: string | null,
+  params?: { windowKey?: string },
+  options?: { enabled?: boolean },
+) => {
+  return useQuery<EventStudyEventDetailResponse>({
+    queryKey: ["event-study-event-detail", receiptNo, params],
+    queryFn: () => fetchEventStudyEventDetail(receiptNo as string, params),
+    enabled: Boolean(receiptNo) && (options?.enabled ?? true),
   });
 };
 

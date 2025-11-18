@@ -2,6 +2,7 @@
 
 import clsx from "clsx";
 import { CalendarDays, Newspaper, Radar, Sparkles, TrendingUp } from "lucide-react";
+import { DigestPdfFooter } from "@/components/legal/DigestLegal";
 
 type Trend = "up" | "down" | "flat";
 type StatusTone = "positive" | "negative" | "neutral";
@@ -258,10 +259,7 @@ export function DigestCard({ data, isEmpty }: DigestCardProps) {
           {generatedAtLabel}
           {sourceLabel ? ` · ${sourceLabel}` : ""}
         </p>
-        <p className="mt-1 text-[11px] leading-relaxed text-text-tertiaryLight dark:text-text-tertiaryDark">
-          이 다이제스트는 K-Finance Copilot이 수집한 공시·뉴스·시장 지표를 바탕으로 자동 생성되었습니다. 링크된
-          데이터는 최신 정보를 기준으로 하며, 투자 결정은 사용자 책임입니다.
-        </p>
+        <DigestPdfFooter className="mt-1 text-[11px] leading-relaxed text-text-tertiaryLight dark:text-text-tertiaryDark" />
       </footer>
     </div>
   );

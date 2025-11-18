@@ -51,3 +51,9 @@ entries:
   lightmem-health-monitor:
     task: health.monitor_lightmem
     cron: "*/10 * * * *"
+  compliance-data-retention:
+    task: compliance.cleanup_data_retention
+    cron: "30 2 * * *"
+  compliance-dsar-processor:
+    task: compliance.process_dsar_queue
+    cron: "0 * * * *"

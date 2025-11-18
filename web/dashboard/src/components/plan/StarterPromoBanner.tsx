@@ -1,12 +1,14 @@
-﻿"use client";
+"use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { usePlanTier, usePlanTrial } from "@/store/planStore";
-import { usePlanUpgrade } from "@/hooks/usePlanUpgrade";
 import { FEATURE_STARTER_ENABLED } from "@/config/features";
 import { useCampaignSettings } from "@/hooks/useCampaignSettings";
 import { recordKpiEvent } from "@/lib/kpi";
+import { usePlanCatalog } from "@/hooks/usePlanCatalog";
+import { resolvePlanMarketingCopy } from "@/lib/planContext";
+import { PlanTierCTA } from "@/components/plan/PlanTierCTA";
 
 const STORAGE_KEY = "__starter_banner_dismissed__";
 const FALLBACK_COPY = {
@@ -19,8 +21,8 @@ const FALLBACK_COPY = {
 export function StarterPromoBanner() {
   const planTier = usePlanTier();
   const trial = usePlanTrial();
-  const { requestUpgrade, isPreparing } = usePlanUpgrade();
   const { data: campaignSettings } = useCampaignSettings();
+  const { catalog } = usePlanCatalog();
   const starterCampaign = campaignSettings?.starter_promo;
   const [dismissed, setDismissed] = useState<boolean>(() => {
     if (typeof window === "undefined") {
@@ -32,6 +34,13 @@ export function StarterPromoBanner() {
   const featureEnabled = FEATURE_STARTER_ENABLED;
   const campaignEnabled = featureEnabled && (starterCampaign?.enabled ?? true);
   const copy = starterCampaign?.banner ?? FALLBACK_COPY;
+  const starterPlanCopy = useMemo(() => resolvePlanMarketingCopy("starter", catalog), [catalog]);
+  const bannerAction = useMemo(() => {
+    if (!copy.ctaLabel) {
+      return starterPlanCopy.primaryAction;
+    }
+    return { ...starterPlanCopy.primaryAction, label: copy.ctaLabel };
+  }, [copy.ctaLabel, starterPlanCopy.primaryAction]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -59,17 +68,6 @@ export function StarterPromoBanner() {
     void recordKpiEvent("campaign.starter.banner_dismissed", { planTier }).catch(() => undefined);
   };
 
-  const handleUpgrade = async () => {
-    void recordKpiEvent("campaign.starter.banner_click", { planTier }).catch(() => undefined);
-    try {
-      const redirectPath =
-        typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}` : "/settings";
-      await requestUpgrade("starter", { redirectPath });
-    } catch (error) {
-      // errors surface via toast in usePlanUpgrade
-    }
-  };
-
   return (
     <div className="mb-4 rounded-xl border border-amber-300/70 bg-amber-50/90 px-4 py-3 shadow-sm transition dark:border-amber-200/50 dark:bg-amber-500/10">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -78,14 +76,13 @@ export function StarterPromoBanner() {
           <p className="text-xs text-amber-800/80 dark:text-amber-100/80">{copy.body}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleUpgrade}
-            disabled={isPreparing}
+          <PlanTierCTA
+            tier="starter"
+            action={bannerAction}
+            unstyled
             className="inline-flex items-center rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white shadow hover:bg-amber-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600 disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {isPreparing ? "진행 중..." : copy.ctaLabel}
-          </button>
+            onBeforeUpgrade={() => void recordKpiEvent("campaign.starter.banner_click", { planTier }).catch(() => undefined)}
+          />
           <button
             type="button"
             onClick={handleDismiss}
@@ -98,3 +95,4 @@ export function StarterPromoBanner() {
     </div>
   );
 }
+

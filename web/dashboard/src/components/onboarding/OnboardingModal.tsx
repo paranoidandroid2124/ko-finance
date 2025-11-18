@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import type { Route } from "next";
 import { useSession } from "next-auth/react";
 import { CheckCircle2, Sparkles, X } from "lucide-react";
@@ -10,6 +10,7 @@ import { useOnboardingStore } from "@/store/onboardingStore";
 
 export function OnboardingModal() {
   const router = useRouter();
+  const pathname = usePathname();
   const { data: session } = useSession();
   const onboardingRequired = Boolean(session?.onboardingRequired ?? session?.user?.onboardingRequired);
   const needsOnboarding = useOnboardingStore((state) => state.needsOnboarding);
@@ -18,11 +19,6 @@ export function OnboardingModal() {
   const loading = useOnboardingStore((state) => state.loading);
   const fetchContent = useOnboardingStore((state) => state.fetchContent);
   const markDismissed = useOnboardingStore((state) => state.markDismissed);
-  const setNeedsOnboarding = useOnboardingStore((state) => state.setNeedsOnboarding);
-
-  useEffect(() => {
-    setNeedsOnboarding(onboardingRequired);
-  }, [onboardingRequired, setNeedsOnboarding]);
 
   useEffect(() => {
     if (needsOnboarding && !content && !loading) {
@@ -35,7 +31,7 @@ export function OnboardingModal() {
     markDismissed();
   };
 
-  if (!needsOnboarding || dismissed) {
+  if (!needsOnboarding || dismissed || pathname?.startsWith("/onboarding")) {
     return null;
   }
 

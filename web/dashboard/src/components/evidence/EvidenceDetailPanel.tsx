@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import classNames from "classnames";
 
 import { InlinePdfViewer } from "@/components/evidence/InlinePdfViewer";
 import { useEvidenceWorkspaceStore } from "@/store/evidenceWorkspaceStore";

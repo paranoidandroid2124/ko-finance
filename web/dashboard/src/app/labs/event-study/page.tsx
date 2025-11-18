@@ -109,7 +109,7 @@ export default function EventStudyLabPage() {
     isFetching: isEventsFetching,
   } = useEventStudyEvents(eventsParams);
 
-  const summaryResults = summaryData?.results ?? [];
+  const summaryResults = useMemo(() => summaryData?.results ?? [], [summaryData?.results]);
   const totalSample = summaryResults.reduce((acc, item) => acc + item.n, 0);
   const weightedMeanCaar =
     totalSample === 0

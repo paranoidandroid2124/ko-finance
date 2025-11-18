@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback } from "react";
 import type { FilingDetail } from "@/hooks/useFilings";
 import { useChatStore } from "@/store/chatStore";
+import { FilingPdfDownloadNotice, FilingKoglBadge } from "@/components/legal/FilingLegal";
 
 const sentimentText: Record<FilingDetail["sentiment"], { label: string; description: string }> = {
   positive: { label: "긍정적", description: "긍정적인 신호가 감지되었습니다." },
@@ -99,7 +100,7 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
 
       <footer className="mt-auto">
         <div className="rounded-lg border border-dashed border-border-light p-3 text-xs text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
-          <p>PDF 링크를 통해 문서를 확인할 수 있습니다.</p>
+          <FilingPdfDownloadNotice />
         </div>
         <div className="mt-3 flex gap-2">
           <button
@@ -111,11 +112,12 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
           </button>
           <button
             onClick={handleAskClick}
-            className="flex-1 rounded-lg border border-border-light px-3 py-2 text-sm font-semibold text-text-secondaryLight transition-colors hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary.dark dark:hover:text-primary.dark"
+            className="flex-1 rounded-lg border border-border-light px-3 py-2 text-sm font-semibold text-text-secondaryLight transition-colors hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover-border-primary.dark dark:hover:text-primary.dark"
           >
             질문하기
           </button>
         </div>
+        <FilingKoglBadge className="mt-3 text-[11px] text-text-tertiaryLight dark:text-text-ter티aryDark" />
       </footer>
     </aside>
   );

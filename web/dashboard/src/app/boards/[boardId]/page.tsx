@@ -30,13 +30,16 @@ export default function BoardDetailPage() {
   const boardId = params?.boardId ?? "";
   const { data, isLoading, isError, refetch } = useBoardDetail(boardId);
 
-  const entries = data?.entries ?? [];
+  const entries = useMemo(() => data?.entries ?? [], [data?.entries]);
   const timeline = data?.timeline ?? [];
   const board = data?.board;
 
   const isEmpty = !isLoading && !board;
 
-  const sortedEntries = useMemo(() => entries.sort((a, b) => b.eventCount - a.eventCount), [entries]);
+  const sortedEntries = useMemo(
+    () => [...entries].sort((a, b) => b.eventCount - a.eventCount),
+    [entries],
+  );
 
   if (isLoading) {
     return (

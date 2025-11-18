@@ -206,8 +206,6 @@ function formatSimilarity(anchor?: EvidenceAnchor | null) {
   return `${Math.round(anchor.similarity * 100)}% 일치`;
 }
 
-const SKELETON_ROWS = Array.from({ length: 4 });
-
 export function EvidencePanel({
   planTier,
   status,

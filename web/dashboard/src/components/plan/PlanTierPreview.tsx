@@ -85,7 +85,7 @@ export function PlanTierPreview({ className, variant = "card", focusTier }: Plan
       message: "지금 보는 화면과 한도가 선택한 플랜 기준으로 새로고침됐어요.",
       intent: "success",
     });
-  }, [expiresAt, planTier, preset, pushToast, selectedTier, selectedTierCopy.title, setPlanFromServer]);
+  }, [expiresAt, memoryFlags, planTier, preset, pushToast, selectedTier, selectedTierCopy.title, setPlanFromServer]);
 
   const handleStartTrial = useCallback(() => {
     startTrialCta({ source: "plan-tier-preview" }).catch(() => undefined);

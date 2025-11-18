@@ -18,10 +18,14 @@ import {
   useCreateWatchlistSchedule,
   useUpdateWatchlistSchedule,
   useDeleteWatchlistSchedule,
+  useWatchlistSchedulePreview,
 } from "@/hooks/useAlerts";
-import { formatDateTime } from "@/lib/date";
-import { logEvent } from "@/lib/telemetry";
-import type { WatchlistDigestSchedule, WatchlistDigestSchedulePayload } from "@/lib/alertsApi";
+import { formatDateTime, formatRelativeTime } from "@/lib/date";
+import type {
+  WatchlistDigestPayload,
+  WatchlistDigestSchedule,
+  WatchlistDigestSchedulePayload,
+} from "@/lib/alertsApi";
 import { useToastStore } from "@/store/toastStore";
 import { usePlanStore } from "@/store/planStore";
 
@@ -61,7 +65,12 @@ export default function DigestPage() {
   const createSchedule = useCreateWatchlistSchedule();
   const updateSchedule = useUpdateWatchlistSchedule();
   const deleteSchedule = useDeleteWatchlistSchedule();
+  const previewSchedule = useWatchlistSchedulePreview();
   const [scheduleDialog, setScheduleDialog] = useState<ScheduleDialogState | null>(null);
+  const [schedulePreviewState, setSchedulePreviewState] = useState<{
+    schedule: WatchlistDigestSchedule;
+    payload?: WatchlistDigestPayload;
+  } | null>(null);
 
   const payload: DigestPayload & { emailHtml?: string } = useMemo(() => {
     if (!data) {
@@ -189,6 +198,40 @@ export default function DigestPage() {
         intent: "error",
       });
     }
+  };
+
+  const handlePreviewSchedule = async (schedule: WatchlistDigestSchedule) => {
+    if (!digestAllowed) {
+      showToast({
+        id: "digest-preview-blocked",
+        title: "Digest 미리보기를 사용할 수 없어요",
+        message: "Digest 기능이 비활성화된 플랜입니다.",
+        intent: "error",
+      });
+      return;
+    }
+    setSchedulePreviewState({ schedule });
+    try {
+      const response = await previewSchedule.mutateAsync({ scheduleId: schedule.id });
+      setSchedulePreviewState({
+        schedule: response.schedule,
+        payload: response.payload,
+      });
+    } catch (error) {
+      setSchedulePreviewState(null);
+      const message = error instanceof Error ? error.message : "미리보기를 불러오지 못했어요.";
+      showToast({
+        id: `digest-schedule-preview-${schedule.id}-error`,
+        title: "미리보기 실패",
+        message,
+        intent: "error",
+      });
+    }
+  };
+
+  const closePreviewDialog = () => {
+    setSchedulePreviewState(null);
+    previewSchedule.reset();
   };
 
   return (
@@ -383,6 +426,7 @@ export default function DigestPage() {
                   onEdit={() => setScheduleDialog({ mode: "edit", schedule })}
                   onToggle={(nextEnabled) => void handleToggleSchedule(schedule, nextEnabled)}
                   onDelete={() => void handleDeleteSchedule(schedule)}
+                  onPreview={() => void handlePreviewSchedule(schedule)}
                 />
               ))}
             </div>
@@ -401,6 +445,14 @@ export default function DigestPage() {
           ) : null}
         </section>
       </div>
+      {schedulePreviewState ? (
+        <SchedulePreviewDialog
+          schedule={schedulePreviewState.schedule}
+          payload={schedulePreviewState.payload ?? null}
+          isLoading={previewSchedule.isPending && !schedulePreviewState.payload}
+          onClose={closePreviewDialog}
+        />
+      ) : null}
       {scheduleDialog ? (
         <DigestScheduleDialog
           state={scheduleDialog}
@@ -452,14 +504,125 @@ function DigestTargetField({
   );
 }
 
+type SchedulePreviewDialogProps = {
+  schedule: WatchlistDigestSchedule;
+  payload: WatchlistDigestPayload | null;
+  isLoading: boolean;
+  onClose: () => void;
+};
+
+function SchedulePreviewDialog({ schedule, payload, isLoading, onClose }: SchedulePreviewDialogProps) {
+  const summary = payload?.summary;
+  const items = payload?.items ?? [];
+  const windowLabel =
+    payload?.window && payload.window.start && payload.window.end
+      ? `${formatDateTime(payload.window.start)} ~ ${formatDateTime(payload.window.end)}`
+      : "최근 윈도우";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
+      <div className="w-full max-w-3xl rounded-3xl border border-border-light bg-background-cardLight p-6 shadow-2xl dark:border-border-dark dark:bg-background-cardDark">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase text-text-tertiaryLight dark:text-text-tertiaryDark">
+              Digest Preview
+            </p>
+            <h3 className="text-xl font-semibold text-text-primaryLight dark:text-text-primaryDark">{schedule.label}</h3>
+            <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+              {schedule.timeOfDay} · {schedule.timezone} · {schedule.weekdaysOnly ? "평일" : "매일"} · 윈도우{" "}
+              {schedule.windowMinutes}분
+            </p>
+            <p className="text-xs text-text-tertiaryLight dark:text-text-tertiaryDark">{windowLabel}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-border-light p-2 text-text-secondaryLight transition hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark"
+            aria-label="Digest 미리보기 닫기"
+          >
+            ×
+          </button>
+        </div>
+
+        {isLoading ? (
+          <SkeletonBlock className="mt-6 h-48 rounded-2xl" />
+        ) : (
+          <div className="mt-6 space-y-4">
+            {summary ? (
+              <div className="grid grid-cols-2 gap-3 rounded-2xl border border-border-light bg-background-base p-4 text-sm dark:border-border-dark dark:bg-background-baseDark">
+                <PreviewStat label="총 전달" value={summary.totalDeliveries} />
+                <PreviewStat label="이벤트" value={summary.totalEvents} />
+                <PreviewStat label="고유 종목" value={summary.uniqueTickers} />
+                <PreviewStat label="실패" value={summary.failedDeliveries} />
+              </div>
+            ) : null}
+
+            {payload?.llmOverview ? (
+              <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 text-sm text-text-primaryLight dark:border-primary.dark/25 dark:bg-primary.dark/10 dark:text-text-primaryDark">
+                <p className="text-xs font-semibold uppercase text-primary dark:text-primary.dark">LLM Insight</p>
+                <p className="mt-2 whitespace-pre-line">{payload.llmOverview}</p>
+              </div>
+            ) : null}
+
+            {items.length === 0 ? (
+              <EmptyState
+                title="표시할 이벤트가 없어요"
+                description="선택한 윈도우 안에 전달된 워치리스트 알림이 없습니다."
+                className="border-none bg-transparent px-0 py-8 text-sm"
+              />
+            ) : (
+              <div className="divide-y divide-border-light rounded-2xl border border-border-light dark:divide-border-dark dark:border-border-dark">
+                {items.slice(0, 20).map((item) => {
+                  const relativeDelivered = formatRelativeTime(item.deliveredAt, { fallback: "기록 없음" });
+                  const absoluteDelivered = formatDateTime(item.deliveredAt, { fallback: "기록 없음" });
+                  return (
+                    <div key={item.deliveryId} className="px-4 py-3 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">
+                          {item.ruleName} · {item.channel.toUpperCase()}
+                        </p>
+                        <span className="text-xs text-text-secondaryLight dark:text-text-secondaryDark" title={absoluteDelivered}>
+                          {relativeDelivered}
+                        </span>
+                      </div>
+                      <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                        {item.ticker ?? item.company ?? "N/A"} · {item.eventType?.toUpperCase() ?? "EVENT"}
+                      </p>
+                      {item.headline || item.summary ? (
+                        <p className="mt-1 text-xs text-text-secondaryLight dark:text-text-secondaryDark line-clamp-2">
+                          {item.headline ?? item.summary}
+                        </p>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PreviewStat({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div>
+      <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">{label}</p>
+      <p className="text-base font-semibold text-text-primaryLight dark:text-text-primaryDark">{value}</p>
+    </div>
+  );
+}
+
 type DigestScheduleCardProps = {
   schedule: WatchlistDigestSchedule;
   onEdit: () => void;
   onToggle: (enabled: boolean) => void;
   onDelete: () => void;
+  onPreview: () => void;
 };
 
-function DigestScheduleCard({ schedule, onEdit, onToggle, onDelete }: DigestScheduleCardProps) {
+function DigestScheduleCard({ schedule, onEdit, onToggle, onDelete, onPreview }: DigestScheduleCardProps) {
   const nextRunLabel = formatDateTime(schedule.nextDispatchAt, { includeSeconds: false, fallback: "예정 없음" });
   const lastRunLabel = formatDateTime(schedule.lastDispatchedAt, { includeSeconds: false, fallback: "기록 없음" });
   const statusLabel =
@@ -509,6 +672,13 @@ function DigestScheduleCard({ schedule, onEdit, onToggle, onDelete }: DigestSche
           className="rounded-full border border-border-light px-4 py-1 text-text-secondaryLight transition hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark"
         >
           편집
+        </button>
+        <button
+          type="button"
+          onClick={onPreview}
+          className="rounded-full border border-border-light px-4 py-1 text-text-secondaryLight transition hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark"
+        >
+          미리보기
         </button>
         <button
           type="button"

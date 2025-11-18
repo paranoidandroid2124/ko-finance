@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field, ConfigDict
@@ -91,6 +91,13 @@ class EventStudyEventItem(BaseModel):
     viewer_url: Optional[str] = Field(default=None, serialization_alias="viewerUrl")
     cap_bucket: Optional[str] = Field(default=None, serialization_alias="capBucket")
     market_cap: Optional[float] = Field(default=None, serialization_alias="marketCap")
+    sector_slug: Optional[str] = Field(default=None, serialization_alias="sectorSlug")
+    sector_name: Optional[str] = Field(default=None, serialization_alias="sectorName")
+    salience: Optional[float] = None
+    is_restatement: bool = Field(default=False, serialization_alias="isRestatement")
+    subtype: Optional[str] = None
+    confidence: Optional[float] = None
+    evidence_count: Optional[int] = Field(default=None, serialization_alias="evidenceCount")
 
 
 class EventStudyEventsResponse(BaseModel):
@@ -111,6 +118,35 @@ class EventStudySeriesPoint(BaseModel):
     car: Optional[float] = None
 
 
+class EventStudyEventDocument(BaseModel):
+    """Supporting filing/news metadata displayed inside the detail drawer."""
+
+    title: Optional[str] = None
+    viewer_url: Optional[str] = Field(default=None, serialization_alias="viewerUrl")
+    published_at: Optional[datetime] = Field(default=None, serialization_alias="publishedAt")
+    source: Optional[str] = None
+
+
+class EventStudyEventLink(BaseModel):
+    """Actionable link (viewer/download/evidence pack)."""
+
+    label: str
+    url: str
+    kind: str = "viewer"
+
+
+class EventStudyEventEvidence(BaseModel):
+    """Lightweight evidence snippet used by the dashboard drawer."""
+
+    urn_id: Optional[str] = Field(default=None, serialization_alias="urnId")
+    quote: Optional[str] = None
+    section: Optional[str] = None
+    page_number: Optional[int] = Field(default=None, serialization_alias="pageNumber")
+    viewer_url: Optional[str] = Field(default=None, serialization_alias="viewerUrl")
+    document_title: Optional[str] = Field(default=None, serialization_alias="documentTitle")
+    document_url: Optional[str] = Field(default=None, serialization_alias="documentUrl")
+
+
 class EventStudyEventDetail(BaseModel):
     """Detailed event payload including AR/CAR series."""
 
@@ -127,6 +163,15 @@ class EventStudyEventDetail(BaseModel):
     series: List[EventStudySeriesPoint] = Field(default_factory=list)
     cap_bucket: Optional[str] = Field(default=None, serialization_alias="capBucket")
     market_cap: Optional[float] = Field(default=None, serialization_alias="marketCap")
+    sector_slug: Optional[str] = Field(default=None, serialization_alias="sectorSlug")
+    sector_name: Optional[str] = Field(default=None, serialization_alias="sectorName")
+    subtype: Optional[str] = None
+    confidence: Optional[float] = None
+    salience: Optional[float] = None
+    is_restatement: bool = Field(default=False, serialization_alias="isRestatement")
+    documents: List[EventStudyEventDocument] = Field(default_factory=list)
+    links: List[EventStudyEventLink] = Field(default_factory=list)
+    evidence: List[EventStudyEventEvidence] = Field(default_factory=list)
 
 
 class EventStudyMetricsResponse(BaseModel):
@@ -151,6 +196,45 @@ class EventStudyMetricsResponse(BaseModel):
     caar: List[EventStudyPoint]
     dist: List[EventStudyHistogramBin]
     events: EventStudyEventsResponse
+
+
+class EventStudyBoardFilters(BaseModel):
+    """Echoes the normalized filters returned by the board endpoint."""
+
+    start_date: date = Field(..., alias="startDate")
+    end_date: date = Field(..., alias="endDate")
+    event_types: List[str] = Field(default_factory=list, alias="eventTypes")
+    sector_slugs: List[str] = Field(default_factory=list, alias="sectorSlugs")
+    cap_buckets: List[str] = Field(default_factory=list, alias="capBuckets")
+    markets: List[str] = Field(default_factory=list)
+    min_market_cap: Optional[float] = Field(default=None, alias="minMarketCap")
+    max_market_cap: Optional[float] = Field(default=None, alias="maxMarketCap")
+    min_salience: Optional[float] = Field(default=None, alias="minSalience")
+    include_restatement: bool = Field(default=True, alias="includeRestatement")
+    search: Optional[str] = None
+
+
+class EventStudyHeatmapBucket(BaseModel):
+    """Aggregated CAAR per event type and temporal bucket."""
+
+    event_type: str = Field(..., alias="eventType")
+    bucket_start: date = Field(..., alias="bucketStart")
+    bucket_end: date = Field(..., alias="bucketEnd")
+    avg_caar: Optional[float] = Field(default=None, alias="avgCaar")
+    count: int
+    restatement_ratio: Optional[float] = Field(default=None, alias="restatementRatio")
+
+
+class EventStudyBoardResponse(BaseModel):
+    """Composite payload powering the Event Study board view."""
+
+    window: EventStudyWindowItem
+    filters: EventStudyBoardFilters
+    summary: List[EventStudySummaryItem]
+    heatmap: List[EventStudyHeatmapBucket]
+    events: EventStudyEventsResponse
+    restatement_highlights: List[EventStudyEventItem] = Field(default_factory=list, alias="restatementHighlights")
+    as_of: datetime = Field(..., alias="asOf")
 
 
 class EventStudyExportRequest(BaseModel):

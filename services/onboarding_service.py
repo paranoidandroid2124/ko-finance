@@ -13,13 +13,18 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from core.env import env_int
 from core.logging import get_logger
 from core.plan_constants import PlanTier, SUPPORTED_PLAN_TIERS
 from services.entitlement_service import entitlement_service
 from services.file_store import write_json_atomic
 from services.plan_catalog_service import load_plan_catalog
+from services.workspace_bootstrap import bootstrap_workspace_for_org
 
 logger = get_logger(__name__)
+
+_ONBOARDING_TRIAL_DAYS = env_int("ONBOARDING_TRIAL_DAYS", 14, minimum=1)
+_ONBOARDING_PLAN_PERIOD_DAYS = env_int("ONBOARDING_PLAN_PERIOD_DAYS", 30, minimum=7)
 
 _ONBOARDING_CONTENT_PATH = Path("uploads") / "admin" / "onboarding_samples.json"
 _ONBOARDING_CONTENT_CACHE: Optional[Dict[str, Any]] = None
@@ -191,6 +196,7 @@ def _create_personal_org(
         ),
         {"org_id": str(org_id), "user_id": str(user_id)},
     )
+    bootstrap_workspace_for_org(org_id=org_id, owner_id=user_id, source="onboarding.create_personal_org")
     return org_id
 
 
@@ -239,6 +245,27 @@ def _resolve_plan_status(session: Session, org_id: uuid.UUID) -> tuple[PlanTier,
     plan_tier: PlanTier = slug if slug in SUPPORTED_PLAN_TIERS else "free"
     status = (row.get("status") or "active").strip().lower()
     return plan_tier, status, row.get("current_period_end")
+
+
+def _load_subscription_metadata(session: Session, org_id: uuid.UUID) -> Mapping[str, Any]:
+    row = (
+        session.execute(
+            text(
+                """
+                SELECT metadata
+                FROM org_subscriptions
+                WHERE org_id = :org_id
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """
+            ),
+            {"org_id": str(org_id)},
+        )
+        .mappings()
+        .first()
+    )
+    metadata = row["metadata"] if row else None
+    return dict(metadata) if isinstance(metadata, Mapping) else {}
 
 
 def _list_members(session: Session, org_id: uuid.UUID) -> List[OnboardingMemberRecord]:
@@ -611,12 +638,29 @@ def select_plan_for_org(
     actor_uuid = uuid.UUID(str(user_id))
     _assert_org_admin(session, org_id=org_id, user_id=actor_uuid)
     normalized_plan = plan_tier if plan_tier in SUPPORTED_PLAN_TIERS else "free"
+    previous_metadata = _load_subscription_metadata(session, org_id)
+    plan_resolved_before, plan_status_before, _ = _resolve_plan_status(session, org_id)
+    trial_previously_used = bool(previous_metadata.get("trialUsed"))
+    trial_enabled = normalized_plan == PlanTier.PRO and not trial_previously_used
+    now = datetime.now(timezone.utc)
+    duration_days = _ONBOARDING_TRIAL_DAYS if trial_enabled else _ONBOARDING_PLAN_PERIOD_DAYS
+    status = "trialing" if trial_enabled else "active"
+    metadata = {
+        "source": "onboarding.plan_select",
+        "actor": str(actor_uuid),
+        "selectedTier": normalized_plan.value if isinstance(normalized_plan, PlanTier) else str(normalized_plan),
+        "trialUsed": trial_enabled or trial_previously_used,
+    }
+    if trial_enabled:
+        metadata["trialEndsAt"] = (now + timedelta(days=duration_days)).isoformat()
+        metadata["trialOrigin"] = "onboarding"
+        metadata["previousTier"] = plan_resolved_before
     entitlement_service.sync_subscription_from_billing(
         org_id=org_id,
         plan_slug=normalized_plan,
-        status="active",
-        current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
-        metadata={"source": "onboarding.plan_select", "actor": str(actor_uuid)},
+        status=status,
+        current_period_end=now + timedelta(days=duration_days),
+        metadata=metadata,
     )
     org_metadata = _load_org_metadata(session, org_id)
     membership = {

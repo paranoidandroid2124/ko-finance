@@ -8,7 +8,9 @@ const legalCopy = {
     answerBadge:
       "AI가 자동 생성한 요약으로, 오류가 포함될 수 있습니다.\n중요한 판단 전에는 반드시 원문 공시와 자료를 확인하세요.",
     evidencePanel:
-      "아래 자료는 이 답변이 참고한 공시·문서 목록입니다.\n법적 효력과 책임은 각 발행기관과 원문에 있으며, 원문 내용이 항상 우선합니다."
+      "아래 자료는 이 답변이 참고한 공시·문서 목록입니다.\n법적 효력과 책임은 각 발행기관과 원문에 있으며, 원문 내용이 항상 우선합니다.",
+    sessionDisclaimer:
+      "본 서비스는 일반 정보 제공용입니다. 투자·법률·세무 자문을 대체하지 않으며, 제공 정보의 정확성·완전성·적시성은 보장되지 않습니다.\n매수·매도, 계약, 소송 등 주요 의사결정은 반드시 별도 검토 후 진행해 주세요."
   },
   filing: {
     header:
@@ -75,4 +77,3 @@ export type LegalSection = keyof LegalCopyMap;
 export type LegalSectionKey<S extends LegalSection> = keyof LegalCopyMap[S];
 
 export const LEGAL_COPY: LegalCopyMap = legalCopy;
-

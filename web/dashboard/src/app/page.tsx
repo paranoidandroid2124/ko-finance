@@ -86,7 +86,7 @@ export default function DashboardPage() {
   const metrics = data?.metrics ?? [];
   const alerts = data?.alerts ?? [];
   const newsItems = data?.news ?? [];
-  const watchlists = data?.watchlists ?? [];
+  const watchlists = useMemo(() => data?.watchlists ?? [], [data?.watchlists]);
   const events = data?.events ?? [];
   const quickLinks = data?.quickLinks ?? [];
   const { data: sectorSignals, isLoading: isSectorLoading } = useSectorSignals();

@@ -14,6 +14,7 @@ _ROUTER_MODULES = [
     "admin_ui",
     "auth",
     "alerts",
+    "account",
     "boards",
     "chat",
     "campaign",

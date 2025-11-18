@@ -31,6 +31,7 @@ from core.auth.constants import ALLOWED_SIGNUP_CHANNELS, DEFAULT_SIGNUP_CHANNEL,
 from core.env import env_bool, env_int, env_str
 from database import IS_POSTGRES
 from services import onboarding_service
+from services.workspace_bootstrap import bootstrap_workspace_for_org
 from services.auth_tokens import (
     AuthTokenError,
     AuthTokenType,
@@ -1591,6 +1592,13 @@ def _create_org(session: Session, slug: Optional[str], name: Optional[str], prov
     return org_id
 
 
+def _bootstrap_workspace(org_id: uuid.UUID, owner_id: uuid.UUID, *, source: str) -> None:
+    try:
+        bootstrap_workspace_for_org(org_id=org_id, owner_id=owner_id, source=source)
+    except Exception:  # pragma: no cover - bootstrap best effort
+        logger.warning("Failed to bootstrap workspace for org=%s", org_id, exc_info=True)
+
+
 def _ensure_default_org(session: Session, user_id: uuid.UUID) -> uuid.UUID:
     existing = (
         session.execute(
@@ -1639,6 +1647,7 @@ def _ensure_default_org(session: Session, user_id: uuid.UUID) -> uuid.UUID:
         target_id=str(user_id),
         extra={"source": "sso"},
     )
+    _bootstrap_workspace(org_id, user_id, source="auth.ensure_default_org")
     return org_id
 
 

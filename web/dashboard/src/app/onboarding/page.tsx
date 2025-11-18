@@ -29,7 +29,7 @@ export default function OnboardingWizardPage() {
   const onboardingStore = useOnboardingStore();
   const toast = useToastStore((state) => state.show);
   const router = useRouter();
-  const { data: session, update } = useSession();
+  const { update } = useSession();
   const [orgName, setOrgName] = useState("");
   const [orgSlug, setOrgSlug] = useState("");
   const [inviteInput, setInviteInput] = useState("");
@@ -82,20 +82,22 @@ export default function OnboardingWizardPage() {
     return () => window.clearTimeout(handle);
   }, [orgSlug, wizard]);
 
+  const wizardState = wizard.state;
+
   const sortedPlanOptions = useMemo(() => {
-    if (!wizard.state) {
+    if (!wizardState) {
       return [];
     }
     const order: PlanTier[] = ["free", "starter", "pro", "enterprise"];
-    const map = new Map<PlanTier, typeof wizard.state.planOptions[number]>();
-    wizard.state.planOptions.forEach((option) => {
+    const map = new Map<PlanTier, typeof wizardState.planOptions[number]>();
+    wizardState.planOptions.forEach((option) => {
       map.set(option.tier, option);
     });
     return order
       .map((tier) => map.get(tier))
       .filter(Boolean)
       .map((option) => option!);
-  }, [wizard.state]);
+  }, [wizardState]);
 
   const handleSaveOrg = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();

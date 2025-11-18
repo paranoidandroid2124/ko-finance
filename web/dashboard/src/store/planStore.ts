@@ -17,7 +17,6 @@ import {
   type PlanTrialStartInput,
   type PlanTrialState,
 } from '@/store/planStore/types';
-import { isTierAtLeast, nextTier, planTierRank } from '@/store/planStore/helpers';
 
 type PlanStoreState = {
   planTier: PlanTier;

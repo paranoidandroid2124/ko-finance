@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from statistics import NormalDist
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from sqlalchemy import and_, asc, func, or_
+from sqlalchemy import and_, asc, func, or_, case
 from sqlalchemy.orm import Session
 
 from core.env import env_str
@@ -25,16 +25,24 @@ from models.event_study import (
     EventSummary,
     Price,
 )
+from models.evidence import EvidenceSnapshot
 from models.filing import Filing
 from models.security_metadata import SecurityMetadata
 from schemas.api.event_study import (
+    EventStudyBoardFilters,
+    EventStudyBoardResponse,
     EventStudyEventDetail,
+    EventStudyEventDocument,
+    EventStudyEventEvidence,
     EventStudyEventItem,
+    EventStudyEventLink,
     EventStudyEventsResponse,
+    EventStudyHeatmapBucket,
     EventStudyPoint,
     EventStudySeriesPoint,
     EventStudySummaryItem,
     EventStudySummaryResponse,
+    EventStudyWindowItem,
 )
 from services.event_extractor import EventAttributes, extract_event_attributes
 from services.event_study_windows import (
@@ -77,6 +85,18 @@ class CohortSummary:
     ci_lo: float
     ci_hi: float
     p_value: float
+
+
+def _normalize_date_range(
+    start_date: Optional[date],
+    end_date: Optional[date],
+) -> Tuple[date, date]:
+    today = date.today()
+    resolved_end = end_date or today
+    resolved_start = start_date or (resolved_end - timedelta(days=30))
+    if resolved_start > resolved_end:
+        resolved_start, resolved_end = resolved_end, resolved_start
+    return resolved_start, resolved_end
 
 
 def ingest_events_from_filings(
@@ -375,6 +395,17 @@ def normalize_str_list(values: Optional[Sequence[str]]) -> List[str]:
     return cleaned
 
 
+def normalize_slug_list(values: Optional[Sequence[str]]) -> List[str]:
+    cleaned: List[str] = []
+    for value in values or []:
+        if not isinstance(value, str):
+            continue
+        stripped = value.strip()
+        if stripped:
+            cleaned.append(stripped.lower())
+    return cleaned
+
+
 def normalize_single_value(value: Optional[str]) -> Optional[str]:
     if not isinstance(value, str):
         return None
@@ -423,31 +454,39 @@ def fetch_event_rows(
     start_date: Optional[date],
     end_date: Optional[date],
     search_query: Optional[str],
+    sector_slugs: Optional[Sequence[str]] = None,
+    min_market_cap: Optional[float] = None,
+    max_market_cap: Optional[float] = None,
+    min_salience: Optional[float] = None,
+    include_restatement: bool = True,
 ) -> EventStudyEventsResponse:
     base_query = (
-        db.query(EventRecord, Filing.market)
-        .outerjoin(Filing, Filing.receipt_no == EventRecord.rcept_no)
-    )
-    if event_types:
-        base_query = base_query.filter(EventRecord.event_type.in_(event_types))
-    if ticker:
-        base_query = base_query.filter(EventRecord.ticker == ticker)
-    if start_date:
-        base_query = base_query.filter(EventRecord.event_date >= start_date)
-    if end_date:
-        base_query = base_query.filter(EventRecord.event_date <= end_date)
-    if markets:
-        base_query = base_query.filter(Filing.market.in_(markets))
-    if cap_buckets:
-        base_query = base_query.filter(EventRecord.cap_bucket.in_(cap_buckets))
-    if search_query:
-        like_term = f"%{search_query}%"
-        base_query = base_query.filter(
-            or_(
-                EventRecord.corp_name.ilike(like_term),
-                EventRecord.ticker.ilike(like_term),
-            )
+        db.query(
+            EventRecord,
+            Filing.market,
+            SecurityMetadata.extra,
+            SecurityMetadata.market_cap.label('security_market_cap'),
         )
+        .outerjoin(Filing, Filing.receipt_no == EventRecord.rcept_no)
+        .outerjoin(SecurityMetadata, SecurityMetadata.ticker == EventRecord.ticker)
+    )
+    base_query = _apply_event_filters(
+        base_query,
+        event_types=event_types,
+        ticker=ticker,
+        markets=markets,
+        cap_buckets=cap_buckets,
+        start_date=start_date,
+        end_date=end_date,
+        search_query=search_query,
+        sector_slugs=sector_slugs,
+        min_market_cap=min_market_cap,
+        max_market_cap=max_market_cap,
+        min_salience=min_salience,
+        include_restatement=include_restatement,
+        filing_alias=Filing,
+        security_alias=SecurityMetadata,
+    )
 
     total = base_query.count()
     rows = (
@@ -476,10 +515,18 @@ def fetch_event_rows(
             existing = peak_map.get(key)
             if existing is None or current_abs > existing[0]:
                 peak_map[key] = (current_abs, series_row.t)
+    evidence_counts = _count_evidence_by_receipt(db, receipt_nos)
 
     events: List[EventStudyEventItem] = []
-    for record, market in rows:
+    for row in rows:
+        record: EventRecord = row.EventRecord
+        market = row.market
+        extra = row.extra
+        security_market_cap = row.security_market_cap
         peak_day = peak_map.get(record.rcept_no, (None, None))[1] if record.rcept_no in peak_map else None
+        sector_slug, sector_name = _extract_sector(extra)
+        viewer_url = record.source_url
+        market_cap = to_float(record.market_cap) or to_float(security_market_cap)
         events.append(
             EventStudyEventItem(
                 receipt_no=record.rcept_no,
@@ -495,9 +542,16 @@ def fetch_event_rows(
                 score=to_float(record.score),
                 caar=caar_map.get(record.rcept_no),
                 aar_peak_day=peak_day,
-                viewer_url=record.source_url,
+                viewer_url=viewer_url,
                 cap_bucket=(record.cap_bucket or None),
-                market_cap=to_float(record.market_cap),
+                market_cap=market_cap,
+                sector_slug=sector_slug,
+                sector_name=sector_name,
+                salience=to_float(record.score),
+                is_restatement=bool(record.is_restatement),
+                subtype=record.subtype,
+                confidence=to_float(record.confidence),
+                evidence_count=evidence_counts.get(record.rcept_no) or None,
             )
         )
 
@@ -509,6 +563,196 @@ def fetch_event_rows(
         events=events,
     )
 
+
+def build_board_snapshot(
+    db: Session,
+    *,
+    start_date: Optional[date],
+    end_date: Optional[date],
+    window_key: Optional[str],
+    event_types: Optional[Sequence[str]],
+    sector_slugs: Optional[Sequence[str]],
+    cap_buckets: Optional[Sequence[str]],
+    markets: Optional[Sequence[str]],
+    min_market_cap: Optional[float],
+    max_market_cap: Optional[float],
+    min_salience: Optional[float],
+    include_restatement: bool,
+    search: Optional[str],
+    significance: float,
+    limit: int,
+    offset: int,
+) -> EventStudyBoardResponse:
+    preset = resolve_window_preset(db, window_key)
+    normalized_types = normalize_str_list(event_types)
+    normalized_caps = normalize_str_list(cap_buckets)
+    normalized_markets = normalize_str_list(markets)
+    normalized_sectors = normalize_slug_list(sector_slugs)
+    start_range, end_range = _normalize_date_range(start_date, end_date)
+    search_query = search.strip() if isinstance(search, str) and search.strip() else None
+
+    events_response = fetch_event_rows(
+        db,
+        limit=limit,
+        offset=offset,
+        window_end=preset.end,
+        event_types=normalized_types or None,
+        ticker=None,
+        markets=normalized_markets or None,
+        cap_buckets=normalized_caps or None,
+        start_date=start_range,
+        end_date=end_range,
+        search_query=search_query,
+        sector_slugs=normalized_sectors or None,
+        min_market_cap=min_market_cap,
+        max_market_cap=max_market_cap,
+        min_salience=min_salience,
+        include_restatement=include_restatement,
+    )
+
+    summary = summarize_event_window(
+        db,
+        start=preset.start,
+        end=preset.end,
+        scope="market",
+        significance=significance,
+        event_types=normalized_types or None,
+        cap_buckets=normalized_caps or None,
+    )
+
+    heatmap = query_event_heatmap(
+        db,
+        window_end=preset.end,
+        event_types=normalized_types or None,
+        markets=normalized_markets or None,
+        cap_buckets=normalized_caps or None,
+        start_date=start_range,
+        end_date=end_range,
+        search_query=search_query,
+        sector_slugs=normalized_sectors or None,
+        min_market_cap=min_market_cap,
+        max_market_cap=max_market_cap,
+        min_salience=min_salience,
+        include_restatement=include_restatement,
+    )
+
+    restatement_highlights = [
+        event for event in events_response.events if event.is_restatement
+    ][:5]
+
+    filters_payload = EventStudyBoardFilters(
+        start_date=start_range,
+        end_date=end_range,
+        event_types=normalized_types,
+        sector_slugs=normalized_sectors,
+        cap_buckets=normalized_caps,
+        markets=normalized_markets,
+        min_market_cap=min_market_cap,
+        max_market_cap=max_market_cap,
+        min_salience=min_salience,
+        include_restatement=include_restatement,
+        search=search_query,
+    )
+
+    window_item = EventStudyWindowItem(
+        key=preset.key,
+        label=preset.label,
+        start=preset.start,
+        end=preset.end,
+        description=preset.description,
+    )
+
+    return EventStudyBoardResponse(
+        window=window_item,
+        filters=filters_payload,
+        summary=summary.results,
+        heatmap=heatmap,
+        events=events_response,
+        restatement_highlights=restatement_highlights,
+        as_of=datetime.now(timezone.utc),
+    )
+
+
+def query_event_heatmap(
+    db: Session,
+    *,
+    window_end: int,
+    event_types: Optional[Sequence[str]],
+    markets: Optional[Sequence[str]],
+    cap_buckets: Optional[Sequence[str]],
+    start_date: Optional[date],
+    end_date: Optional[date],
+    search_query: Optional[str],
+    sector_slugs: Optional[Sequence[str]],
+    min_market_cap: Optional[float],
+    max_market_cap: Optional[float],
+    min_salience: Optional[float],
+    include_restatement: bool,
+) -> List[EventStudyHeatmapBucket]:
+    bucket_start_expr = func.date_trunc("week", EventRecord.event_date)
+    query = (
+        db.query(
+            EventRecord.event_type.label("event_type"),
+            bucket_start_expr.label("bucket_start"),
+            func.avg(EventStudyResult.car).label("avg_caar"),
+            func.count(EventRecord.rcept_no).label("count"),
+            func.avg(
+                case((EventRecord.is_restatement.is_(True), 1.0), else_=0.0)
+            ).label("restatement_ratio"),
+        )
+        .outerjoin(
+            EventStudyResult,
+            and_(EventStudyResult.rcept_no == EventRecord.rcept_no, EventStudyResult.t == window_end),
+        )
+        .outerjoin(Filing, Filing.receipt_no == EventRecord.rcept_no)
+        .outerjoin(SecurityMetadata, SecurityMetadata.ticker == EventRecord.ticker)
+        .filter(EventRecord.event_date != None)  # noqa: E711
+    )
+    query = _apply_event_filters(
+        query,
+        event_types=event_types,
+        ticker=None,
+        markets=markets,
+        cap_buckets=cap_buckets,
+        start_date=start_date,
+        end_date=end_date,
+        search_query=search_query,
+        sector_slugs=sector_slugs,
+        min_market_cap=min_market_cap,
+        max_market_cap=max_market_cap,
+        min_salience=min_salience,
+        include_restatement=include_restatement,
+        filing_alias=Filing,
+        security_alias=SecurityMetadata,
+    )
+
+    query = query.group_by(EventRecord.event_type, bucket_start_expr).order_by(
+        EventRecord.event_type.asc(),
+        bucket_start_expr.asc(),
+    )
+    rows = query.all()
+
+    buckets: List[EventStudyHeatmapBucket] = []
+    for row in rows:
+        bucket_start = row.bucket_start
+        if bucket_start is None:
+            continue
+        if isinstance(bucket_start, datetime):
+            bucket_start_date = bucket_start.date()
+        else:
+            bucket_start_date = bucket_start
+        bucket_end_date = bucket_start_date + timedelta(days=6)
+        buckets.append(
+            EventStudyHeatmapBucket(
+                event_type=row.event_type,
+                bucket_start=bucket_start_date,
+                bucket_end=bucket_end_date,
+                avg_caar=to_float(row.avg_caar),
+                count=int(row.count or 0),
+                restatement_ratio=to_float(row.restatement_ratio),
+            )
+        )
+    return buckets
 
 def summarize_event_window(
     db: Session,
@@ -621,6 +865,34 @@ def load_event_detail(
     if not viewer_url and filing and filing.urls:
         viewer_url = filing.urls.get("viewer")
 
+    security = None
+    if event.ticker:
+        security = db.get(SecurityMetadata, (event.ticker or "").upper())
+    sector_slug, sector_name = _extract_sector(getattr(security, "extra", None))
+
+    documents: List[EventStudyEventDocument] = []
+    if filing:
+        documents.append(
+            EventStudyEventDocument(
+                title=filing.title or filing.report_name,
+                viewer_url=viewer_url,
+                published_at=filing.filed_at,
+                source="filing",
+            )
+        )
+
+    links: List[EventStudyEventLink] = []
+    if viewer_url:
+        links.append(
+            EventStudyEventLink(
+                label="공시 원문 보기",
+                url=viewer_url,
+                kind="viewer",
+            )
+        )
+
+    evidence = _load_event_evidence(db, receipt_no)
+
     return EventStudyEventDetail(
         receipt_no=event.rcept_no,
         corp_code=event.corp_code,
@@ -634,13 +906,156 @@ def load_event_detail(
         viewer_url=viewer_url,
         cap_bucket=event.cap_bucket,
         market_cap=to_float(event.market_cap),
+        sector_slug=sector_slug,
+        sector_name=sector_name,
+        subtype=event.subtype,
+        confidence=to_float(event.confidence),
+        salience=to_float(event.score),
+        is_restatement=bool(event.is_restatement),
         series=series,
+        documents=documents,
+        links=links,
+        evidence=evidence,
     )
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _apply_event_filters(
+    query,
+    *,
+    event_types: Optional[Sequence[str]],
+    ticker: Optional[str],
+    markets: Optional[Sequence[str]],
+    cap_buckets: Optional[Sequence[str]],
+    start_date: Optional[date],
+    end_date: Optional[date],
+    search_query: Optional[str],
+    sector_slugs: Optional[Sequence[str]],
+    min_market_cap: Optional[float],
+    max_market_cap: Optional[float],
+    min_salience: Optional[float],
+    include_restatement: bool,
+    filing_alias,
+    security_alias,
+):
+    if event_types:
+        query = query.filter(EventRecord.event_type.in_(event_types))
+    if ticker:
+        query = query.filter(EventRecord.ticker == ticker)
+    if start_date:
+        query = query.filter(EventRecord.event_date >= start_date)
+    if end_date:
+        query = query.filter(EventRecord.event_date <= end_date)
+    if markets:
+        query = query.filter(filing_alias.market.in_(markets))
+    if cap_buckets:
+        query = query.filter(EventRecord.cap_bucket.in_(cap_buckets))
+    if search_query:
+        like_term = f"%{search_query}%"
+        query = query.filter(
+            or_(
+                EventRecord.corp_name.ilike(like_term),
+                EventRecord.ticker.ilike(like_term),
+            )
+        )
+    if sector_slugs:
+        slug_column = _sector_slug_column(security_alias)
+        query = query.filter(slug_column.in_(sector_slugs))
+    cap_column = func.coalesce(EventRecord.market_cap, security_alias.market_cap)
+    if min_market_cap is not None:
+        query = query.filter(cap_column >= min_market_cap)
+    if max_market_cap is not None:
+        query = query.filter(cap_column <= max_market_cap)
+    if min_salience is not None:
+        query = query.filter(EventRecord.score >= min_salience)
+    if not include_restatement:
+        query = query.filter(EventRecord.is_restatement.is_(False))
+    return query
+
+
+def _sector_slug_column(security_alias):
+    return func.lower(
+        func.coalesce(
+            security_alias.extra["sectorSlug"].astext,
+            security_alias.extra["sector_slug"].astext,
+            security_alias.extra["sector"].astext,
+        )
+    )
+
+
+def _extract_sector(extra: Any) -> Tuple[Optional[str], Optional[str]]:
+    if not isinstance(extra, dict):
+        return None, None
+    slug = extra.get("sectorSlug") or extra.get("sector_slug") or extra.get("sector")
+    name = extra.get("sectorName") or extra.get("sector_name") or extra.get("sector")
+    if isinstance(slug, str):
+        slug = slug.strip() or None
+    else:
+        slug = None
+    if isinstance(name, str):
+        name = name.strip() or None
+    else:
+        name = None
+    return slug, name
+
+
+def _count_evidence_by_receipt(db: Session, receipt_nos: Sequence[str]) -> Dict[str, int]:
+    if not receipt_nos:
+        return {}
+    receipt_expr = EvidenceSnapshot.payload["document"]["receiptNo"].astext
+    rows = (
+        db.query(
+            receipt_expr.label("receipt_no"),
+            func.count(EvidenceSnapshot.urn_id).label("evidence_count"),
+        )
+        .filter(receipt_expr.isnot(None))
+        .filter(receipt_expr.in_(receipt_nos))
+        .group_by(receipt_expr)
+        .all()
+    )
+    return {row.receipt_no: int(row.evidence_count or 0) for row in rows if row.receipt_no}
+
+
+def _load_event_evidence(db: Session, receipt_no: str, limit: int = 6) -> List[EventStudyEventEvidence]:
+    receipt_expr = EvidenceSnapshot.payload["document"]["receiptNo"].astext
+    rows = (
+        db.query(EvidenceSnapshot)
+        .filter(receipt_expr == receipt_no)
+        .order_by(EvidenceSnapshot.updated_at.desc())
+        .limit(limit)
+        .all()
+    )
+    evidence_items: List[EventStudyEventEvidence] = []
+    for snapshot in rows:
+        payload = snapshot.payload or {}
+        document = payload.get("document") or {}
+        quote = payload.get("quote") or payload.get("content")
+        viewer_url = (
+            payload.get("viewer_url")
+            or document.get("viewerUrl")
+            or payload.get("document_url")
+        )
+        document_url = (
+            document.get("viewerUrl")
+            or document.get("downloadUrl")
+            or payload.get("document_url")
+        )
+        evidence_items.append(
+            EventStudyEventEvidence(
+                urn_id=payload.get("urn_id") or snapshot.urn_id,
+                quote=str(quote) if quote is not None else None,
+                section=payload.get("section"),
+                page_number=payload.get("page_number"),
+                viewer_url=viewer_url,
+                document_title=document.get("title"),
+                document_url=document_url,
+            )
+        )
+    return evidence_items
 
 
 def _compute_event_returns(

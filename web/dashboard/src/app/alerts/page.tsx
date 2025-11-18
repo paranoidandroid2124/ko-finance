@@ -1,10 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import Link from "next/link";
 import type { Route } from "next";
-import { AlertTriangle, Sparkles, Clock3, ShieldCheck, Mail, Copy, PhoneCall } from "lucide-react";
+import {
+  Clock3,
+  Copy,
+  ListChecks,
+  Mail,
+  PenSquare,
+  PhoneCall,
+  PlayCircle,
+  Plus,
+  ShieldCheck,
+  Sparkles,
+  X,
+} from "lucide-react";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { PlanLock } from "@/components/ui/PlanLock";
@@ -12,10 +24,14 @@ import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ListState } from "@/components/ui/ListState";
 import { ErrorState } from "@/components/ui/ErrorState";
+import { AlertBuilder } from "@/components/alerts/AlertBuilder";
+import { WatchlistRuleWizard } from "@/components/watchlist/WatchlistRuleWizard";
 import {
   useAlertRules,
   useAlertEventMatches,
   useCreateAlertRule,
+  useSimulateAlertRule,
+  useWatchlistRadar,
 } from "@/hooks/useAlerts";
 import {
   ApiError,
@@ -25,10 +41,14 @@ import {
   type AlertChannelType,
   type AlertChannel,
   type AlertPlanInfo,
+  type AlertRuleSimulationResponse,
+  type WatchlistRadarItem,
+  type WatchlistRadarSummary,
 } from "@/lib/alertsApi";
 import { logEvent } from "@/lib/telemetry";
 import { formatDateTime, formatRelativeTime } from "@/lib/date";
 import { useToastStore } from "@/store/toastStore";
+import { AlertRuleBuilderFooter, AlertNotificationFooter } from "@/components/legal/AlertsLegal";
 
 type PresetBundle = {
   key: string;
@@ -37,25 +57,46 @@ type PresetBundle = {
 };
 
 export default function AlertCenterPage() {
-  const { data, isLoading, isError, error } = useAlertRules();
+  const { data, isLoading, error } = useAlertRules();
   const {
     data: matchData,
     isLoading: matchesLoading,
     isError: matchesError,
   } = useAlertEventMatches({ limit: 15 });
+  const radarQuery = useWatchlistRadar({ windowMinutes: 1440, limit: 8 });
   const [presetDialog, setPresetDialog] = useState<AlertRulePreset | null>(null);
+  const [builderOpen, setBuilderOpen] = useState(false);
+  const [editingRule, setEditingRule] = useState<AlertRule | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [simulationRule, setSimulationRule] = useState<AlertRule | null>(null);
 
   const showToast = useToastStore((state) => state.show);
 
   const plan = data?.plan;
   const rules = data?.items ?? [];
-  const presets = data?.presets ?? [];
+  const existingCount = rules.length;
+  const canCreateRule = (plan?.remainingAlerts ?? 1) > 0;
+
+  const handleOpenBuilder = useCallback((rule: AlertRule | null = null) => {
+    setEditingRule(rule);
+    setBuilderOpen(true);
+  }, []);
+
+  const handleCloseBuilder = useCallback(() => {
+    setEditingRule(null);
+    setBuilderOpen(false);
+  }, []);
+
+  const handleOpenWizard = () => setWizardOpen(true);
+  const handleCloseWizard = () => setWizardOpen(false);
+  const handleRunSimulation = (rule: AlertRule) => setSimulationRule(rule);
 
   const bundles = useMemo<PresetBundle[]>(() => {
-    if (!presets.length) {
+    const source = data?.presets ?? [];
+    if (!source.length) {
       return [];
     }
-    const groups = presets.reduce<Record<string, PresetBundle>>((acc, preset) => {
+    const groups = source.reduce<Record<string, PresetBundle>>((acc, preset) => {
       const key = preset.bundle ?? "default";
       if (!acc[key]) {
         acc[key] = {
@@ -68,7 +109,7 @@ export default function AlertCenterPage() {
       return acc;
     }, {});
     return Object.values(groups);
-  }, [presets]);
+  }, [data?.presets]);
 
   if (error instanceof ApiError) {
     const isPlanGuard = error.status === 402 || error.code?.startsWith("plan.");
@@ -86,30 +127,72 @@ export default function AlertCenterPage() {
   return (
     <AppShell>
       <div className="flex flex-col gap-6">
-        <HeroSection plan={plan} totalRules={rules.length} />
+        <HeroSection
+          plan={plan}
+          totalRules={existingCount}
+          canCreateRule={canCreateRule}
+          onCreateRule={() => handleOpenBuilder(null)}
+          onOpenWizard={handleOpenWizard}
+        />
 
         <section className="rounded-3xl border border-border-light bg-background-cardLight p-6 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
-          <SectionHeader
-            title="활성 알림 룰"
-            description="공시/뉴스 룰 현황을 한 번에 확인하세요. 워치리스트 페이지에서 세부편집이 가능합니다."
-            ctaLabel="워치리스트로 이동"
-            ctaHref="/watchlist"
-          />
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">커스텀 알림 룰</h2>
+              <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
+                룰을 만들고 즉시 시뮬레이션하거나 Watchlist Rule Wizard로 복잡한 시나리오를 구성할 수 있어요.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => handleOpenBuilder(null)}
+                disabled={!canCreateRule}
+                className={clsx(
+                  "inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition",
+                  canCreateRule
+                    ? "bg-primary text-white hover:bg-primary/90"
+                    : "bg-border-light text-text-secondaryLight dark:bg-border-dark",
+                )}
+              >
+                <Plus className="h-4 w-4" />
+                새 룰 만들기
+              </button>
+              <button
+                type="button"
+                onClick={handleOpenWizard}
+                className="inline-flex items-center gap-2 rounded-full border border-border-light px-4 py-2 text-sm font-semibold text-text-secondaryLight transition hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark"
+              >
+                <ListChecks className="h-4 w-4" />
+                Watchlist Wizard
+              </button>
+            </div>
+          </div>
+          {!canCreateRule && plan ? (
+            <p className="mt-3 rounded-2xl bg-accent-warning/10 px-4 py-2 text-xs text-accent-warning">
+              현재 {plan.planTier?.toUpperCase()} 플랜에서 허용된 알림 한도를 모두 사용했어요. 불필요한 룰을 비활성화하거나 플랜을
+              업그레이드해 주세요.
+            </p>
+          ) : null}
           <ListState
             className="mt-4"
             state={isLoading ? "loading" : rules.length === 0 ? "empty" : "ready"}
             skeleton={<SkeletonBlock className="h-40 rounded-2xl" />}
             emptyTitle="활성화된 알림 룰이 없어요"
-            emptyDescription="프리셋을 선택하거나 워치리스트에서 직접 알림을 만들어 보세요."
+            emptyDescription="프리셋을 선택하거나 Watchlist Wizard로 첫 알림을 만들어 보세요."
             emptyAction={
-              <Link href="/watchlist" className="text-primary underline">
-                워치리스트 열기
-              </Link>
+              <button
+                type="button"
+                onClick={() => handleOpenBuilder(null)}
+                className="text-sm font-semibold text-primary underline"
+              >
+                새 룰 만들기
+              </button>
             }
           >
             <div className="grid gap-4 md:grid-cols-2">
               {rules.map((rule) => (
-                <RuleCard key={rule.id} rule={rule} />
+                <RuleCard key={rule.id} rule={rule} onEdit={handleOpenBuilder} onRunNow={handleRunSimulation} />
               ))}
             </div>
           </ListState>
@@ -202,23 +285,83 @@ export default function AlertCenterPage() {
           </ListState>
         </section>
 
-        <section className="rounded-3xl border border-border-light bg-background-cardLight p-6 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
-          <SectionHeader
-            title="최근 매칭된 이벤트"
-            description="DSL 룰이 감지한 공시/뉴스 매칭 로그입니다."
-          />
-          {matchesError ? (
-            <ErrorState
-              title="최근 이벤트를 불러오지 못했어요"
-              description="잠시 후 다시 시도해 주세요."
+        <section className="grid gap-6 lg:grid-cols-2">
+          <div className="rounded-3xl border border-border-light bg-background-cardLight p-6 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
+            <SectionHeader
+              title="Alert Radar"
+              description="최근 전달된 룰 · 채널을 요약해 보여줍니다."
             />
-          ) : matchesLoading ? (
-            <SkeletonBlock className="mt-4 h-40 rounded-2xl" />
-          ) : (
-            <RecentEventList matches={matchData?.matches ?? []} />
-          )}
+            {radarQuery.isError ? (
+              <div className="mt-4 rounded-2xl border border-border-light bg-background-base p-4 text-sm text-text-secondaryLight dark:border-border-dark dark:bg-background-baseDark dark:text-text-secondaryDark">
+                최근 레이더를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.
+              </div>
+            ) : (
+              <RadarList
+                className="mt-4"
+                items={radarQuery.data?.items ?? []}
+                summary={radarQuery.data?.summary}
+                windowMinutes={radarQuery.data?.windowMinutes ?? 1440}
+                isLoading={radarQuery.isLoading}
+              />
+            )}
+          </div>
+          <div className="rounded-3xl border border-border-light bg-background-cardLight p-6 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
+            <SectionHeader
+              title="최근 매칭된 이벤트"
+              description="DSL 룰이 감지한 공시/뉴스 매칭 로그입니다."
+            />
+            {matchesError ? (
+              <ErrorState
+                title="최근 이벤트를 불러오지 못했어요"
+                description="잠시 후 다시 시도해 주세요."
+              />
+            ) : matchesLoading ? (
+              <SkeletonBlock className="mt-4 h-40 rounded-2xl" />
+            ) : (
+              <RecentEventList matches={matchData?.matches ?? []} />
+            )}
+            <AlertNotificationFooter className="mt-4 text-[11px] leading-relaxed text-text-tertiaryLight dark:text-text-tertiaryDark" />
+          </div>
         </section>
       </div>
+
+      {builderOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
+          <div className="relative max-h-[95vh] w-full max-w-4xl overflow-y-auto rounded-3xl border border-border-light bg-background-cardLight p-6 shadow-2xl dark:border-border-dark dark:bg-background-cardDark">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase text-text-tertiaryLight dark:text-text-tertiaryDark">
+                  {editingRule ? "알림 수정" : "새 알림 만들기"}
+                </p>
+                <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
+                  플랜 한도 · 채널 정책을 확인하면서 룰을 구성하세요.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseBuilder}
+                className="rounded-full border border-border-light p-2 text-text-secondaryLight transition hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark"
+                aria-label="알림 빌더 닫기"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <AlertBuilder
+              plan={plan ?? null}
+              existingCount={existingCount}
+              editingRule={editingRule}
+              mode={editingRule ? "edit" : "create"}
+              onSuccess={handleCloseBuilder}
+              onCancel={handleCloseBuilder}
+            />
+            <AlertRuleBuilderFooter className="mt-4 text-xs leading-relaxed text-text-tertiaryLight dark:text-text-tertiaryDark" />
+          </div>
+        </div>
+      ) : null}
+
+      <WatchlistRuleWizard open={wizardOpen} onClose={handleCloseWizard} onCompleted={handleCloseWizard} />
+
+      {simulationRule ? <SimulationDrawer rule={simulationRule} onClose={() => setSimulationRule(null)} /> : null}
 
       {presetDialog ? (
         <PresetDialog
@@ -248,7 +391,15 @@ export default function AlertCenterPage() {
   );
 }
 
-function HeroSection({ plan, totalRules }: { plan?: AlertPlanInfo; totalRules: number }) {
+type HeroSectionProps = {
+  plan?: AlertPlanInfo;
+  totalRules: number;
+  canCreateRule: boolean;
+  onCreateRule: () => void;
+  onOpenWizard: () => void;
+};
+
+function HeroSection({ plan, totalRules, canCreateRule, onCreateRule, onOpenWizard }: HeroSectionProps) {
   return (
     <section className="rounded-3xl border border-border-light bg-gradient-to-r from-background-cardLight via-white to-background-cardLight p-6 shadow-card transition-colors dark:border-border-dark dark:from-background-cardDark dark:via-background-baseDark dark:to-background-cardDark">
       <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
@@ -277,23 +428,48 @@ function HeroSection({ plan, totalRules }: { plan?: AlertPlanInfo; totalRules: n
           </div>
         </div>
         <div className="flex flex-col gap-3 rounded-2xl border border-border-light bg-background-base p-4 dark:border-border-dark dark:bg-background-baseDark">
-          <div className="flex items-start gap-3">
-            <Sparkles className="mt-1 h-5 w-5 text-primary" aria-hidden />
-            <div>
-              <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">Evidence-first Preset</p>
-              <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-                루틴 알림 + Digest까지 연결하는 워크플로를 5분 안에 구성하세요.
-              </p>
+          <div className="space-y-4">
+            <div className="flex items-start gap-3">
+              <Sparkles className="mt-1 h-5 w-5 text-primary" aria-hidden />
+              <div>
+                <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">Action</p>
+                <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                  프리셋 · Wizard를 활용해 Evidence-first 알림 워크플로를 빠르게 설계하세요.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={onCreateRule}
+                disabled={!canCreateRule}
+                className={clsx(
+                  "flex-1 rounded-full px-4 py-2 text-sm font-semibold transition",
+                  canCreateRule
+                    ? "bg-primary text-white hover:bg-primary/90"
+                    : "bg-border-light text-text-secondaryLight dark:bg-border-dark dark:text-text-secondaryDark",
+                )}
+              >
+                새 알림 만들기
+              </button>
+              <button
+                type="button"
+                onClick={onOpenWizard}
+                className="flex-1 rounded-full border border-border-light px-4 py-2 text-sm font-semibold text-text-secondaryLight transition hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark"
+              >
+                Watchlist Wizard
+              </button>
             </div>
           </div>
           <Link
             href="/watchlist"
-            className="inline-flex items-center justify-center rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary/90"
+            className="inline-flex items-center justify-center rounded-full border border-dashed border-border-light px-4 py-2 text-sm font-semibold text-text-secondaryLight transition hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark"
           >
             워치리스트로 이동
           </Link>
         </div>
       </div>
+      <AlertRuleBuilderFooter className="mt-4 text-[11px] leading-relaxed text-text-tertiaryLight dark:text-text-tertiaryDark" />
     </section>
   );
 }
@@ -348,33 +524,107 @@ function SectionHeader({
   );
 }
 
-function RuleCard({ rule }: { rule: AlertRule }) {
-  const statusLabel =
-    rule.status === "paused" ? "일시 중지" : rule.status === "archived" ? "보관" : "활성";
+type RadarListProps = {
+  className?: string;
+  items: WatchlistRadarItem[];
+  summary?: WatchlistRadarSummary;
+  windowMinutes: number;
+  isLoading: boolean;
+};
+
+function RadarList({ className, items, summary, windowMinutes, isLoading }: RadarListProps) {
+  const state = isLoading ? "loading" : items.length === 0 ? "empty" : "ready";
+  return (
+    <ListState
+      className={className}
+      state={state}
+      skeleton={<SkeletonBlock className="h-32 rounded-2xl" />}
+      emptyTitle="최근 전달된 알림이 없어요"
+      emptyDescription="알림이 발송되면 채널과 룰 요약이 이곳에 표시됩니다."
+    >
+      <div className="space-y-4">
+        {summary ? (
+          <div className="grid grid-cols-2 gap-3 rounded-2xl border border-border-light bg-background-base p-4 text-xs dark:border-border-dark dark:bg-background-baseDark">
+            <RadarSummaryStat label="총 전달" value={summary.totalDeliveries} />
+            <RadarSummaryStat label="이벤트" value={summary.totalEvents} />
+            <RadarSummaryStat label="고유 종목" value={summary.uniqueTickers} />
+            <RadarSummaryStat label="실패" value={summary.failedDeliveries} />
+            <p className="col-span-2 text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">
+              최근 {Math.round(windowMinutes / 60)}시간 기준
+            </p>
+          </div>
+        ) : null}
+        <div className="divide-y divide-border-light rounded-2xl border border-border-light dark:divide-border-dark dark:border-border-dark">
+          {items.slice(0, 6).map((item) => {
+            const deliveredRelative = formatRelativeTime(item.deliveredAt, { fallback: "방금 전" });
+            return (
+              <div key={item.deliveryId} className="px-4 py-3 text-sm">
+                <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">{item.ruleName}</p>
+                <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                  {item.channel.toUpperCase()} · {item.ticker ?? item.company ?? "N/A"} · {deliveredRelative}
+                </p>
+                {item.headline ? (
+                  <p className="mt-1 text-xs text-text-secondaryLight dark:text-text-secondaryDark line-clamp-2">
+                    {item.headline}
+                  </p>
+                ) : item.message ? (
+                  <p className="mt-1 text-xs text-text-secondaryLight dark:text-text-secondaryDark line-clamp-2">
+                    {item.message}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </ListState>
+  );
+}
+
+function RadarSummaryStat({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div>
+      <p className="text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">{label}</p>
+      <p className="text-base font-semibold text-text-primaryLight dark:text-text-primaryDark">{value}</p>
+    </div>
+  );
+}
+
+type RuleCardProps = {
+  rule: AlertRule;
+  onEdit: (rule: AlertRule) => void;
+  onRunNow: (rule: AlertRule) => void;
+};
+
+function RuleCard({ rule, onEdit, onRunNow }: RuleCardProps) {
+  const statusLabel = rule.status === "paused" ? "일시 중지" : rule.status === "archived" ? "보관" : "활성";
   const topChannel = rule.channels?.[0];
   const channelLabel = topChannel ? topChannel.type.toUpperCase() : "N/A";
+  const lastTriggered = rule.lastTriggeredAt
+    ? formatRelativeTime(rule.lastTriggeredAt, { fallback: "기록 없음" })
+    : "기록 없음";
   return (
     <div className="rounded-2xl border border-border-light bg-background-base p-4 transition hover:border-primary dark:border-border-dark dark:bg-background-baseDark">
       <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">{rule.name}</p>
-            <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-              {rule.trigger.type === "news" ? "뉴스" : "공시"} · {channelLabel}
-            </p>
-          </div>
-          <span
-            className={clsx(
-              "rounded-full px-3 py-1 text-xs font-semibold",
-              rule.status === "active"
-                ? "bg-primary/10 text-primary"
-                : rule.status === "paused"
-                  ? "bg-accent-warning/15 text-accent-warning"
-                  : "bg-border-light/60 text-text-secondaryLight dark:bg-border-dark/60 dark:text-text-secondaryDark",
-            )}
-          >
-            {statusLabel}
-          </span>
+        <div>
+          <p className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">{rule.name}</p>
+          <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+            {rule.trigger.type === "news" ? "뉴스" : "공시"} · {channelLabel}
+          </p>
         </div>
+        <span
+          className={clsx(
+            "rounded-full px-3 py-1 text-xs font-semibold",
+            rule.status === "active"
+              ? "bg-primary/10 text-primary"
+              : rule.status === "paused"
+                ? "bg-accent-warning/15 text-accent-warning"
+                : "bg-border-light/60 text-text-secondaryLight dark:bg-border-dark/60 dark:text-text-secondaryDark",
+          )}
+        >
+          {statusLabel}
+        </span>
+      </div>
       <p className="mt-3 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
         윈도우 {rule.frequency.windowMinutes}분 · 평가 {rule.frequency.evaluationIntervalMinutes}분 · 쿨다운{" "}
         {rule.frequency.cooldownMinutes}분
@@ -386,7 +636,10 @@ function RuleCard({ rule }: { rule: AlertRule }) {
           </span>
         ))}
         {rule.trigger.categories?.slice(0, 3).map((category) => (
-          <span key={`${rule.id}-category-${category}`} className="rounded-full bg-border-light/60 px-2 py-0.5 dark:bg-border-dark/50">
+          <span
+            key={`${rule.id}-category-${category}`}
+            className="rounded-full bg-border-light/60 px-2 py-0.5 dark:bg-border-dark/50"
+          >
             {category}
           </span>
         ))}
@@ -396,6 +649,25 @@ function RuleCard({ rule }: { rule: AlertRule }) {
           </span>
         ))}
       </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => onRunNow(rule)}
+          className="inline-flex items-center gap-1 rounded-full border border-border-light px-3 py-1 text-xs font-semibold text-text-secondaryLight transition hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark"
+        >
+          <PlayCircle className="h-3.5 w-3.5" />
+          즉시 평가
+        </button>
+        <button
+          type="button"
+          onClick={() => onEdit(rule)}
+          className="inline-flex items-center gap-1 rounded-full border border-border-light px-3 py-1 text-xs font-semibold text-text-secondaryLight transition hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark"
+        >
+          <PenSquare className="h-3.5 w-3.5" />
+          설정 수정
+        </button>
+      </div>
+      <p className="mt-3 text-xs text-text-secondaryLight dark:text-text-secondaryDark">최근 발송 · {lastTriggered}</p>
     </div>
   );
 }
@@ -596,7 +868,186 @@ function PresetDialog({ preset, planChannels, onClose, onSubmitSuccess, onSubmit
             {createRule.isPending ? "생성 중…" : "프리셋 생성"}
           </button>
         </div>
+        <AlertRuleBuilderFooter className="mt-4 text-[11px] leading-relaxed text-text-tertiaryLight dark:text-text-tertiaryDark" />
       </div>
+    </div>
+  );
+}
+
+type SimulationDrawerProps = {
+  rule: AlertRule;
+  onClose: () => void;
+};
+
+function SimulationDrawer({ rule, onClose }: SimulationDrawerProps) {
+  const [windowMinutes, setWindowMinutes] = useState<number>(rule.frequency.windowMinutes ?? 60);
+  const [limit, setLimit] = useState<number>(5);
+  const [result, setResult] = useState<AlertRuleSimulationResponse | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const simulateRule = useSimulateAlertRule();
+
+  const runSimulation = useCallback(
+    async (minutes: number, maxCount: number) => {
+      setErrorMessage(null);
+      try {
+        const preview = await simulateRule.mutateAsync({
+          id: rule.id,
+          payload: { windowMinutes: minutes, limit: maxCount },
+        });
+        setResult(preview);
+      } catch (error) {
+        const message = error instanceof ApiError ? error.message : "시뮬레이션에 실패했어요. 잠시 후 다시 시도해 주세요.";
+        setErrorMessage(message);
+        setResult(null);
+      }
+    },
+    [rule.id, simulateRule],
+  );
+
+  useEffect(() => {
+    const initialWindow = rule.frequency.windowMinutes ?? 60;
+    setWindowMinutes(initialWindow);
+    setLimit(5);
+    setResult(null);
+    setErrorMessage(null);
+    void runSimulation(initialWindow, 5);
+  }, [rule, runSimulation]);
+
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const safeWindow = Math.max(5, Math.min(windowMinutes, 7 * 24 * 60));
+    const safeLimit = Math.max(1, Math.min(limit, 50));
+    setWindowMinutes(safeWindow);
+    setLimit(safeLimit);
+    void runSimulation(safeWindow, safeLimit);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/70 px-4 py-6 sm:items-center">
+      <div className="w-full max-h-[95vh] rounded-3xl border border-border-light bg-background-cardLight p-6 shadow-2xl dark:border-border-dark dark:bg-background-cardDark">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase text-text-tertiaryLight dark:text-text-tertiaryDark">Run now</p>
+            <h3 className="text-xl font-semibold text-text-primaryLight dark:text-text-primaryDark">{rule.name}</h3>
+            <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
+              룰을 즉시 평가하여 어떤 이벤트가 전달될지 확인하세요.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-border-light p-2 text-text-secondaryLight transition hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark"
+            aria-label="시뮬레이션 닫기"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="mt-4 flex flex-wrap gap-3 text-sm">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-semibold text-text-secondaryLight dark:text-text-secondaryDark">조회 기간(분)</span>
+            <input
+              type="number"
+              min={5}
+              max={7 * 24 * 60}
+              value={windowMinutes}
+              onChange={(event) => setWindowMinutes(Number(event.target.value))}
+              className="w-32 rounded-xl border border-border-light bg-background-base px-3 py-2 text-sm dark:border-border-dark dark:bg-background-baseDark"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-semibold text-text-secondaryLight dark:text-text-secondaryDark">이벤트 제한</span>
+            <input
+              type="number"
+              min={1}
+              max={50}
+              value={limit}
+              onChange={(event) => setLimit(Number(event.target.value))}
+              className="w-28 rounded-xl border border-border-light bg-background-base px-3 py-2 text-sm dark:border-border-dark dark:bg-background-baseDark"
+            />
+          </label>
+          <button
+            type="submit"
+            className="mt-auto inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary/90"
+          >
+            <PlayCircle className="h-4 w-4" />
+            다시 실행
+          </button>
+        </form>
+        {errorMessage ? (
+          <p className="mt-3 rounded-2xl bg-accent-warning/10 px-4 py-2 text-xs text-accent-warning">{errorMessage}</p>
+        ) : null}
+        {simulateRule.isPending ? (
+          <SkeletonBlock className="mt-4 h-32 rounded-2xl" />
+        ) : result ? (
+          <div className="mt-4 space-y-3">
+            <div className="rounded-2xl border border-border-light bg-background-base p-4 text-sm dark:border-border-dark dark:bg-background-baseDark">
+              <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">
+                {result.matches ? "매칭 발견" : "매칭 없음"} · {result.eventCount}건
+              </p>
+              <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                {formatDateTime(result.windowStart, { fallback: "" })} ~ {formatDateTime(result.windowEnd, { fallback: "" })}
+              </p>
+              <p className="mt-2 text-sm text-text-secondaryLight dark:text-text-secondaryDark">{result.message}</p>
+            </div>
+            {result.eventCount > 0 ? (
+              <div className="divide-y divide-border-light rounded-2xl border border-border-light dark:divide-border-dark dark:border-border-dark">
+                {result.events.map((event, index) => (
+                  <SimulationEventCard key={`${rule.id}-${index}`} event={event} eventType={result.eventType} />
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                title="표시할 이벤트가 없어요"
+                description="필터를 조정하거나 평가 주기를 변경해 보세요."
+                className="border-none bg-transparent px-0 py-8 text-sm"
+              />
+            )}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function SimulationEventCard({
+  event,
+  eventType,
+}: {
+  event: Record<string, unknown>;
+  eventType: string;
+}) {
+  const headline =
+    (event.headline as string) ??
+    (event.report_name as string) ??
+    (event.summary as string) ??
+    (event.url as string) ??
+    "이벤트";
+  const company = (event.corp_name as string) ?? (event.company as string) ?? (event.ticker as string) ?? "N/A";
+  const timestamp =
+    (event.published_at as string) ??
+    (event.filed_at as string) ??
+    (event.eventTime as string) ??
+    (event.created_at as string) ??
+    null;
+  const relative = timestamp ? formatRelativeTime(timestamp, { fallback: "기록 없음" }) : "기록 없음";
+  const absolute = timestamp ? formatDateTime(timestamp, { fallback: "" }) : "";
+  const summary =
+    (event.summary as string) ??
+    (event.message as string) ??
+    (event.description as string) ??
+    "";
+  return (
+    <div className="px-4 py-3 text-sm">
+      <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">{headline}</p>
+      <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+        {eventType.toUpperCase()} · {company} · {relative}
+      </p>
+      {absolute ? (
+        <p className="text-[11px] text-text-tertiaryLight dark:text-text-tertiaryDark">{absolute}</p>
+      ) : null}
+      {summary ? (
+        <p className="mt-1 text-xs text-text-secondaryLight dark:text-text-secondaryDark line-clamp-3">{summary}</p>
+      ) : null}
     </div>
   );
 }

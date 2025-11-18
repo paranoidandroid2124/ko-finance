@@ -85,6 +85,8 @@ from services.daily_brief_service import (
     record_brief_generation,
     render_daily_brief_document,
 )
+from services.maintenance.data_retention import apply_retention_policies
+from services.compliance import dsar_service
 
 
 def _parse_recipients(value: Optional[str]) -> List[str]:
@@ -476,7 +478,7 @@ def _notify_alert_channel_failures(events: Sequence[Mapping[str, Any]]) -> None:
     retry_jitter=True,
     retry_kwargs={"max_retries": 3},
 )
-def evaluate_alert_rules(self, limit: int = 1000) -> Dict[str, int]:
+def evaluate_alert_rules(self, limit: int = 1000, prefetch_factor: Optional[int] = None) -> Dict[str, int]:
     """Periodic task that evaluates alert rules and dispatches notifications."""
     db = _open_session()
     task_id = getattr(self.request, "id", None)
@@ -484,7 +486,12 @@ def evaluate_alert_rules(self, limit: int = 1000) -> Dict[str, int]:
         logger.warning("Alert evaluation limit must be positive. Received %s. Falling back to 1.", limit)
         limit = 1
     try:
-        result = alert_service.evaluate_due_alerts(db, limit=limit, task_id=task_id)
+        result = alert_service.evaluate_due_alerts(
+            db,
+            limit=limit,
+            prefetch_factor=prefetch_factor,
+            task_id=task_id,
+        )
         db.commit()
         logger.info(
             "Alert evaluation completed (task=%s): evaluated=%s triggered=%s skipped=%s errors=%s plans=%s channelFailures=%s",
@@ -2418,3 +2425,19 @@ def run_rag_grid_job(job_id: str) -> None:
 def process_rag_grid_cell(cell_id: str) -> None:
     """Execute a single QA grid cell."""
     rag_grid.process_grid_cell(cell_id)
+
+
+@shared_task(name="compliance.cleanup_data_retention")
+def cleanup_data_retention_job() -> Dict[str, int]:
+    """Cron-friendly entry point for data retention policies."""
+    stats = apply_retention_policies()
+    logger.info("compliance.cleanup_data_retention completed: %s", stats)
+    return stats
+
+
+@shared_task(name="compliance.process_dsar_queue")
+def process_dsar_queue(limit: int = 5) -> Dict[str, int]:
+    """Background worker that processes pending DSAR requests."""
+    stats = dsar_service.process_pending_requests(limit=limit)
+    logger.info("compliance.process_dsar_queue processed: %s", stats)
+    return stats

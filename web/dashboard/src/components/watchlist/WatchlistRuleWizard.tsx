@@ -9,6 +9,7 @@ import { ArrowLeft, Bold, CheckCircle2, Italic, List, Loader2, Mail, Plus, Slack
 import { FilterChip } from "@/components/ui/FilterChip";
 import { TagInput } from "@/components/ui/TagInput";
 import { CompanyTickerInput } from "@/components/watchlist/CompanyTickerInput";
+import { AlertRuleBuilderFooter } from "@/components/legal/AlertsLegal";
 import { useCreateAlertRule, useUpdateAlertRule } from "@/hooks/useAlerts";
 import type {
   AlertChannel,
@@ -1260,6 +1261,7 @@ export function WatchlistRuleWizard({
                     </button>
                   </div>
                 </div>
+                <AlertRuleBuilderFooter className="text-[11px] leading-relaxed text-text-tertiaryLight dark:text-text-tertiaryDark" />
               </footer>
             </div>
           </motion.div>

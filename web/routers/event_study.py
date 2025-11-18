@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from schemas.api.event_study import (
+    EventStudyBoardResponse,
     EventStudyEventDetail,
     EventStudyEventsResponse,
     EventStudyExportRequest,
@@ -52,6 +53,51 @@ def list_event_windows(
             }
             for preset in presets
         ],
+    )
+
+
+@router.get("/board", response_model=EventStudyBoardResponse)
+def get_event_study_board(
+    *,
+    start_date: Optional[date] = Query(default=None, alias="startDate"),
+    end_date: Optional[date] = Query(default=None, alias="endDate"),
+    window_key: Optional[str] = Query(default=None, alias="windowKey"),
+    event_types: Optional[List[str]] = Query(default=None, alias="eventTypes"),
+    sector_slugs: Optional[List[str]] = Query(default=None, alias="sectorSlugs"),
+    cap_buckets: Optional[List[str]] = Query(default=None, alias="capBuckets"),
+    markets: Optional[List[str]] = Query(default=None, alias="markets"),
+    min_market_cap: Optional[float] = Query(default=None, alias="minMarketCap", ge=0.0),
+    max_market_cap: Optional[float] = Query(default=None, alias="maxMarketCap", ge=0.0),
+    min_salience: Optional[float] = Query(default=None, alias="minSalience", ge=0.0, le=1.0),
+    include_restatement: bool = Query(default=True, alias="includeRestatement"),
+    search: Optional[str] = Query(default=None),
+    significance: float = Query(default=0.1, alias="sig", gt=0.0, le=0.5),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    _: PlanContext = Depends(require_plan_feature("timeline.full")),
+) -> EventStudyBoardResponse:
+    normalized_types = event_study_service.normalize_str_list(event_types)
+    normalized_caps = event_study_service.normalize_str_list(cap_buckets)
+    normalized_markets = event_study_service.normalize_str_list(markets)
+    normalized_sectors = event_study_service.normalize_slug_list(sector_slugs)
+    return event_study_service.build_board_snapshot(
+        db,
+        start_date=start_date,
+        end_date=end_date,
+        window_key=window_key,
+        event_types=normalized_types or None,
+        sector_slugs=normalized_sectors or None,
+        cap_buckets=normalized_caps or None,
+        markets=normalized_markets or None,
+        min_market_cap=min_market_cap,
+        max_market_cap=max_market_cap,
+        min_salience=min_salience,
+        include_restatement=include_restatement,
+        search=search,
+        significance=significance,
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -207,17 +253,25 @@ def get_event_detail(
     *,
     start: int = Query(-5),
     end: int = Query(20),
+    window_key: Optional[str] = Query(default=None, alias="windowKey"),
+    include_evidence: bool = Query(False, alias="includeEvidence"),
     db: Session = Depends(get_db),
     _: PlanContext = Depends(require_plan_feature("timeline.full")),
 ) -> EventStudyEventDetail:
-    if start >= end:
+    resolved_start = start
+    resolved_end = end
+    if window_key:
+        preset = event_study_service.resolve_window_preset(db, window_key)
+        resolved_start = preset.start
+        resolved_end = preset.end
+    if resolved_start >= resolved_end:
         raise HTTPException(status_code=400, detail="start must be less than end")
 
     detail = event_study_service.load_event_detail(
         db,
         receipt_no=receipt_no,
-        start=start,
-        end=end,
+        start=resolved_start,
+        end=resolved_end,
     )
     if not detail:
         raise HTTPException(status_code=404, detail="Event not found")

@@ -5,6 +5,7 @@ import { CalendarClock, Copy, EyeOff, Link, Lock, Trash2 } from "lucide-react";
 
 import type { NotebookShare, NotebookShareCreatePayload } from "@/lib/notebookApi";
 import { toast } from "@/store/toastStore";
+import { BoardShareModalNotice } from "@/components/legal/BoardLegal";
 
 type NotebookSharePanelProps = {
   notebookTitle?: string;
@@ -165,6 +166,7 @@ export function NotebookSharePanel({ notebookTitle, shares, onCreate, onRevoke, 
           ))
         )}
       </div>
+      <BoardShareModalNotice className="text-[11px] text-text-tertiaryLight dark:text-text-tertiaryDark" />
     </div>
   );
 }

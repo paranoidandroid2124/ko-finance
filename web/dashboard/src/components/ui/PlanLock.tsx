@@ -2,15 +2,14 @@
 
 import clsx from "classnames";
 import { useEffect, useMemo, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import type { Route } from "next";
+
 import { logEvent } from "@/lib/telemetry";
 import { getPlanBadgeTone, getPlanIcon, getPlanIconTone, getPlanLabel } from "@/lib/planTier";
 import { isTierAtLeast, nextTier, type PlanTier, usePlanTier } from "@/store/planStore";
 import { usePlanTrialCta } from "@/hooks/usePlanTrialCta";
 import { usePlanCatalog } from "@/hooks/usePlanCatalog";
 import { resolvePlanMarketingCopy } from "@/lib/planContext";
-import { getPlanUpgradePath } from "@/config/planConfig";
+import { PlanTierCTA } from "@/components/plan/PlanTierCTA";
 
 type PlanLockProps = {
   requiredTier: PlanTier;
@@ -33,7 +32,6 @@ export function PlanLock({
   children,
   showBadge = true,
 }: PlanLockProps) {
-  const router = useRouter();
   const tierFromStore = usePlanTier();
   const tier = currentTier ?? tierFromStore;
   const isUnlocked = isTierAtLeast(tier, requiredTier);
@@ -60,14 +58,6 @@ export function PlanLock({
     }
   }, [isUnlocked, requiredTier, tier]);
 
-  const defaultUpgrade = useCallback(
-    (tier: PlanTier) => {
-      router.push(getPlanUpgradePath(tier) as Route);
-    },
-    [router],
-  );
-
-  const upgradeHandler = onUpgrade ?? defaultUpgrade;
   const handleStartTrial = useCallback(() => {
     logEvent("plan.lock.trial_click", { requiredTier, currentTier: tier });
     startTrialCta({ source: "plan-lock" }).catch(() => undefined);
@@ -106,16 +96,16 @@ export function PlanLock({
             {trialStarting ? "체험 시작 중..." : "7일 무료 체험"}
           </button>
         ) : null}
-        <button
-          type="button"
-          className="inline-flex items-center gap-2 rounded-lg border border-primary bg-primary px-3 py-2 text-xs font-semibold text-white transition-motion-fast hover:bg-primary-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          onClick={() => {
-            logEvent("plan.lock.upgrade_click", { requiredTier, currentTier: tier, nextTier: next });
-            upgradeHandler(requiredTier);
-          }}
-        >
-          {next === "enterprise" ? "전용 플랜 결제하기" : "플랜 업그레이드 안내 받기"}
-        </button>
+        <PlanTierCTA
+          tier={requiredTier}
+          action={marketingCopy.primaryAction}
+          onUpgrade={onUpgrade}
+          onBeforeUpgrade={() =>
+            logEvent("plan.lock.upgrade_click", { requiredTier, currentTier: tier, nextTier: next ?? null })
+          }
+          variant="primary"
+          className="text-xs"
+        />
       </div>
       {children ? <div className="mt-3">{children}</div> : null}
       <p className="mt-3 text-[11px] text-text-tertiaryLight dark:text-text-tertiaryDark">

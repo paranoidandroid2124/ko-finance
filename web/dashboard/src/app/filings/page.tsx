@@ -10,6 +10,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { useFilings, useFilingDetail } from "@/hooks/useFilings";
 import type { FilingSentimentFilter } from "@/hooks/useFilings";
+import { FilingHeaderNotice } from "@/components/legal/FilingLegal";
 
 export default function FilingsPage() {
   const searchParams = useSearchParams();
@@ -66,6 +67,7 @@ export default function FilingsPage() {
 
   return (
     <AppShell>
+      <FilingHeaderNotice className="mb-4 text-xs text-text-secondaryLight dark:text-text-secondaryDark" />
       {isError ? (
         <ErrorState
           title="공시 정보를 불러오지 못했어요"

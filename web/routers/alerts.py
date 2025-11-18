@@ -17,6 +17,8 @@ from schemas.api.alerts import (
     AlertRuleCreateRequest,
     AlertRuleListResponse,
     AlertRuleResponse,
+    AlertRuleSimulationRequest,
+    AlertRuleSimulationResponse,
     AlertRuleUpdateRequest,
     AlertRuleStatsResponse,
     AlertPlanInfo,
@@ -29,6 +31,8 @@ from schemas.api.alerts import (
     WatchlistDigestScheduleListResponse,
     WatchlistDigestScheduleCreateRequest,
     WatchlistDigestScheduleUpdateRequest,
+    WatchlistDigestPreviewRequest,
+    WatchlistDigestPreviewResponse,
 )
 from services.alert_service import (
     PlanQuotaError,
@@ -37,6 +41,7 @@ from services.alert_service import (
     get_alert_rule,
     list_alert_rules,
     list_event_alert_matches,
+    preview_alert_rule,
     rule_delivery_stats,
     serialize_alert,
     serialize_plan_capabilities,
@@ -372,6 +377,33 @@ def update_rule(
     return _response_from_rule(updated)
 
 
+@router.post("/{alert_id}/simulate", response_model=AlertRuleSimulationResponse)
+def simulate_rule(
+    alert_id: uuid.UUID,
+    payload: AlertRuleSimulationRequest,
+    x_user_id: Optional[str] = Header(default=None),
+    x_org_id: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+    plan: PlanContext = Depends(require_plan_feature("search.alerts")),
+) -> AlertRuleSimulationResponse:
+    user_id = _parse_uuid(x_user_id)
+    org_id = _parse_uuid(x_org_id)
+    filters = _owner_filters(user_id, org_id)
+    rule = get_alert_rule(db, rule_id=alert_id, owner_filters=filters)
+    if rule is None:
+        raise _plan_http_exception(status.HTTP_404_NOT_FOUND, "alerts.not_found", "알림을 찾을 수 없습니다.")
+    try:
+        preview = preview_alert_rule(
+            db,
+            rule=rule,
+            window_minutes=payload.windowMinutes,
+            limit=payload.limit,
+        )
+    except ValueError as exc:
+        raise _plan_http_exception(status.HTTP_400_BAD_REQUEST, "alerts.simulation_failed", str(exc))
+    return AlertRuleSimulationResponse.model_validate(preview)
+
+
 @router.get("/{alert_id}/stats", response_model=AlertRuleStatsResponse)
 def read_rule_stats(
     alert_id: uuid.UUID,
@@ -660,6 +692,50 @@ def delete_watchlist_schedule(
             detail={"code": "digest_schedule.not_found", "message": "스케줄을 찾을 수 없습니다."},
         ) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/watchlist/schedules/{schedule_id}/preview",
+    response_model=WatchlistDigestPreviewResponse,
+)
+def preview_watchlist_schedule(
+    schedule_id: uuid.UUID,
+    payload: WatchlistDigestPreviewRequest,
+    x_user_id: Optional[str] = Header(default=None),
+    x_org_id: Optional[str] = Header(default=None),
+    plan: PlanContext = Depends(require_plan_feature("search.alerts")),
+    db: Session = Depends(get_db),
+) -> WatchlistDigestPreviewResponse:
+    _require_digest_enabled(plan)
+    user_id = _resolve_lightmem_user_id(x_user_id)
+    org_id = _parse_uuid(x_org_id)
+    owner_filters = _owner_filters(user_id, org_id)
+    schedule_entry = watchlist_digest_schedule_service.load_schedule(schedule_id, owner_filters)
+    if schedule_entry is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "digest_schedule.not_found", "message": "스케줄을 찾을 수 없습니다."},
+        )
+    user_settings = _load_user_lightmem_settings(user_id)
+    plan_memory_enabled = _digest_memory_enabled(plan, user_settings)
+    window_minutes = payload.windowMinutes or schedule_entry.get("window_minutes") or 1440
+    limit = payload.limit or schedule_entry.get("limit") or 20
+    window_minutes = max(min(int(window_minutes), 7 * 24 * 60), 5)
+    limit = max(min(int(limit), 500), 1)
+    tenant_token = str(org_id) if org_id else None
+    user_token = str(user_id) if user_id else None
+    preview_payload = watchlist_service.collect_watchlist_alerts(
+        db,
+        window_minutes=window_minutes,
+        limit=limit,
+        owner_filters=owner_filters,
+        plan_memory_enabled=plan_memory_enabled,
+        session_id=f"watchlist:preview:schedule:{schedule_id}",
+        tenant_id=tenant_token,
+        user_id_hint=user_token,
+    )
+    schedule_payload = WatchlistDigestScheduleSchema.model_validate(_serialize_digest_schedule(schedule_entry))
+    return WatchlistDigestPreviewResponse(schedule=schedule_payload, payload=preview_payload)
 
 
 @router.get("/watchlist/rules/{rule_id}/detail", response_model=WatchlistRuleDetailResponse)

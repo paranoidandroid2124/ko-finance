@@ -3,13 +3,15 @@
 import { createPortal } from "react-dom";
 import { useEffect, useMemo, useState } from "react";
 
+import { PlanLock } from "@/components/ui/PlanLock";
 import {
   createNotebookEntry,
   fetchNotebookList,
   type NotebookEntrySource,
-  type NotebookSummary
+  type NotebookSummary,
 } from "@/lib/notebookApi";
 import { toast } from "@/store/toastStore";
+import { usePlanContext } from "@/store/planStore";
 
 type NotebookQuickCaptureButtonProps = {
   highlight: string;
@@ -19,6 +21,8 @@ type NotebookQuickCaptureButtonProps = {
 };
 
 export function NotebookQuickCaptureButton({ highlight, source, tags, className }: NotebookQuickCaptureButtonProps) {
+  const { entitlements } = usePlanContext();
+  const hasNotebookEntitlement = (entitlements ?? []).includes("collab.notebook");
   const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
   const [notebooks, setNotebooks] = useState<NotebookSummary[]>([]);
@@ -165,16 +169,36 @@ export function NotebookQuickCaptureButton({ highlight, source, tags, className 
   };
 
   const buttonLabel = useMemo(() => "노트에 저장", []);
+  if (!hasNotebookEntitlement) {
+    return (
+      <PlanLock
+        requiredTier="pro"
+        title="Notebook 저장은 Pro 플랜에서 제공됩니다."
+        description="하이라이트를 노트에 보관하려면 플랜을 업그레이드하세요."
+        showBadge={false}
+        className="inline-block text-left text-xs"
+      />
+    );
+  }
+
   return (
-    <>
-      <button
-        type="button"
-        className={className || "rounded border border-slate-300 px-2 py-1 text-[11px] text-primary hover:border-primary"}
-        onClick={() => setOpen(true)}
-      >
-        {buttonLabel}
-      </button>
-      {renderModal()}
-    </>
+    <PlanLock
+      requiredTier="pro"
+      title="Notebook 저장은 Pro 플랜에서 제공됩니다."
+      description="하이라이트를 노트에 보관하려면 플랜을 업그레이드하세요."
+      showBadge={false}
+      className="inline-block"
+    >
+      <>
+        <button
+          type="button"
+          className={className || "rounded border border-slate-300 px-2 py-1 text-[11px] text-primary hover:border-primary"}
+          onClick={() => setOpen(true)}
+        >
+          {buttonLabel}
+        </button>
+        {renderModal()}
+      </>
+    </PlanLock>
   );
 }

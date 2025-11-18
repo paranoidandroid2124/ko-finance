@@ -7,6 +7,8 @@ import {
   AlertRuleListResponse,
   AlertRuleStats,
   AlertRuleUpdatePayload,
+  AlertRuleSimulationRequest,
+  AlertRuleSimulationResponse,
   createAlertRule,
   dispatchWatchlistDigest,
   deleteAlertRule,
@@ -17,6 +19,8 @@ import {
   type AlertChannelSchemaResponse,
   fetchWatchlistRadar,
   fetchWatchlistRuleDetail,
+  simulateAlertRule,
+  fetchWatchlistSchedulePreview,
   type WatchlistDispatchRequest,
   type WatchlistDispatchResponse,
   type WatchlistRadarResponse,
@@ -28,6 +32,8 @@ import {
   deleteWatchlistSchedule,
   type WatchlistDigestSchedule,
   type WatchlistDigestSchedulePayload,
+  type WatchlistDigestPreviewRequest,
+  type WatchlistDigestPreviewResponse,
   updateAlertRule,
 } from "@/lib/alertsApi";
 
@@ -71,6 +77,11 @@ export const useDeleteAlertRule = () => {
     },
   });
 };
+
+export const useSimulateAlertRule = () =>
+  useMutation<AlertRuleSimulationResponse, unknown, { id: string; payload?: AlertRuleSimulationRequest }>({
+    mutationFn: ({ id, payload }) => simulateAlertRule(id, payload ?? {}),
+  });
 
 export const useAlertRuleStats = (id: string | null, windowMinutes = 1440) =>
   useQuery<AlertRuleStats>({
@@ -212,3 +223,8 @@ export const useDeleteWatchlistSchedule = () => {
     },
   });
 };
+
+export const useWatchlistSchedulePreview = () =>
+  useMutation<WatchlistDigestPreviewResponse, Error, { scheduleId: string; payload?: WatchlistDigestPreviewRequest }>({
+    mutationFn: ({ scheduleId, payload }) => fetchWatchlistSchedulePreview(scheduleId, payload ?? {}),
+  });

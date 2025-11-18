@@ -97,3 +97,29 @@ def test_select_plan_for_org_updates_subscription(db_session: Session) -> None:
         .first()
     )
     assert row and row["status"] == "active"
+
+
+def test_select_plan_for_org_starts_trial_for_pro(db_session: Session) -> None:
+    user_id = _create_user(db_session, f"user_{uuid.uuid4().hex}@example.com")
+    state = onboarding_service.load_onboarding_wizard_state(db_session, user_id=user_id)
+
+    updated = onboarding_service.select_plan_for_org(
+        db_session,
+        user_id=user_id,
+        org_id=state.org.id,
+        plan_tier="pro",
+    )
+    assert updated.plan_tier == "pro"
+    assert updated.plan_status == "trialing"
+
+    row = (
+        db_session.execute(
+            text("SELECT status, metadata FROM org_subscriptions WHERE org_id = :org_id"),
+            {"org_id": str(state.org.id)},
+        )
+        .mappings()
+        .first()
+    )
+    assert row and row["status"] == "trialing"
+    metadata = row.get("metadata") or {}
+    assert metadata.get("trialUsed") is True

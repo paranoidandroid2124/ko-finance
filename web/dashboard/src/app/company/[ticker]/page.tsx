@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { Route } from "next";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -21,15 +21,6 @@ import { useBoards } from "@/hooks/useBoards";
 import { normalizeCompanySearchResult, type CompanySearchResult } from "@/hooks/useCompanySearch";
 
 const RECENT_COMPANIES_KEY = "kofilot_recent_companies";
-const TABS = [
-  { id: "overview", label: "Overview" },
-  { id: "filings", label: "Filings" },
-  { id: "news", label: "News" },
-  { id: "events", label: "Events & Alerts" },
-] as const;
-
-type TabId = (typeof TABS)[number]["id"];
-
 const BOARDS_ROUTE = "/boards" as Route;
 
 type TimelineItem = {
@@ -82,7 +73,6 @@ export default function CompanySnapshotPage({ params }: CompanySnapshotPageProps
   const { data: timelineData, isLoading: isTimelineLoading } = useCompanyTimeline(identifier, 180);
   const boardTicker = data?.ticker ?? identifier;
   const { data: boardsData } = useBoards({ ticker: boardTicker, enabled: Boolean(boardTicker) });
-  const [activeTab, setActiveTab] = useState<TabId>("overview");
 
   const hasData = useMemo(() => {
     if (!data) return false;
@@ -198,174 +188,78 @@ const sectorName = useMemo(() => {
 
   return (
     <AppShell>
-      <div className="space-y-6">
+      <div className="space-y-8">
         <CompanyHeader name={data.corpName ?? identifier} ticker={data.ticker} corpCode={data.corpCode} sectorName={sectorName} />
 
-        <nav className="flex flex-wrap gap-2 rounded-2xl border border-border-light bg-background-cardLight p-3 dark:border-border-dark dark:bg-background-cardDark">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                activeTab === tab.id
-                  ? "bg-primary text-white"
-                  : "text-text-secondaryLight hover:bg-background-cardDark/40 dark:text-text-secondaryDark"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-
-        {activeTab === "overview" ? (
-          <section className="space-y-6">
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]">
-              <CompanySummaryCard
-                name={data.corpName ?? identifier}
-                ticker={data.ticker}
-                headline={data.latestFiling}
-                summary={data.summary}
-              />
-              <div className="space-y-6">
-                <RecentEventsSummaryCard events={data.majorEvents} />
-                <RecentFilingsPeek filings={data.recentFilings} />
-              </div>
+        <section className="space-y-6">
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]">
+            <CompanySummaryCard
+              name={data.corpName ?? identifier}
+              ticker={data.ticker}
+              headline={data.latestFiling}
+              summary={data.summary}
+            />
+            <div className="space-y-6">
+              <RecentEventsSummaryCard events={data.majorEvents} />
+              <RecentFilingsPeek filings={data.recentFilings} />
             </div>
+          </div>
+          {data.keyMetrics.length ? (
             <KeyMetricsGrid metrics={data.keyMetrics} />
-            <div className="grid gap-6 lg:grid-cols-3">
-              <PlanLock requiredTier="pro" title="정정 영향 인사이트" description="정정 공시가 주요 지표에 미친 영향을 한눈에 살펴보세요.">
-                <RestatementRadarCard highlights={data.restatementHighlights} />
-              </PlanLock>
-              <PlanLock
-                requiredTier="enterprise"
-                title="Evidence Bundle"
-                description="모든 수치에 출처와 원문 링크를 연결해 감사 패키지를 빠르게 구성하세요."
-              >
-                <EvidenceBundleCard links={data.evidenceLinks} />
-              </PlanLock>
-              <PlanLock
-                requiredTier="pro"
-                title="Fiscal Alignment"
-                description="회계연도 전환·분기 길이 불일치를 자동 보정한 신뢰 지표입니다."
-              >
-                <FiscalAlignmentCard insight={data.fiscalAlignment} />
-              </PlanLock>
-            </div>
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,0.6fr)_minmax(0,1fr)]">
-              <MajorEventsList events={data.majorEvents} />
-              <NewsSignalCards signals={data.newsSignals} companyName={data.corpName ?? null} />
-            </div>
-          </section>
-        ) : null}
+          ) : (
+            <EmptyState
+              title="표시할 핵심 지표가 없습니다"
+              description="재무 지표를 수집하지 못했습니다. 재무공시 여부를 다시 확인해 주세요."
+              className="border-dashed"
+            />
+          )}
+        </section>
 
-        {activeTab === "filings" ? (
-          <section className="space-y-6">
-            <RecentFilingsPanel filings={data.recentFilings} companyName={data.corpName ?? identifier} />
-            {data.financialStatements.length ? (
-              <FinancialStatementsBoard
-                statements={data.financialStatements}
-                corpName={data.corpName ?? identifier}
-                identifier={data.ticker ?? data.corpCode ?? identifier}
-              />
-            ) : (
-              <EmptyState
-                title="표시할 재무제표가 없습니다"
-                description="해당 회사의 최신 재무 데이터를 불러오지 못했습니다."
-              />
-            )}
-          </section>
-        ) : null}
+        <section className="grid gap-6 xl:grid-cols-3">
+          <PlanLock requiredTier="pro" title="정정 영향 인사이트" description="정정 공시가 주요 지표에 미친 영향을 한눈에 살펴보세요.">
+            <RestatementRadarCard highlights={data.restatementHighlights} />
+          </PlanLock>
+          <PlanLock
+            requiredTier="enterprise"
+            title="Evidence Bundle"
+            description="모든 수치에 출처와 원문 링크를 연결해 감사 패키지를 빠르게 구성하세요."
+          >
+            <EvidenceBundleCard links={data.evidenceLinks} />
+          </PlanLock>
+          <PlanLock requiredTier="pro" title="Fiscal Alignment" description="회계연도 전환·분기 길이 불일치를 자동 보정한 신뢰 지표입니다.">
+            <FiscalAlignmentCard insight={data.fiscalAlignment} />
+          </PlanLock>
+        </section>
 
-        {activeTab === "news" ? (
-          <section className="space-y-6">
+        <section className="grid gap-6 xl:grid-cols-[minmax(0,0.55fr)_minmax(0,0.45fr)]">
+          <MajorEventsList events={data.majorEvents} />
+          <div className="space-y-6">
             <NewsSignalCards signals={data.newsSignals} companyName={data.corpName ?? null} />
-          </section>
-        ) : null}
+            <RelatedBoardsCard boards={relatedBoards} />
+            <TimelineCard items={timelineItems} isLoading={isTimelineLoading} />
+          </div>
+        </section>
 
-        {activeTab === "events" ? (
-          <section className="space-y-6">
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,0.6fr)_minmax(0,1fr)]">
-              <MajorEventsList events={data.majorEvents} />
-              <div className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-text-primaryLight dark:text-text-primaryDark">관련 워치리스트</h2>
-                  <Link href={BOARDS_ROUTE} className="text-xs font-semibold text-primary hover:underline dark:text-primary.dark">
-                    보드 열기
-                  </Link>
-                </div>
-                {relatedBoards.length === 0 ? (
-                  <EmptyState
-                    title="연결된 워치리스트가 없습니다"
-                    description="Watchlist에서 이 종목이 포함된 룰을 만들면 자동으로 연결됩니다."
-                    className="border-none"
-                  />
-                ) : (
-                  <ul className="mt-4 space-y-2 text-sm">
-                    {relatedBoards.map((board) => (
-                      <li key={board.id} className="rounded-xl border border-border-light px-3 py-2 dark:border-border-dark">
-                        <div className="flex items-center justify-between gap-2">
-                          <div>
-                            <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">{board.name}</p>
-                            <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-                              최근 알림 {board.recentAlerts}건 · 종목 {board.tickers.length}개
-                            </p>
-                          </div>
-                          <Link href={`/boards/${board.id}` as Route} className="text-xs font-semibold text-primary hover:underline dark:text-primary.dark">
-                            보기
-                          </Link>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </div>
-            <div className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
-              <h2 className="text-base font-semibold text-text-primaryLight dark:text-text-primaryDark">타임라인</h2>
-              {isTimelineLoading ? (
-                <SkeletonBlock className="mt-4 h-40" />
-              ) : timelineItems.length === 0 ? (
-                <EmptyState
-                  title="타임라인 이벤트가 없습니다"
-                  description="알림이 수집되면 타임라인에 표시됩니다."
-                  className="border-none"
-                />
-              ) : (
-                <ul className="mt-4 space-y-3 text-sm">
-                  {timelineItems.map((item) => (
-                    <li key={`${item.type}-${item.id}`} className="rounded-xl border border-border-light px-4 py-3 dark:border-border-dark">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">{item.title}</p>
-                        <span className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-                          {item.timestamp ? new Date(item.timestamp).toLocaleString() : "시간 정보 없음"}
-                        </span>
-                      </div>
-                      <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">{item.type.toUpperCase()}</p>
-                      {item.summary ? (
-                        <p className="mt-1 text-xs text-text-secondaryLight dark:text-text-secondaryDark">{item.summary}</p>
-                      ) : null}
-                      {item.url ? (
-                        <a
-                          href={item.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="mt-2 inline-flex text-xs font-semibold text-primary hover:underline dark:text-primary.dark"
-                        >
-                          원문 보기
-                        </a>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </section>
-        ) : null}
+        <section className="space-y-6">
+          <RecentFilingsPanel filings={data.recentFilings} companyName={data.corpName ?? identifier} />
+          {data.financialStatements.length ? (
+            <FinancialStatementsBoard
+              statements={data.financialStatements}
+              corpName={data.corpName ?? identifier}
+              identifier={data.ticker ?? data.corpCode ?? identifier}
+            />
+          ) : (
+            <EmptyState
+              title="표시할 재무제표가 없습니다"
+              description="해당 회사의 최신 재무 데이터를 불러오지 못했습니다."
+            />
+          )}
+        </section>
       </div>
     </AppShell>
   );
 }
+
 const formatDateLabel = (value?: string | null) => {
   if (!value) {
     return "날짜 정보 없음";
@@ -376,6 +270,102 @@ const formatDateLabel = (value?: string | null) => {
   }
   return parsed.toLocaleDateString("ko-KR");
 };
+
+type RelatedBoardsCardProps = {
+  boards: Array<{
+    id: string;
+    name: string;
+    tickers: string[];
+    recentAlerts?: number | null;
+  }>;
+};
+
+function RelatedBoardsCard({ boards }: RelatedBoardsCardProps) {
+  return (
+    <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold text-text-primaryLight dark:text-text-primaryDark">관련 워치리스트</h2>
+        <Link href={BOARDS_ROUTE} className="text-xs font-semibold text-primary hover:underline dark:text-primary.dark">
+          보드 열기
+        </Link>
+      </div>
+      {boards.length === 0 ? (
+        <EmptyState
+          title="연결된 워치리스트가 없습니다"
+          description="Watchlist에서 이 종목이 포함된 룰을 만들면 자동으로 연결됩니다."
+          className="border-none"
+        />
+      ) : (
+        <ul className="mt-4 space-y-2 text-sm">
+          {boards.map((board) => (
+            <li key={board.id} className="rounded-xl border border-border-light px-3 py-2 dark:border-border-dark">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">{board.name}</p>
+                  <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                    최근 알림 {board.recentAlerts ?? 0}건 · 종목 {board.tickers.length}개
+                  </p>
+                </div>
+                <Link href={`/boards/${board.id}` as Route} className="text-xs font-semibold text-primary hover:underline dark:text-primary.dark">
+                  보기
+                </Link>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+type TimelineCardProps = {
+  items: TimelineItem[];
+  isLoading: boolean;
+};
+
+function TimelineCard({ items, isLoading }: TimelineCardProps) {
+  return (
+    <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
+      <h2 className="text-base font-semibold text-text-primaryLight dark:text-text-primaryDark">타임라인</h2>
+      {isLoading ? (
+        <SkeletonBlock className="mt-4 h-40" />
+      ) : items.length === 0 ? (
+        <EmptyState
+          title="타임라인 이벤트가 없습니다"
+          description="알림이 수집되면 타임라인에 표시됩니다."
+          className="border-none"
+        />
+      ) : (
+        <ul className="mt-4 space-y-3 text-sm">
+          {items.map((item) => (
+            <li key={`${item.type}-${item.id}`} className="rounded-xl border border-border-light px-4 py-3 dark:border-border-dark">
+              <div className="flex items-center justify-between gap-3">
+                <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">{item.title}</p>
+                <span className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                  {item.timestamp ? new Date(item.timestamp).toLocaleString() : "시간 정보 없음"}
+                </span>
+              </div>
+              <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">{item.type.toUpperCase()}</p>
+              {item.summary ? (
+                <p className="mt-1 text-xs text-text-secondaryLight dark:text-text-secondaryDark">{item.summary}</p>
+              ) : null}
+              {item.url ? (
+                <a
+                  href={item.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 inline-flex text-xs font-semibold text-primary hover:underline dark:text-primary.dark"
+                >
+                  원문 보기
+                </a>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 type RecentEventsSummaryCardProps = {
   events: EventItem[];

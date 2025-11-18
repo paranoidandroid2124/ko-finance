@@ -1,8 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import Link from "next/link";
-import type { Route } from "next";
 import { ArrowUpRight, BadgeCheck, Building2, Sparkles, TrendingUp } from "lucide-react";
 
 import { AppShell } from "@/components/layout/AppShell";
@@ -11,6 +9,10 @@ import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { usePlanCatalog } from "@/hooks/usePlanCatalog";
 import type { PlanCatalogTier } from "@/lib/planCatalogApi";
 import { FEATURE_STARTER_ENABLED } from "@/config/features";
+import { resolvePlanMarketingCopy } from "@/lib/planContext";
+import type { PlanTier } from "@/store/planStore/types";
+import type { PlanTierCopy } from "@/config/planConfig";
+import { PlanTierCTA } from "@/components/plan/PlanTierCTA";
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   free: Sparkles,
@@ -38,24 +40,13 @@ const formatCurrency = (amount: number, currency: string): string => {
 type PlanCardProps = {
   tier: PlanCatalogTier;
   isFeatured?: boolean;
+  copy: PlanTierCopy;
 };
 
-const PlanCard = ({ tier, isFeatured }: PlanCardProps) => {
+const PlanCard = ({ tier, isFeatured, copy }: PlanCardProps) => {
   const Icon = ICON_MAP[tier.tier] ?? Sparkles;
   const priceText = formatCurrency(tier.price.amount, tier.price.currency);
   const priceNote = tier.price.note;
-  const isExternalCta = /^https?:\/\//i.test(tier.ctaHref);
-  const buttonClassName = `inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
-    isFeatured
-      ? "bg-accent-primary text-white hover:bg-accent-primary/90"
-      : "border border-border-subtle text-text-primaryLight hover:border-accent-primary hover:text-accent-primary dark:border-border-subtleDark dark:text-text-primaryDark"
-  }`;
-  const buttonContent = (
-    <>
-      {tier.ctaLabel}
-      <ArrowUpRight className="h-4 w-4" />
-    </>
-  );
 
   return (
     <div
@@ -110,17 +101,19 @@ const PlanCard = ({ tier, isFeatured }: PlanCardProps) => {
       </ul>
 
       <div className="mt-6 flex flex-col gap-2">
-        {isExternalCta ? (
-          <a href={tier.ctaHref} className={buttonClassName} target="_blank" rel="noopener noreferrer">
-            {buttonContent}
-          </a>
-        ) : (
-          <Link href={tier.ctaHref as Route} className={buttonClassName}>
-            {buttonContent}
-          </Link>
-        )}
-        {tier.supportNote && (
-          <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">{tier.supportNote}</p>
+        <PlanTierCTA
+          tier={tier.tier}
+          action={copy.primaryAction}
+          variant={isFeatured ? "primary" : "secondary"}
+          fullWidth
+        />
+        {copy.secondaryAction ? (
+          <PlanTierCTA tier={tier.tier} action={copy.secondaryAction} variant="secondary" fullWidth />
+        ) : null}
+        {(copy.supportNote ?? tier.supportNote) && (
+          <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+            {copy.supportNote ?? tier.supportNote}
+          </p>
         )}
       </div>
     </div>
@@ -136,6 +129,14 @@ export default function PricingPage() {
       return all;
     }
     return all.filter((tier) => tier.tier !== "starter");
+  }, [catalog]);
+
+  const tierCopyMap = useMemo(() => {
+    const map: Partial<Record<PlanTier, PlanTierCopy>> = {};
+    (["free", "starter", "pro", "enterprise"] as PlanTier[]).forEach((tier) => {
+      map[tier] = resolvePlanMarketingCopy(tier, catalog);
+    });
+    return map;
   }, [catalog]);
 
   return (
@@ -174,7 +175,7 @@ export default function PricingPage() {
       {!loading && !error && (
         <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {tiers.map((tier) => (
-            <PlanCard key={tier.tier} tier={tier} isFeatured={tier.tier === "pro"} />
+            <PlanCard key={tier.tier} tier={tier} isFeatured={tier.tier === "pro"} copy={tierCopyMap[tier.tier]!} />
           ))}
         </section>
       )}
