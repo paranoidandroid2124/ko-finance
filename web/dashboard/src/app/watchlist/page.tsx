@@ -45,10 +45,10 @@ import {
   type AlertEventMatch,
   type WatchlistRadarItem,
   type WatchlistDispatchResult,
-  type WatchlistRuleChannelSummary,
   type WatchlistRuleDetail,
 } from "@/lib/alertsApi";
 import { formatDateTime } from "@/lib/date";
+import { convertAlertRuleToDetail } from "@/components/watchlist/ruleDetail";
 import { useToastStore } from "@/store/toastStore";
 import { usePlanStore } from "@/store/planStore";
 import { buildEventStudyExportParams } from "@/lib/eventStudyExport";
@@ -653,47 +653,6 @@ export default function WatchlistRadarPage() {
     setIsDetailOpen(false);
     setSelectedItem(null);
   }, []);
-
-  const convertAlertRuleToDetail = useCallback(
-    (rule: AlertRule): WatchlistRuleDetail => ({
-      id: rule.id,
-      name: rule.name,
-      description: rule.description,
-      status: rule.status,
-      evaluationIntervalMinutes: rule.frequency?.evaluationIntervalMinutes ?? rule.evaluationIntervalMinutes,
-      windowMinutes: rule.frequency?.windowMinutes ?? rule.windowMinutes,
-      cooldownMinutes: rule.frequency?.cooldownMinutes ?? rule.cooldownMinutes,
-      maxTriggersPerDay:
-        rule.frequency?.maxTriggersPerDay ?? rule.maxTriggersPerDay ?? undefined,
-      condition: {
-        type: rule.trigger.type,
-        tickers: rule.trigger.tickers ?? [],
-        categories: rule.trigger.categories ?? [],
-        sectors: rule.trigger.sectors ?? [],
-        minSentiment:
-          rule.trigger.type === "news" ? rule.trigger.minSentiment ?? null : undefined,
-      },
-      channels: (rule.channels ?? []).map(
-        (channel): WatchlistRuleChannelSummary => ({
-          type: channel.type,
-          label: channel.label ?? null,
-          target: channel.target ?? null,
-          targets:
-            channel.targets && channel.targets.length > 0
-              ? channel.targets
-              : channel.target
-                ? [channel.target]
-                : [],
-          metadata: channel.metadata ?? {},
-        }),
-      ),
-      extras: rule.extras ?? {},
-      lastTriggeredAt: rule.lastTriggeredAt,
-      lastEvaluatedAt: rule.lastEvaluatedAt,
-      errorCount: rule.errorCount ?? 0,
-    }),
-    [],
-  );
 
   const watchlistRequest = useMemo(() => {
     const [minSentimentValue, maxSentimentValue] = sentimentRange;

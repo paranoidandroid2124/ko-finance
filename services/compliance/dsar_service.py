@@ -22,7 +22,7 @@ from models.digest import DigestSnapshot
 from models.dsar import DSARRequest
 from models.notebook import Notebook, NotebookEntry, NotebookShare
 from services.audit_log import record_audit_event
-from services import user_settings_service
+from services import user_settings_service, watchlist_digest_schedule_service
 
 logger = get_logger(__name__)
 
@@ -40,6 +40,28 @@ def _to_iso(value: Optional[datetime]) -> Optional[str]:
 
 def _normalize_uuid(value: Optional[uuid.UUID]) -> Optional[str]:
     return str(value) if value else None
+
+
+def _artifact_dir_for_request(request: DSARRequest) -> Path:
+    """Build export directory as DSAR_EXPORT_DIR/{owner}/{request_id}/."""
+    if request.user_id:
+        owner_segment = str(request.user_id)
+    elif request.org_id:
+        owner_segment = f"org_{request.org_id}"
+    else:
+        owner_segment = "anonymous"
+    destination = DSAR_EXPORT_ROOT / owner_segment / str(request.id)
+    destination.mkdir(parents=True, exist_ok=True)
+    return destination
+
+
+def _watchlist_owner_filters(request: DSARRequest) -> Dict[str, Optional[uuid.UUID]]:
+    """Return owner filters to scope watchlist digest schedules."""
+    if request.user_id:
+        return {"user_id": request.user_id, "org_id": None}
+    if request.org_id:
+        return {"user_id": None, "org_id": request.org_id}
+    return {"user_id": None, "org_id": None}
 
 
 @dataclass(frozen=True)
@@ -222,14 +244,15 @@ def _process_single_request(session: Session, request_id: uuid.UUID, stats: Dict
 
 def _run_export(session: Session, request: DSARRequest) -> Tuple[str, Dict[str, Any]]:
     payload, counts = _build_export_payload(session, request)
-    DSAR_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
-    artifact = DSAR_EXPORT_ROOT / f"{request.id}_export.json"
+    artifact_dir = _artifact_dir_for_request(request)
+    artifact = artifact_dir / "export.json"
     artifact.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     size_bytes = artifact.stat().st_size if artifact.exists() else 0
     meta = {
         "resourceCounts": counts,
         "artifactBytes": size_bytes,
         "artifactPath": str(artifact),
+        "artifactDir": str(artifact_dir),
     }
     return str(artifact), meta
 
@@ -270,8 +293,43 @@ def _build_export_payload(session: Session, request: DSARRequest) -> Tuple[Dict[
 
         lightmem = user_settings_service.read_user_lightmem_settings(user_id)
         payload["lightmemSettings"] = lightmem.settings.to_dict()
+        payload["lightmemSettingsMeta"] = {
+            "updatedAt": _to_iso(lightmem.updated_at),
+            "updatedBy": lightmem.updated_by,
+        }
+        counts["userLightmemSettings"] = 1
+
+    watchlist_schedules, watchlist_count = _export_watchlist_schedules(request)
+    payload["watchlistDigestSchedules"] = watchlist_schedules
+    counts["watchlistDigestSchedules"] = watchlist_count
 
     return payload, counts
+
+
+def _export_watchlist_schedules(request: DSARRequest) -> Tuple[List[Dict[str, Any]], int]:
+    filters = _watchlist_owner_filters(request)
+    if not (filters["user_id"] or filters["org_id"]):
+        return [], 0
+    entries = watchlist_digest_schedule_service.list_schedules(filters)
+    return entries, len(entries)
+
+
+def _delete_watchlist_schedules(request: DSARRequest) -> int:
+    filters = _watchlist_owner_filters(request)
+    if not (filters["user_id"] or filters["org_id"]):
+        return 0
+    entries = watchlist_digest_schedule_service.list_schedules(filters)
+    deleted = 0
+    for entry in entries:
+        schedule_id = entry.get("id")
+        if not schedule_id:
+            continue
+        try:
+            watchlist_digest_schedule_service.delete_schedule(uuid.UUID(str(schedule_id)), filters)
+            deleted += 1
+        except (KeyError, ValueError):
+            continue
+    return deleted
 
 
 def _export_chat_data(session: Session, user_id: uuid.UUID) -> Tuple[Dict[str, Any], Dict[str, int]]:
@@ -330,7 +388,11 @@ def _export_chat_data(session: Session, user_id: uuid.UUID) -> Tuple[Dict[str, A
         )
         message_total += len(messages)
         archive_total += len(archives)
-    counts = {"chatSessions": len(serialized_sessions), "chatMessages": message_total, "chatArchive": archive_total}
+    counts = {
+        "chatSessions": len(serialized_sessions),
+        "chatMessages": message_total,
+        "chatArchive": archive_total,
+    }
     return {"sessions": serialized_sessions}, counts
 
 
@@ -400,27 +462,15 @@ def _export_notebooks(session: Session, user_id: uuid.UUID) -> Tuple[List[Dict[s
         }
         for entry in serialized
     ]
-    return (
-        {
-            "entries": entries_payload,
-            "shares": serialized_shares,
-        },
-        {
-            "notebookEntries": len(entries_payload),
-            "notebookShares": len(serialized_shares),
-        },
-    )
-            {
-                **entry,
-                "notebook": notebook_map.get(entry["notebookId"]),
-            }
-            for entry in serialized
-        ],
-        {
-            "notebookEntries": len(serialized),
-            "notebookShares": len(serialized_shares),
-        },
-    )
+    payload = {
+        "entries": entries_payload,
+        "shares": serialized_shares,
+    }
+    counts = {
+        "notebookEntries": len(entries_payload),
+        "notebookShares": len(serialized_shares),
+    }
+    return payload, counts
 
 
 def _export_alert_rules(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]:
@@ -501,29 +551,38 @@ def _run_deletion(session: Session, request: DSARRequest) -> Dict[str, Any]:
     user_id = request.user_id
     if user_id is None:
         return {"message": "user_id_missing"}
-    stats = {
-        "chatDeleted": _delete_chat_rows(session, user_id),
-        "notebookEntriesDeleted": _delete_notebook_rows(session, user_id),
-        "alertRulesDeleted": _execute_delete(
-            session,
-            "DELETE FROM alert_rules WHERE user_id = :user_id",
-            {"user_id": str(user_id)},
-        ),
-        "digestSnapshotsDeleted": _execute_delete(
-            session,
-            "DELETE FROM digest_snapshots WHERE user_id = :user_id",
-            {"user_id": str(user_id)},
-        ),
-        "notebookSharesDeleted": _execute_delete(
-            session,
-            "DELETE FROM notebook_shares WHERE created_by = :user_id",
-            {"user_id": str(user_id)},
-        ),
-    }
-    user_settings_service.delete_user_lightmem_settings(user_id)
-    _redact_audit_entries(session, user_id)
+    deleted_rows: Dict[str, int] = {}
+    chat_deleted = _delete_chat_rows(session, user_id)
+    deleted_rows["chat_sessions"] = chat_deleted["sessions"]
+    deleted_rows["chat_messages"] = chat_deleted["messages"]
+    deleted_rows["chat_messages_archive"] = chat_deleted["archives"]
+
+    deleted_rows["notebook_entries"] = _delete_notebook_rows(session, user_id)
+    deleted_rows["alert_rules"] = _execute_delete(
+        session,
+        "DELETE FROM alert_rules WHERE user_id = :user_id",
+        {"user_id": str(user_id)},
+    )
+    deleted_rows["digest_snapshots"] = _execute_delete(
+        session,
+        "DELETE FROM digest_snapshots WHERE user_id = :user_id",
+        {"user_id": str(user_id)},
+    )
+    deleted_rows["notebook_shares"] = _execute_delete(
+        session,
+        "DELETE FROM notebook_shares WHERE created_by = :user_id",
+        {"user_id": str(user_id)},
+    )
+    deleted_rows["watchlist_digest_schedules"] = _delete_watchlist_schedules(request)
+
+    lightmem_removed = user_settings_service.delete_user_lightmem_settings(user_id)
+    deleted_rows["user_lightmem_settings"] = 1 if lightmem_removed else 0
+
+    audit_redacted = _redact_audit_entries(session, user_id)
+    deleted_rows["audit_logs_redacted"] = audit_redacted
+
     session.flush()
-    return stats
+    return {"deletedRows": deleted_rows}
 
 
 def _delete_chat_rows(session: Session, user_id: uuid.UUID) -> Dict[str, int]:
@@ -587,8 +646,8 @@ def _delete_notebook_rows(session: Session, user_id: uuid.UUID) -> int:
     return len(rows)
 
 
-def _redact_audit_entries(session: Session, user_id: uuid.UUID) -> None:
-    session.execute(
+def _redact_audit_entries(session: Session, user_id: uuid.UUID) -> int:
+    result = session.execute(
         text(
             """
             UPDATE audit_logs
@@ -599,6 +658,7 @@ def _redact_audit_entries(session: Session, user_id: uuid.UUID) -> None:
         ),
         {"user_id": str(user_id)},
     )
+    return max(result.rowcount or 0, 0)
 
 
 def _execute_delete(session: Session, sql: str, params: Dict[str, Any]) -> int:

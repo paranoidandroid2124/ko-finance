@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { useAlertRules } from "@/hooks/useAlerts";
 import { UserLightMemSettingsCard } from "@/components/settings/UserLightMemSettingsCard";
 import { LegalDataCard } from "@/components/settings/LegalDataCard";
+import { SettingsSectionNav } from "@/components/settings/SettingsSectionNav";
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
@@ -34,6 +35,8 @@ export default function SettingsPage() {
   return (
     <AppShell>
       <div className="space-y-6">
+        <SettingsSectionNav />
+
         <PlanSummaryCard />
 
         <PlanAlertOverview plan={alertPlan} loading={isAlertPlanLoading} error={alertPlanErrorMessage} />

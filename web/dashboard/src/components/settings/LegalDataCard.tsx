@@ -1,24 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { DownloadCloud, ShieldCheck, Trash2 } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 
 import { SettingsDataRetentionList } from "@/components/legal";
 import { useDsarRequests, useCreateDsarRequest } from "@/hooks/useDsarRequests";
 import type { DsarRequest, DsarRequestType } from "@/lib/accountApi";
+import { DSAR_STATUS_META, DSAR_REQUEST_TYPE_META } from "@/lib/dsarMeta";
 import { useToastStore } from "@/store/toastStore";
 
-const STATUS_COPY: Record<DsarRequest["status"], { label: string; tone: string }> = {
-  pending: { label: "대기 중", tone: "bg-accent-warning/20 text-accent-warning" },
-  processing: { label: "처리 중", tone: "bg-primary/15 text-primary" },
-  completed: { label: "완료", tone: "bg-accent-positive/15 text-accent-positive" },
-  failed: { label: "실패", tone: "bg-accent-negative/15 text-accent-negative" },
-};
-
-const ACTIONS: Array<{ type: DsarRequestType; label: string; icon: React.ComponentType<{ className?: string }> }> = [
-  { type: "export", label: "데이터 내보내기 요청", icon: DownloadCloud },
-  { type: "delete", label: "데이터 삭제 요청", icon: Trash2 },
-];
+const ACTION_TYPES: DsarRequestType[] = ["export", "delete"];
 
 function formatDate(value?: string | null): string {
   if (!value) {
@@ -85,22 +76,30 @@ export function LegalDataCard() {
           </Link>{" "}
           페이지에서 확인할 수 있습니다.
         </p>
+        <p className="mt-2 text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+          상세 이력과 처리 현황은{" "}
+          <Link href="/settings/privacy" className="text-primary underline-offset-2 hover:underline dark:text-primary.dark">
+            개인정보·데이터 관리 화면
+          </Link>{" "}
+          에서 언제든지 확인할 수 있습니다.
+        </p>
       </div>
 
       <div className="mt-4 flex flex-wrap gap-3">
-        {ACTIONS.map((action) => {
-          const Icon = action.icon;
+        {ACTION_TYPES.map((type) => {
+          const meta = DSAR_REQUEST_TYPE_META[type];
+          const Icon = meta.icon;
           const disabled = hasActiveRequest || isPending;
           return (
             <button
-              key={action.type}
+              key={type}
               type="button"
               disabled={disabled}
-              onClick={() => handleSubmit(action.type)}
-              className="inline-flex flex-1 min-w-[180px] items-center justify-center gap-2 rounded-lg border border-border-light px-4 py-2 text-xs font-semibold text-text-primaryLight transition hover:border-primary hover:text-primary disabled:opacity-60 dark:border-border-dark dark:text-text-primaryDark dark:hover:border-primary.dark dark:hover:text-primary.dark"
+              onClick={() => handleSubmit(type)}
+              className="inline-flex min-w-[180px] flex-1 items-center justify-center gap-2 rounded-lg border border-border-light px-4 py-2 text-xs font-semibold text-text-primaryLight transition hover:border-primary hover:text-primary disabled:opacity-60 dark:border-border-dark dark:text-text-primaryDark dark:hover:border-primary.dark dark:hover:text-primary.dark"
             >
               <Icon className="h-4 w-4" aria-hidden />
-              {action.label}
+              {`${meta.label} 요청`}
             </button>
           );
         })}
@@ -129,7 +128,8 @@ export function LegalDataCard() {
         ) : (
           <div className="mt-3 space-y-2">
             {currentRequests.map((request) => {
-              const statusInfo = STATUS_COPY[request.status];
+              const statusInfo = DSAR_STATUS_META[request.status];
+              const meta = DSAR_REQUEST_TYPE_META[request.requestType];
               return (
                 <div
                   key={request.id}
@@ -137,7 +137,7 @@ export function LegalDataCard() {
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="font-semibold text-text-primaryLight dark:text-text-primaryDark">
-                      {request.requestType === "export" ? "데이터 내보내기" : "데이터 삭제"} 요청
+                      {meta.label} 요청
                     </div>
                     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ${statusInfo.tone}`}>
                       {statusInfo.label}

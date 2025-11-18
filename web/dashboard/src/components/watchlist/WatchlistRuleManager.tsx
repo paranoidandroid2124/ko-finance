@@ -2,7 +2,7 @@
 
 import clsx from "clsx";
 import { useMemo, useState } from "react";
-import { AlertTriangle, BarChart3, Edit3, PauseCircle, PlayCircle, Send, Trash2, X } from "lucide-react";
+import { AlertTriangle, BarChart3, Edit3, PauseCircle, PlayCircle, Send, Sparkles, Trash2, X } from "lucide-react";
 
 import type { AlertPlanInfo, AlertRule, AlertRuleStats } from "@/lib/alertsApi";
 import { useAlertRuleStats } from "@/hooks/useAlerts";
@@ -18,6 +18,7 @@ type WatchlistRuleManagerProps = {
   onToggle: (rule: AlertRule) => void;
   onDelete: (rule: AlertRule) => void;
   onShareToDigest?: (rule: AlertRule) => void;
+  onSimulate?: (rule: AlertRule) => void;
 };
 
 type RuleFilter = "all" | "issues";
@@ -113,6 +114,7 @@ export function WatchlistRuleManager({
   onToggle,
   onDelete,
   onShareToDigest,
+  onSimulate,
 }: WatchlistRuleManagerProps) {
   const [filter, setFilter] = useState<RuleFilter>("all");
   const [statsRuleId, setStatsRuleId] = useState<string | null>(null);
@@ -271,6 +273,17 @@ export function WatchlistRuleManager({
                       {rule.status === "active" ? <PauseCircle className="h-4 w-4" aria-hidden /> : <PlayCircle className="h-4 w-4" aria-hidden />}
                       <span className="sr-only">{rule.status === "active" ? "알림 일시 중지" : "알림 다시 시작"}</span>
                     </button>
+                    {onSimulate ? (
+                      <button
+                        type="button"
+                        disabled={isMutating}
+                        onClick={() => onSimulate(rule)}
+                        className="rounded-full border border-border-light/70 bg-white/70 p-2 text-text-secondaryLight transition hover:border-primary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:border-border-dark/70 dark:bg-background-cardDark dark:text-text-secondaryDark dark:hover:border-primary.dark dark:hover:text-primary.dark"
+                      >
+                        <Sparkles className="h-4 w-4" aria-hidden />
+                        <span className="sr-only">시뮬레이션</span>
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       disabled={isMutating}
