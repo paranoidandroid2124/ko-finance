@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback } from "react";
 import type { FilingDetail } from "@/hooks/useFilings";
 import { useChatStore } from "@/store/chatStore";
-import { FilingPdfDownloadNotice, FilingKoglBadge } from "@/components/legal/FilingLegal";
+import { FilingPdfDownloadNotice, FilingKoglBadge } from "@/components/legal";
 
 const sentimentText: Record<FilingDetail["sentiment"], { label: string; description: string }> = {
   positive: { label: "긍정적", description: "긍정적인 신호가 감지되었습니다." },

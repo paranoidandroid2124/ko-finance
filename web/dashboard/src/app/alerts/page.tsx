@@ -48,7 +48,7 @@ import {
 import { logEvent } from "@/lib/telemetry";
 import { formatDateTime, formatRelativeTime } from "@/lib/date";
 import { useToastStore } from "@/store/toastStore";
-import { AlertRuleBuilderFooter, AlertNotificationFooter } from "@/components/legal/AlertsLegal";
+import { AlertRuleBuilderFooter, AlertNotificationFooter } from "@/components/legal";
 
 type PresetBundle = {
   key: string;

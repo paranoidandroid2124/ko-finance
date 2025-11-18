@@ -35,3 +35,31 @@ export function LegalText<S extends LegalSection>({ section, item, as: Tag = "p"
   );
 }
 
+type LegalSnippetProps<S extends LegalSection> = Omit<LegalTextProps<S>, "section" | "item">;
+
+type LegalTextComponentOptions = {
+  defaultAs?: ElementType;
+  defaultClassName?: string;
+};
+
+export function createLegalText<S extends LegalSection, K extends LegalSectionKey<S>>(
+  section: S,
+  item: K,
+  options?: LegalTextComponentOptions
+) {
+  const Component = ({ className, as, ...rest }: LegalSnippetProps<S>) => {
+    return (
+      <LegalText
+        {...rest}
+        section={section}
+        item={item}
+        as={(as ?? options?.defaultAs) as ElementType}
+        className={classNames(options?.defaultClassName, className)}
+      />
+    );
+  };
+  Component.displayName = `LegalText(${section}.${String(item)})`;
+  return Component;
+}
+
+export type { LegalTextProps };

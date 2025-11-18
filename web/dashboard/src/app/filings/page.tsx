@@ -10,7 +10,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { useFilings, useFilingDetail } from "@/hooks/useFilings";
 import type { FilingSentimentFilter } from "@/hooks/useFilings";
-import { FilingHeaderNotice } from "@/components/legal/FilingLegal";
+import { FilingHeaderNotice } from "@/components/legal";
 
 export default function FilingsPage() {
   const searchParams = useSearchParams();

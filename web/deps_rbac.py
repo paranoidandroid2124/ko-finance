@@ -15,6 +15,7 @@ from services.rbac_service import (
     ROLE_ORDER,
     rbac_service,
 )
+from services.web_utils import parse_uuid
 
 USER_HEADER = "x-user-id"
 ORG_HEADER = "x-org-id"
@@ -41,8 +42,8 @@ def _parse_uuid_header(value: Optional[str]) -> Optional[uuid.UUID]:
     if not value:
         return None
     try:
-        return uuid.UUID(str(value))
-    except (ValueError, TypeError):
+        return parse_uuid(value)
+    except HTTPException:
         return None
 
 

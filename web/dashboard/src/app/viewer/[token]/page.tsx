@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { InlinePdfViewer } from "@/components/evidence/InlinePdfViewer";
+import { EvidencePanelStoreProvider } from "@/components/evidence/EvidencePanelStore";
 import { fetchRagDeeplink, type RagDeeplinkPayload } from "@/lib/chatApi";
 import { useToastStore } from "@/store/toastStore";
 import { logEvent } from "@/lib/telemetry";
@@ -176,12 +177,14 @@ export default function ViewerPage({ params }: ViewerPageProps) {
               </dl>
             </div>
             <div className="rounded-xl border border-border-light/80 bg-white/80 p-4 shadow-sm dark:border-border-dark/70 dark:bg-slate-900/70">
-              <InlinePdfViewer
-                key={`${state.payload.document_url}-${state.payload.page_number}`}
-                src={state.payload.document_url}
-                page={state.payload.page_number}
-                className="h-[70vh]"
-              />
+              <EvidencePanelStoreProvider>
+                <InlinePdfViewer
+                  key={`${state.payload.document_url}-${state.payload.page_number}`}
+                  src={state.payload.document_url}
+                  page={state.payload.page_number}
+                  className="h-[70vh]"
+                />
+              </EvidencePanelStoreProvider>
             </div>
           </>
         ) : null}

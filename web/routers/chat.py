@@ -23,19 +23,11 @@ from schemas.api.chat import (
 )
 from services import chat_service
 from services.plan_service import PlanContext
+from services.web_utils import parse_uuid
 from web.deps import get_plan_context
 from web.quota_guard import enforce_quota
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
-
-
-def _parse_uuid(value: Optional[str]) -> Optional[uuid.UUID]:
-    if not value:
-        return None
-    try:
-        return uuid.UUID(value)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID format.") from exc
 
 
 def _parse_cursor(value: Optional[str]) -> Optional[datetime]:
@@ -75,8 +67,8 @@ def list_sessions(
     x_org_id: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> ChatSessionListResponse:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id, detail="Invalid UUID format.")
+    org_id = parse_uuid(x_org_id, detail="Invalid UUID format.")
     after = _parse_cursor(cursor)
     sessions = chat_service.list_chat_sessions(db, user_id=user_id, org_id=org_id, limit=limit, after=after)
     next_cursor = None
@@ -92,8 +84,8 @@ def create_session(
     x_org_id: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> ChatSessionResponse:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id, detail="Invalid UUID format.")
+    org_id = parse_uuid(x_org_id, detail="Invalid UUID format.")
     try:
         session = chat_service.create_chat_session(
             db,
@@ -120,8 +112,8 @@ def rename_session(
     x_org_id: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> ChatSessionResponse:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id, detail="Invalid UUID format.")
+    org_id = parse_uuid(x_org_id, detail="Invalid UUID format.")
     session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
@@ -151,8 +143,8 @@ def delete_session(
     x_org_id: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> None:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id, detail="Invalid UUID format.")
+    org_id = parse_uuid(x_org_id, detail="Invalid UUID format.")
     session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if session is None:
         return
@@ -167,8 +159,8 @@ def delete_all_sessions(
     x_org_id: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> dict:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id, detail="Invalid UUID format.")
+    org_id = parse_uuid(x_org_id, detail="Invalid UUID format.")
     count = chat_service.clear_chat_sessions(db, user_id=user_id, org_id=org_id)
     db.commit()
     return {"archived": count}
@@ -183,8 +175,8 @@ def list_messages(
     x_org_id: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> ChatMessageListResponse:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id, detail="Invalid UUID format.")
+    org_id = parse_uuid(x_org_id, detail="Invalid UUID format.")
     session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
@@ -209,8 +201,8 @@ def create_message(
     db: Session = Depends(get_db),
     plan: PlanContext = Depends(get_plan_context),
 ) -> ChatMessageResponse:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id, detail="Invalid UUID format.")
+    org_id = parse_uuid(x_org_id, detail="Invalid UUID format.")
     session = db.query(ChatSession).filter(ChatSession.id == payload.session_id).first()
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
@@ -253,8 +245,8 @@ def update_message(
     x_org_id: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> ChatMessageResponse:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id, detail="Invalid UUID format.")
+    org_id = parse_uuid(x_org_id, detail="Invalid UUID format.")
     message = db.query(ChatMessage).filter(ChatMessage.id == message_id).first()
     if message is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found.")

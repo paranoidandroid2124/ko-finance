@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from xmltodict import parse as parse_xml
 
 from core.auth.constants import ALLOWED_SIGNUP_CHANNELS, DEFAULT_SIGNUP_CHANNEL, SignupChannel
+from core.plan_constants import PlanTier, SUPPORTED_PLAN_TIERS
 from core.env import env_bool, env_int, env_str
 from database import IS_POSTGRES
 from services import onboarding_service
@@ -99,13 +100,13 @@ _PASSWORD_HASHER = PasswordHasher(
 _SSO_STATE_SECRET = env_str("AUTH_SSO_STATE_SECRET") or env_str("AUTH_JWT_SECRET") or env_str("AUTH_SECRET") or secrets.token_urlsafe(32)
 _SSO_STATE_TTL_SECONDS = env_int("AUTH_SSO_STATE_TTL_SECONDS", 600, minimum=60)
 _SAML_CLOCK_SKEW_SECONDS = env_int("AUTH_SAML_CLOCK_SKEW_SECONDS", 120, minimum=0)
-_PLAN_TIERS = {"free", "pro", "enterprise"}
 _FOR_UPDATE = " FOR UPDATE" if IS_POSTGRES else ""
 _USER_ROLES = {"user", "admin"}
 _UPPER_REGEX = re.compile(r"[A-Z]")
 _LOWER_REGEX = re.compile(r"[a-z]")
 _DIGIT_REGEX = re.compile(r"\d")
 _SYMBOL_REGEX = re.compile(r"[^A-Za-z0-9]")
+_PLAN_TIER_VALUES = {tier.value for tier in SUPPORTED_PLAN_TIERS}
 
 
 def _build_password_policy_description() -> str:
@@ -325,107 +326,149 @@ class AuthServiceError(RuntimeError):
         self.headers = dict(headers or {}) if headers else None
 
 
-def register_user(session: Session, payload: Dict[str, Any], *, context: RequestContext) -> RegisterResult:
-    raw_email = (payload.get("email") or "").strip()
-    email = _normalize_email(raw_email)
-    if not payload.get("acceptTerms"):
-        raise AuthServiceError("auth.invalid_payload", "약관 동의가 필요합니다.", 400)
-    _enforce_rate_limit("auth.register.ip", context.ip, limit=5, window_seconds=600)
-    _enforce_rate_limit("auth.register.email", email, limit=3, window_seconds=3600)
+class RegisterUserUseCase:
+    """Encapsulates the user registration flow for improved testability."""
 
-    name = (payload.get("name") or "").strip() or None
-    signup_channel = _normalize_signup_channel(payload.get("signupChannel"))
-    hashed = _hash_password(payload["password"])
-    now = datetime.now(timezone.utc)
-    verification_token_value: Optional[str] = None
+    def __init__(self, session: Session, payload: Dict[str, Any], context: RequestContext):
+        self.session = session
+        self.payload = payload
+        self.context = context
+        self.now = datetime.now(timezone.utc)
+        self.raw_email = (payload.get("email") or "").strip()
+        self.email = _normalize_email(self.raw_email)
+        self.signup_channel = _normalize_signup_channel(payload.get("signupChannel"))
+        self.name = (payload.get("name") or "").strip() or None
 
-    org_uuid: Optional[uuid.UUID] = None
-    with session.begin():
-        existing = session.execute(
-            text(
-                f"""
-                SELECT id, password_hash
-                FROM "users"
-                WHERE LOWER(email) = :email
-                {_FOR_UPDATE}
-                """
-            ),
-            {"email": email},
-        ).mappings().first()
+    def execute(self) -> RegisterResult:
+        self._validate_payload()
+        self._enforce_limits()
+        user_id, org_uuid, verification_token = self._persist_user()
+        if org_uuid is not None:
+            _ensure_org_subscription(org_uuid, "free", source="auth.register")
+        send_verification_email(email=self.raw_email or self.email, token=verification_token, name=self.name)
+        return RegisterResult(user_id=user_id, verification_expires_in=_EMAIL_VERIFY_TTL)
 
-        if existing:
-            if existing["password_hash"]:
-                raise AuthServiceError("auth.email_taken", "이미 가입된 이메일입니다.", 409)
-            user_id = str(existing["id"])
-            session.execute(
+    def _validate_payload(self) -> None:
+        if not self.payload.get("acceptTerms"):
+            raise AuthServiceError("auth.invalid_payload", "약관 동의가 필요합니다.", 400)
+        if not self.payload.get("password"):
+            raise AuthServiceError("auth.invalid_payload", "비밀번호가 필요합니다.", 400)
+
+    def _enforce_limits(self) -> None:
+        _enforce_rate_limit("auth.register.ip", self.context.ip, limit=5, window_seconds=600)
+        _enforce_rate_limit("auth.register.email", self.email, limit=3, window_seconds=3600)
+
+    def _persist_user(self) -> Tuple[str, Optional[uuid.UUID], str]:
+        hashed = _hash_password(self.payload["password"])
+        verification_token_value: Optional[str] = None
+        org_uuid: Optional[uuid.UUID] = None
+        with self.session.begin():
+            existing = self.session.execute(
                 text(
-                    """
-                    UPDATE "users"
-                    SET password_hash = :password_hash,
-                        signup_channel = :signup_channel,
-                        password_updated_at = :now
-                    WHERE id = :id
+                    f"""
+                    SELECT id, password_hash
+                    FROM "users"
+                    WHERE LOWER(email) = :email
+                    {_FOR_UPDATE}
                     """
                 ),
-                {
-                    "password_hash": hashed,
-                    "signup_channel": signup_channel,
-                    "id": user_id,
-                    "now": now,
-                },
-            )
-        else:
-            row = session.execute(
-                text(
-                    """
-                    INSERT INTO "users" (
-                        email, name, password_hash, signup_channel, failed_attempts, locked_until, plan_tier, role
-                    )
-                    VALUES (:email_original, :name, :password_hash, :signup_channel, 0, NULL, 'free', 'user')
-                    RETURNING id
-                    """
-                ),
-                {
-                    "email_original": payload["email"].strip(),
-                    "name": name,
-                    "password_hash": hashed,
-                    "signup_channel": signup_channel,
-                },
+                {"email": self.email},
             ).mappings().first()
-            user_id = str(row["id"])
 
-        user_uuid = uuid.UUID(user_id)
-        org_uuid = _ensure_default_org(session, user_uuid)
-        token = _issue_token_with_audit(
-            session,
-            user_id=user_id,
-            token_type="email_verify",
-            identifier=email,
-            ttl_seconds=_EMAIL_VERIFY_TTL,
-            context=context,
-            audit_event="register",
-            audit_channel=signup_channel,
-        )
-        verification_token_value = token.token
-    if org_uuid is not None:
-        _ensure_org_subscription(org_uuid, "free", source="auth.register")
-    send_verification_email(email=raw_email or email, token=verification_token_value or "", name=name)
-    return RegisterResult(user_id=user_id, verification_expires_in=_EMAIL_VERIFY_TTL)
+            if existing:
+                if existing["password_hash"]:
+                    raise AuthServiceError("auth.email_taken", "이미 가입된 이메일입니다.", 409)
+                user_id = str(existing["id"])
+                self.session.execute(
+                    text(
+                        """
+                        UPDATE "users"
+                        SET password_hash = :password_hash,
+                            signup_channel = :signup_channel,
+                            password_updated_at = :now
+                        WHERE id = :id
+                        """
+                    ),
+                    {
+                        "password_hash": hashed,
+                        "signup_channel": self.signup_channel,
+                        "id": user_id,
+                        "now": self.now,
+                    },
+                )
+            else:
+                row = self.session.execute(
+                    text(
+                        """
+                        INSERT INTO "users" (
+                            email, name, password_hash, signup_channel, failed_attempts, locked_until, plan_tier, role
+                        )
+                        VALUES (:email_original, :name, :password_hash, :signup_channel, 0, NULL, 'free', 'user')
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "email_original": self.payload["email"].strip(),
+                        "name": self.name,
+                        "password_hash": hashed,
+                        "signup_channel": self.signup_channel,
+                    },
+                ).mappings().first()
+                user_id = str(row["id"])
+
+            user_uuid = uuid.UUID(user_id)
+            org_uuid = _ensure_default_org(self.session, user_uuid)
+            token = _issue_token_with_audit(
+                self.session,
+                user_id=user_id,
+                token_type="email_verify",
+                identifier=self.email,
+                ttl_seconds=_EMAIL_VERIFY_TTL,
+                context=self.context,
+                audit_event="register",
+                audit_channel=self.signup_channel,
+            )
+            verification_token_value = token.token
+        return user_id, org_uuid, verification_token_value or ""
 
 
-def login_user(session: Session, payload: Dict[str, Any], *, context: RequestContext) -> LoginResult:
-    email = _normalize_email(payload.get("email", ""))
-    _enforce_rate_limit("auth.login.ip", context.ip, limit=_LOGIN_IP_RATE_LIMIT, window_seconds=_LOGIN_IP_RATE_WINDOW_SECONDS)
-    _enforce_rate_limit("auth.login.email", email, limit=_LOGIN_EMAIL_RATE_LIMIT, window_seconds=_LOGIN_EMAIL_RATE_WINDOW_SECONDS)
+class LoginUserUseCase:
+    """Handles login orchestration and side effects."""
 
-    remember_me = bool(payload.get("rememberMe"))
-    password = payload.get("password") or ""
-    now = datetime.now(timezone.utc)
+    def __init__(self, session: Session, payload: Dict[str, Any], context: RequestContext):
+        self.session = session
+        self.payload = payload
+        self.context = context
+        self.now = datetime.now(timezone.utc)
+        self.email = _normalize_email(payload.get("email", ""))
+        self.remember_me = bool(payload.get("rememberMe"))
+        self.plan_slug: Optional[str] = None
+        self.org_uuid: Optional[uuid.UUID] = None
 
-    org_uuid: Optional[uuid.UUID] = None
-    plan_slug: Optional[str] = None
-    with session.begin():
-        user = session.execute(
+    def execute(self) -> LoginResult:
+        self._enforce_limits()
+        with self.session.begin():
+            user = self._load_user()
+            self._verify_credentials(user)
+            _revoke_expired_sessions(self.session, str(user["id"]))
+            user_uuid = uuid.UUID(str(user["id"]))
+            _mark_login_success(self.session, str(user["id"]), self.context, self.now)
+            self.org_uuid = _ensure_default_org(self.session, user_uuid)
+            needs_onboarding = onboarding_service.ensure_first_login_metadata(
+                self.session,
+                user_id=str(user["id"]),
+            )
+            result = self._issue_result(user, needs_onboarding)
+        if self.org_uuid is not None:
+            _ensure_org_subscription(self.org_uuid, self.plan_slug, source="auth.login")
+        return result
+
+    def _enforce_limits(self) -> None:
+        _enforce_rate_limit("auth.login.ip", self.context.ip, limit=_LOGIN_IP_RATE_LIMIT, window_seconds=_LOGIN_IP_RATE_WINDOW_SECONDS)
+        _enforce_rate_limit("auth.login.email", self.email, limit=_LOGIN_EMAIL_RATE_LIMIT, window_seconds=_LOGIN_EMAIL_RATE_WINDOW_SECONDS)
+
+    def _load_user(self) -> Mapping[str, Any]:
+        user = self.session.execute(
             text(
                 f"""
                 SELECT
@@ -436,51 +479,48 @@ def login_user(session: Session, payload: Dict[str, Any], *, context: RequestCon
                 {_FOR_UPDATE}
                 """
             ),
-            {"email": email},
+            {"email": self.email},
         ).mappings().first()
-
         if not user or not user["password_hash"]:
-            _handle_failed_attempt(session, user, context, now)
+            _handle_failed_attempt(self.session, user, self.context, self.now)
             raise AuthServiceError("auth.invalid_credentials", "이메일 또는 비밀번호가 올바르지 않습니다.", 401)
+        return user
 
-        if user["locked_until"] and user["locked_until"] > now:
-            raise AuthServiceError("auth.account_locked", "계정이 잠겨있습니다. 잠시 후 다시 시도하세요.", 423)
-
+    def _verify_credentials(self, user: Mapping[str, Any]) -> None:
+        if user["locked_until"] and user["locked_until"] > self.now:
+            raise AuthServiceError("auth.account_locked", "계정이 잠겨있습니다. 잠시 후 다시 시도해주세요.", 423)
         try:
-            _PASSWORD_HASHER.verify(user["password_hash"], password)
+            _PASSWORD_HASHER.verify(user["password_hash"], self.payload.get("password") or "")
         except VerifyMismatchError:
-            _handle_failed_attempt(session, user, context, now)
+            _handle_failed_attempt(self.session, user, self.context, self.now)
             raise AuthServiceError("auth.invalid_credentials", "이메일 또는 비밀번호가 올바르지 않습니다.", 401)
-
         if not user["email_verified_at"]:
             raise AuthServiceError("auth.needs_verification", "이메일 인증이 필요합니다.", 403)
 
-        _revoke_expired_sessions(session, str(user["id"]))
-        plan_slug = user["plan_tier"]
-        user_uuid = uuid.UUID(str(user["id"]))
-        _mark_login_success(session, str(user["id"]), context, now)
-        org_uuid = _ensure_default_org(session, user_uuid)
-        needs_onboarding = onboarding_service.ensure_first_login_metadata(
-            session,
-            user_id=str(user["id"]),
-        )
-        result = _issue_login_result(
-            session,
+    def _issue_result(self, user: Mapping[str, Any], needs_onboarding: bool) -> LoginResult:
+        self.plan_slug = user["plan_tier"]
+        return _issue_login_result(
+            self.session,
             user_id=str(user["id"]),
             email=user["email"],
             plan=user["plan_tier"],
             role=user["role"],
             email_verified=True,
             channel="email",
-            context=context,
-            now=now,
-            remember_me=remember_me,
+            context=self.context,
+            now=self.now,
+            remember_me=self.remember_me,
             onboarding_required=needs_onboarding,
-            org_id=str(org_uuid) if org_uuid else None,
+            org_id=str(self.org_uuid) if self.org_uuid else None,
         )
-    if org_uuid is not None:
-        _ensure_org_subscription(org_uuid, plan_slug, source="auth.login")
-    return result
+
+
+def register_user(session: Session, payload: Dict[str, Any], *, context: RequestContext) -> RegisterResult:
+    return RegisterUserUseCase(session, payload, context).execute()
+
+
+def login_user(session: Session, payload: Dict[str, Any], *, context: RequestContext) -> LoginResult:
+    return LoginUserUseCase(session, payload, context).execute()
 
 
 def verify_email(
@@ -1430,9 +1470,10 @@ def _issue_login_result(
 
 
 def _normalize_plan_tier_value(value: Optional[str], *, default: str) -> str:
-    candidate = (value or default or "free").strip().lower()
-    if candidate not in _PLAN_TIERS:
-        return default if default in _PLAN_TIERS else "free"
+    fallback = (default or PlanTier.FREE.value).strip().lower()
+    candidate = (value or fallback).strip().lower()
+    if candidate not in _PLAN_TIER_VALUES:
+        return fallback if fallback in _PLAN_TIER_VALUES else PlanTier.FREE.value
     return candidate
 
 

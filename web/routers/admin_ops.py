@@ -42,21 +42,11 @@ from schemas.api.admin import (
     AdminOpsQuickActionResponse,
     AdminAlertPresetUsageResponse,
 )
-from services import admin_ops_service
+from services import admin_ops_service, admin_ops_jobs
 from services.admin_audit import append_audit_log
 from services.alerts import summarize_preset_usage
 from web.routers.admin_utils import create_admin_router
 from web.routers.admin_rag import _perform_reindex
-
-try:
-    from parse.celery_app import app as celery_app  # type: ignore
-except Exception:  # pragma: no cover - optional import during tests
-    celery_app = None
-
-try:
-    from parse.worker import app as worker_app  # type: ignore
-except Exception:  # pragma: no cover
-    worker_app = None
 
 router = create_admin_router(
     prefix="/admin/ops",
@@ -72,15 +62,7 @@ _QUICK_ACTION_TASKS: Dict[str, Dict[str, object]] = {
 
 
 def _dispatch_celery_task(task_name: str, kwargs: Optional[Dict[str, object]] = None) -> str:
-    app = worker_app or celery_app
-    if not app:
-        raise RuntimeError("Celery worker가 활성화되어 있지 않습니다.")
-
-    async_result = app.send_task(task_name, kwargs=kwargs or {})
-    task_id = getattr(async_result, "id", None)
-    if not task_id:
-        task_id = f"{task_name}-{uuid.uuid4().hex[:8]}"
-    return task_id
+    return admin_ops_jobs.dispatch_task(task_name, kwargs)
 
 
 def _human_interval(schedule_obj: object) -> str:
@@ -98,27 +80,13 @@ def _human_interval(schedule_obj: object) -> str:
     return str(schedule_obj)
 
 
-def _collect_celery_schedules() -> Dict[str, Dict[str, object]]:
-    merged: Dict[str, Dict[str, object]] = {}
-    for app in (celery_app, worker_app):
-        if not app:
-            continue
-        try:
-            schedule_map = app.conf.beat_schedule  # type: ignore[attr-defined]
-        except AttributeError:
-            schedule_map = None
-        if isinstance(schedule_map, dict):
-            merged.update(schedule_map)
-    return merged
-
-
 def _load_schedule(job_id: str) -> Optional[Dict[str, object]]:
-    schedules = _collect_celery_schedules()
+    schedules = admin_ops_jobs.collect_schedules()
     return schedules.get(job_id)
 
 
 def _build_schedule_list() -> List[AdminOpsScheduleSchema]:
-    schedules = _collect_celery_schedules()
+    schedules = admin_ops_jobs.collect_schedules()
     items: List[AdminOpsScheduleSchema] = []
     for job_id, entry in schedules.items():
         task_name = entry.get("task")

@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
-import json
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional
 
-from core.env import env_str
 from core.logging import get_logger
 from services.admin_audit import append_audit_log
-from services.admin_shared import ensure_parent_dir, now_iso
+from services.admin_shared import now_iso
+from services.json_store import JsonStore
 
 DEFAULT_PLAN_CONFIG_PATH = Path("uploads") / "admin" / "plan_config.json"
 
-_PLAN_CONFIG_CACHE: Optional[Dict[str, Any]] = None
-_PLAN_CONFIG_PATH: Optional[Path] = None
 logger = get_logger(__name__)
+_PLAN_CONFIG_STORE = JsonStore(
+    path_env="PLAN_CONFIG_FILE",
+    default_path=DEFAULT_PLAN_CONFIG_PATH,
+)
 
 _DEFAULT_PLAN_CONFIG: Dict[str, Any] = {
     "tiers": {
@@ -86,12 +87,8 @@ _DEFAULT_PLAN_CONFIG: Dict[str, Any] = {
 }
 
 
-def _config_path() -> Path:
-    global _PLAN_CONFIG_PATH
-    env_path = env_str("PLAN_CONFIG_FILE")
-    path = Path(env_path) if env_path else DEFAULT_PLAN_CONFIG_PATH
-    _PLAN_CONFIG_PATH = path
-    return path
+def _default_config_payload() -> Dict[str, Any]:
+    return deepcopy(_DEFAULT_PLAN_CONFIG)
 
 
 def _normalize_entitlements(values: Optional[Iterable[Any]], fallback: Iterable[str]) -> list[str]:
@@ -199,27 +196,11 @@ def _merge_plan_config(raw: Mapping[str, Any]) -> Dict[str, Any]:
 def load_plan_config(*, reload: bool = False) -> Dict[str, Any]:
     """Load the persisted plan config with defaults applied."""
 
-    global _PLAN_CONFIG_CACHE
-    if _PLAN_CONFIG_CACHE is not None and not reload:
-        return deepcopy(_PLAN_CONFIG_CACHE)
-
-    path = _config_path()
-    if not path.exists():
-        config = deepcopy(_DEFAULT_PLAN_CONFIG)
-        _PLAN_CONFIG_CACHE = deepcopy(config)
-        return config
-
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(raw, Mapping):
-            raise ValueError("Plan config must be a JSON object.")
-        config = _merge_plan_config(raw)
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("Failed to load plan config from %s: %s", path, exc)
-        config = deepcopy(_DEFAULT_PLAN_CONFIG)
-
-    _PLAN_CONFIG_CACHE = deepcopy(config)
-    return config
+    return _PLAN_CONFIG_STORE.load(
+        loader=_merge_plan_config,
+        fallback=_default_config_payload,
+        reload=reload,
+    )
 
 
 def reload_plan_config() -> Dict[str, Any]:
@@ -231,8 +212,7 @@ def reload_plan_config() -> Dict[str, Any]:
 def clear_plan_config_cache() -> None:
     """Clear the in-memory config cache."""
 
-    global _PLAN_CONFIG_CACHE
-    _PLAN_CONFIG_CACHE = None
+    _PLAN_CONFIG_STORE.clear_cache()
 
 
 def get_tier_config(tier: str) -> Dict[str, Any]:
@@ -279,11 +259,7 @@ def update_plan_config(
     config["updated_by"] = (updated_by or "").strip() or None
     config["note"] = (note or "").strip() or None
 
-    path = _config_path()
-    ensure_parent_dir(path, logger)
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp_path.replace(path)
+    _PLAN_CONFIG_STORE.save(config)
 
     append_audit_log(
         filename="plan_audit.jsonl",
@@ -295,8 +271,6 @@ def update_plan_config(
         },
     )
 
-    global _PLAN_CONFIG_CACHE
-    _PLAN_CONFIG_CACHE = deepcopy(config)
     return deepcopy(config)
 
 

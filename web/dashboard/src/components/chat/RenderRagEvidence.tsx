@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { ChatEvidencePanelNotice } from "@/components/legal/ChatLegal";
+import { ChatEvidencePanelNotice } from "@/components/legal";
 import { NotebookQuickCaptureButton } from "@/components/notebook/NotebookQuickCaptureButton";
 import type {
   GuardrailLevel,

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { DownloadCloud, ShieldCheck, Trash2 } from "lucide-react";
 
-import { SettingsDataRetentionList } from "@/components/legal/SettingsLegal";
+import { SettingsDataRetentionList } from "@/components/legal";
 import { useDsarRequests, useCreateDsarRequest } from "@/hooks/useDsarRequests";
 import type { DsarRequest, DsarRequestType } from "@/lib/accountApi";
 import { useToastStore } from "@/store/toastStore";

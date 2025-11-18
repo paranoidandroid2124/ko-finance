@@ -21,7 +21,7 @@ import {
 } from "@/components/evidence/EvidencePanel";
 import { usePlanTier } from "@/store/planStore";
 import type { PlanTier } from "@/store/planStore/types";
-import { EventStudyBoardHeader, RestatementRadarFooter } from "@/components/legal/EventStudyLegal";
+import { EventStudyBoardHeader, RestatementRadarFooter } from "@/components/legal";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 

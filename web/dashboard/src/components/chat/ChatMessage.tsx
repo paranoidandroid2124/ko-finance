@@ -2,7 +2,7 @@
 
 import classNames from "classnames";
 import { useCallback, useMemo } from "react";
-import { ChatAnswerBadge } from "@/components/legal/ChatLegal";
+import { ChatAnswerBadge } from "@/components/legal";
 import type { ChatMessageMeta, ChatRole, CitationEntry, CitationMap } from "@/store/chatStore";
 import { useToastStore } from "@/store/toastStore";
 import { logEvent } from "@/lib/telemetry";

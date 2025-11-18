@@ -57,6 +57,7 @@ from services.payments.toss_webhook_replay import replay_toss_webhook_event
 from services.plan_service import update_plan_context
 from services.plan_serializers import serialize_plan_context
 from services import sso_provider_service
+from services.web_utils import parse_uuid
 from services.sso_provider_cache import invalidate_provider_cache
 from web.deps_admin import AdminSession, load_admin_token_map, require_admin_session
 from web.routers.admin_utils import create_admin_router
@@ -81,18 +82,6 @@ for entry in (env_str("ADMIN_MFA_SECRETS") or "").split(","):
     if email and secret:
         _MFA_SECRET_MAP[email] = secret.upper()
 _REQUIRE_MFA = env_bool("ADMIN_REQUIRE_MFA", False)
-
-
-def _parse_uuid_value(value: Optional[str], *, field_name: str) -> Optional[UUID]:
-    if not value:
-        return None
-    try:
-        return UUID(str(value).strip())
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "admin.invalid_uuid", "message": f"{field_name} 값이 올바른 UUID 형식이 아닙니다."},
-        ) from exc
 
 
 def _isoformat(value: Optional[datetime]) -> Optional[str]:
@@ -467,7 +456,10 @@ def create_sso_provider_endpoint(
     admin_session: AdminSession = Depends(require_admin_session),
     db: Session = Depends(get_db),
 ) -> AdminSsoProviderResponse:
-    org_id = _parse_uuid_value(payload.orgId, field_name="orgId")
+    org_id = parse_uuid(
+        payload.orgId,
+        detail={"code": "admin.invalid_uuid", "message": "orgId 값이 올바른 UUID 형식이 아닙니다."},
+    )
     try:
         record = sso_provider_service.create_sso_provider(
             db,

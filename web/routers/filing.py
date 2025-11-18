@@ -14,7 +14,6 @@ from database import get_db
 from models.fact import ExtractedFact
 from models.filing import Filing
 from models.summary import Summary
-from parse.tasks import process_filing
 from schemas.api.filing import (
     FactResponse,
     FilingBriefResponse,
@@ -23,7 +22,7 @@ from schemas.api.filing import (
     FilingXmlResponse,
     SummaryResponse,
 )
-from services import storage_service
+from services import storage_service, filing_jobs
 
 router = APIRouter(prefix="/filings", tags=["Filings"])
 logger = get_logger(__name__)
@@ -231,7 +230,7 @@ def upload_filing(file: UploadFile = File(...), db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_filing)
 
-    process_filing.delay(str(new_filing.id))
+    filing_jobs.enqueue_process_filing(str(new_filing.id))
     return new_filing
 
 

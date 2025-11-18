@@ -14,21 +14,10 @@ from schemas.api.evidence import EvidenceWorkspaceDiffSchema, EvidenceWorkspaceR
 from schemas.api.rag import RAGEvidence
 from services.evidence_service import attach_diff_metadata
 from services.plan_service import PlanContext
+from services.web_utils import parse_uuid
 from web.deps import require_plan_feature
 
 router = APIRouter(prefix="/evidence", tags=["Evidence"])
-
-
-def _parse_uuid(value: Optional[str], *, field: str) -> Optional[uuid.UUID]:
-    if not value:
-        return None
-    try:
-        return uuid.UUID(str(value))
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": f"evidence.invalid_{field}", "message": f"Invalid {field} format."},
-        ) from exc
 
 
 def _load_trace_snapshots(
@@ -68,8 +57,22 @@ def get_evidence_workspace(
     db: Session = Depends(get_db),
 ) -> EvidenceWorkspaceResponse:
     del plan  # PlanContext is only used for entitlement enforcement.
-    user_id = _parse_uuid(x_user_id, field="userId") if x_user_id else None
-    org_id = _parse_uuid(x_org_id, field="orgId") if x_org_id else None
+    user_id = (
+        parse_uuid(
+            x_user_id,
+            detail={"code": "evidence.invalid_userId", "message": "Invalid userId format."},
+        )
+        if x_user_id
+        else None
+    )
+    org_id = (
+        parse_uuid(
+            x_org_id,
+            detail={"code": "evidence.invalid_orgId", "message": "Invalid orgId format."},
+        )
+        if x_org_id
+        else None
+    )
     snapshots = _load_trace_snapshots(db, trace_id, org_id=org_id, user_id=user_id)
     if not snapshots:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_trace_not_found")

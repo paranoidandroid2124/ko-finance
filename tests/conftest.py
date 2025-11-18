@@ -11,10 +11,10 @@ os.environ.setdefault("TEST_DATABASE_URL", "sqlite+pysqlite:///:memory:")
 os.environ.setdefault("DATABASE_URL", os.getenv("DATABASE_URL", os.environ["TEST_DATABASE_URL"]))
 
 try:
-    from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event
     from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
     from sqlalchemy.engine import Engine
-    from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, scoped_session, sessionmaker
     from sqlalchemy.ext.compiler import compiles
 except Exception as exc:  # pragma: no cover
     Engine = Session = sessionmaker = None  # type: ignore
@@ -63,7 +63,7 @@ def _resolve_test_database_url() -> Tuple[str, bool]:
     return url, url.lower().startswith("postgresql")
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def engine(request: pytest.FixtureRequest) -> Generator["Engine", None, None]:
     if _SQLALCHEMY_IMPORT_ERROR or create_engine is None:
         pytest.skip(f"SQLAlchemy is unavailable: {_SQLALCHEMY_IMPORT_ERROR}")
@@ -81,10 +81,10 @@ def engine(request: pytest.FixtureRequest) -> Generator["Engine", None, None]:
     except CompileError as exc:
         pytest.skip(f"Active test database cannot render schema: {exc}")
 
-    TestingSessionLocal = sessionmaker(bind=test_engine, autoflush=False, expire_on_commit=False)
+    SessionFactory = scoped_session(sessionmaker(bind=test_engine, autoflush=False, expire_on_commit=False))
     original_session_local = database_module.SessionLocal
     original_engine = database_module.engine
-    database_module.SessionLocal = TestingSessionLocal
+    database_module.SessionLocal = SessionFactory
     database_module.engine = test_engine
     try:
         yield test_engine
@@ -92,6 +92,7 @@ def engine(request: pytest.FixtureRequest) -> Generator["Engine", None, None]:
         database_module.SessionLocal = original_session_local
         database_module.engine = original_engine
         Base.metadata.drop_all(bind=test_engine)
+        SessionFactory.remove()
         test_engine.dispose()
 
 
@@ -100,10 +101,11 @@ def db_session(engine: "Engine") -> Generator["Session", None, None]:
     if _SQLALCHEMY_IMPORT_ERROR or sessionmaker is None:
         pytest.skip(f"SQLAlchemy is unavailable: {_SQLALCHEMY_IMPORT_ERROR}")
 
+    session_factory = database_module.SessionLocal
     connection = engine.connect()
     transaction = connection.begin()
-    SessionLocal = sessionmaker(bind=connection, autoflush=False, expire_on_commit=False)
-    session = SessionLocal()
+    session_factory.configure(bind=connection)
+    session = session_factory()
     session.begin_nested()
 
     @event.listens_for(session, "after_transaction_end")
@@ -115,5 +117,7 @@ def db_session(engine: "Engine") -> Generator["Session", None, None]:
         yield session
     finally:
         session.close()
+        session_factory.remove()
+        session_factory.configure(bind=engine)
         transaction.rollback()
         connection.close()

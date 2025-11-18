@@ -55,6 +55,7 @@ from services.audit_log import audit_alert_event
 from services.user_settings_service import UserLightMemSettings
 from services import lightmem_gate
 from services.plan_service import PlanContext
+from services.web_utils import parse_uuid
 from web.deps import require_plan_feature
 from web.quota_guard import enforce_quota
 
@@ -63,15 +64,6 @@ logger = get_logger(__name__)
 
 ALERTS_WRITE_RATE_LIMIT = env_int("ALERTS_WRITE_RATE_LIMIT", 30, minimum=1)
 ALERTS_WRITE_RATE_WINDOW_SECONDS = env_int("ALERTS_WRITE_RATE_WINDOW_SECONDS", 900, minimum=60)
-
-
-def _parse_uuid(value: Optional[str]) -> Optional[uuid.UUID]:
-    if not value:
-        return None
-    try:
-        return uuid.UUID(value)
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="잘못된 UUID 형식입니다.")
 
 
 def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -113,7 +105,7 @@ def _default_lightmem_user_id() -> Optional[uuid.UUID]:
 
 def _resolve_lightmem_user_id(value: Optional[str]) -> Optional[uuid.UUID]:
     if value:
-        return _parse_uuid(value)
+        return parse_uuid(value)
     return _default_lightmem_user_id()
 
 
@@ -281,8 +273,8 @@ def list_rules(
     db: Session = Depends(get_db),
     plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> AlertRuleListResponse:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id)
+    org_id = parse_uuid(x_org_id)
     rules = list_alert_rules(db, owner_filters=_owner_filters(user_id, org_id))
     items = [_response_from_rule(rule) for rule in rules]
     plan_info = AlertPlanInfo.model_validate(serialize_plan_capabilities(plan.tier, rules))
@@ -299,8 +291,8 @@ def create_rule(
     db: Session = Depends(get_db),
     plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> AlertRuleResponse:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id)
+    org_id = parse_uuid(x_org_id)
     filters = _owner_filters(user_id, org_id)
     enforce_quota("alerts.rules.create", plan=plan, user_id=user_id, org_id=org_id)
     _enforce_write_rate_limit(user_id, org_id)
@@ -349,8 +341,8 @@ def update_rule(
     db: Session = Depends(get_db),
     plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> AlertRuleResponse:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id)
+    org_id = parse_uuid(x_org_id)
     filters = _owner_filters(user_id, org_id)
     _enforce_write_rate_limit(user_id, org_id)
     rule = get_alert_rule(db, rule_id=alert_id, owner_filters=filters)
@@ -386,8 +378,8 @@ def simulate_rule(
     db: Session = Depends(get_db),
     plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> AlertRuleSimulationResponse:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id)
+    org_id = parse_uuid(x_org_id)
     filters = _owner_filters(user_id, org_id)
     rule = get_alert_rule(db, rule_id=alert_id, owner_filters=filters)
     if rule is None:
@@ -413,8 +405,8 @@ def read_rule_stats(
     db: Session = Depends(get_db),
     plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> AlertRuleStatsResponse:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id)
+    org_id = parse_uuid(x_org_id)
     filters = _owner_filters(user_id, org_id)
     rule = get_alert_rule(db, rule_id=alert_id, owner_filters=filters)
     if rule is None:
@@ -433,8 +425,8 @@ def list_event_matches(
     db: Session = Depends(get_db),
     plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> AlertEventMatchResponse:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id)
+    org_id = parse_uuid(x_org_id)
     filters = _owner_filters(user_id, org_id)
     since_dt = _parse_iso_datetime(since)
     matches = list_event_alert_matches(
@@ -454,8 +446,8 @@ def delete_rule(
     db: Session = Depends(get_db),
     plan: PlanContext = Depends(require_plan_feature("search.alerts")),
 ) -> None:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id)
+    org_id = parse_uuid(x_org_id)
     filters = _owner_filters(user_id, org_id)
     _enforce_write_rate_limit(user_id, org_id)
     rule = get_alert_rule(db, rule_id=alert_id, owner_filters=filters)
@@ -487,7 +479,7 @@ def watchlist_radar(
     window_minutes = max(min(int(window_minutes or 1440), 7 * 24 * 60), 5)
     limit = max(min(int(limit or 100), 200), 1)
     user_id = _resolve_lightmem_user_id(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    org_id = parse_uuid(x_org_id)
     enforce_quota("watchlist.radar", plan=plan, user_id=user_id, org_id=org_id)
     owner_filters = _owner_filters(user_id, org_id)
     tenant_token = str(org_id) if org_id else None
@@ -542,7 +534,7 @@ def watchlist_dispatch(
     window_minutes = max(min(int(payload.windowMinutes or 1440), 7 * 24 * 60), 5)
     limit = max(min(int(payload.limit or 20), 200), 1)
     user_id = _resolve_lightmem_user_id(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    org_id = parse_uuid(x_org_id)
     enforce_quota("watchlist.digest", plan=plan, user_id=user_id, org_id=org_id)
     owner_filters = _owner_filters(user_id, org_id)
     tenant_token = str(org_id) if org_id else None
@@ -580,7 +572,7 @@ def list_watchlist_schedules(
 ) -> WatchlistDigestScheduleListResponse:
     _require_digest_enabled(plan)
     user_id = _resolve_lightmem_user_id(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    org_id = parse_uuid(x_org_id)
     owner_filters = _owner_filters(user_id, org_id)
     entries = watchlist_digest_schedule_service.list_schedules(owner_filters)
     items = [
@@ -603,7 +595,7 @@ def create_watchlist_schedule(
 ) -> WatchlistDigestScheduleSchema:
     _require_digest_enabled(plan)
     user_id = _resolve_lightmem_user_id(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    org_id = parse_uuid(x_org_id)
     owner_filters = _owner_filters(user_id, org_id)
     try:
         entry = watchlist_digest_schedule_service.create_schedule(
@@ -640,7 +632,7 @@ def update_watchlist_schedule(
 ) -> WatchlistDigestScheduleSchema:
     _require_digest_enabled(plan)
     user_id = _resolve_lightmem_user_id(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    org_id = parse_uuid(x_org_id)
     owner_filters = _owner_filters(user_id, org_id)
     try:
         entry = watchlist_digest_schedule_service.update_schedule(
@@ -682,7 +674,7 @@ def delete_watchlist_schedule(
 ) -> Response:
     _require_digest_enabled(plan)
     user_id = _resolve_lightmem_user_id(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    org_id = parse_uuid(x_org_id)
     owner_filters = _owner_filters(user_id, org_id)
     try:
         watchlist_digest_schedule_service.delete_schedule(schedule_id, owner_filters)
@@ -708,7 +700,7 @@ def preview_watchlist_schedule(
 ) -> WatchlistDigestPreviewResponse:
     _require_digest_enabled(plan)
     user_id = _resolve_lightmem_user_id(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    org_id = parse_uuid(x_org_id)
     owner_filters = _owner_filters(user_id, org_id)
     schedule_entry = watchlist_digest_schedule_service.load_schedule(schedule_id, owner_filters)
     if schedule_entry is None:
@@ -747,8 +739,8 @@ def watchlist_rule_detail(
     _: PlanContext = Depends(require_plan_feature("search.alerts")),
     db: Session = Depends(get_db),
 ) -> WatchlistRuleDetailResponse:
-    user_id = _parse_uuid(x_user_id)
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id)
+    org_id = parse_uuid(x_org_id)
     owner_filters = _owner_filters(user_id, org_id)
     try:
         payload = watchlist_service.collect_watchlist_rule_detail(

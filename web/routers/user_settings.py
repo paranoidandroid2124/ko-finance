@@ -14,22 +14,17 @@ from schemas.api.user_settings import (
 )
 from services import lightmem_gate, user_settings_service
 from services.plan_service import PlanContext
+from services.web_utils import parse_uuid
 from web.deps import get_plan_context
 
 router = APIRouter(prefix="/user-settings", tags=["User Settings"])
 
 
-def _parse_uuid(value: Optional[str]) -> Optional[uuid.UUID]:
-    if not value:
-        return None
-    try:
-        return uuid.UUID(str(value))
-    except (ValueError, TypeError):
-        return None
-
-
 def _resolve_user_id(header_value: Optional[str]) -> uuid.UUID:
-    user_id = _parse_uuid(header_value)
+    try:
+        user_id = parse_uuid(header_value)
+    except HTTPException:
+        user_id = None
     if user_id:
         return user_id
     fallback = lightmem_gate.default_user_id()

@@ -3,7 +3,6 @@
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { Route } from "next";
-import { useSession } from "next-auth/react";
 import { CheckCircle2, Sparkles, X } from "lucide-react";
 
 import { useOnboardingStore } from "@/store/onboardingStore";
@@ -11,8 +10,6 @@ import { useOnboardingStore } from "@/store/onboardingStore";
 export function OnboardingModal() {
   const router = useRouter();
   const pathname = usePathname();
-  const { data: session } = useSession();
-  const onboardingRequired = Boolean(session?.onboardingRequired ?? session?.user?.onboardingRequired);
   const needsOnboarding = useOnboardingStore((state) => state.needsOnboarding);
   const dismissed = useOnboardingStore((state) => state.dismissed);
   const content = useOnboardingStore((state) => state.content);

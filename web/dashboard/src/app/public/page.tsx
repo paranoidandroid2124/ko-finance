@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-import { FilingHeaderNotice } from "@/components/legal/FilingLegal";
-import { ChatInputDisclaimer } from "@/components/legal/ChatLegal";
+import { FilingHeaderNotice } from "@/components/legal";
+import { ChatInputDisclaimer } from "@/components/legal";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import type { PageViewport } from "pdfjs-dist/types/src/display/display_utils";
 
+import { useEvidencePanelStore } from "./EvidencePanelStore";
 type PdfRect = {
   page: number;
   x: number;
@@ -16,19 +17,18 @@ export type InlinePdfViewerProps = {
   page?: number | null;
   highlightRect?: PdfRect | null;
   className?: string;
-  onLoad?: () => void;
-  onError?: (error: Error) => void;
 };
 
-type ViewerStatus = "idle" | "loading" | "ready" | "error";
-
-export function InlinePdfViewer({ src, page, highlightRect, className, onLoad, onError }: InlinePdfViewerProps) {
+export function InlinePdfViewer({ src, page, highlightRect, className }: InlinePdfViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<PageViewport | null>(null);
-  const [status, setStatus] = useState<ViewerStatus>("idle");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [pdfStatus, pdfError, setPdfState] = useEvidencePanelStore((state) => [
+    state.pdfStatus,
+    state.pdfError,
+    state.setPdfState,
+  ]);
 
   const targetPage = Math.max(1, page ?? 1);
 
@@ -38,10 +38,10 @@ export function InlinePdfViewer({ src, page, highlightRect, className, onLoad, o
 
     async function renderPdf() {
       if (!src) {
+        setPdfState("idle", null);
         return;
       }
-      setStatus("loading");
-      setErrorMessage(null);
+      setPdfState("loading", null);
 
       try {
         const [{ getDocument, GlobalWorkerOptions }, workerModule] = await Promise.all([
@@ -102,16 +102,13 @@ export function InlinePdfViewer({ src, page, highlightRect, className, onLoad, o
 
         viewportRef.current = scaledViewport;
         applyHighlight();
-        setStatus("ready");
-        onLoad?.();
+        setPdfState("ready", null);
       } catch (error) {
         if (cancelled) {
           return;
         }
         const err = error instanceof Error ? error : new Error(String(error));
-        setStatus("error");
-        setErrorMessage(err.message);
-        onError?.(err);
+        setPdfState("error", err.message);
       }
     }
 
@@ -124,12 +121,12 @@ export function InlinePdfViewer({ src, page, highlightRect, className, onLoad, o
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src, targetPage]);
+  }, [src, targetPage, setPdfState]);
 
   useEffect(() => {
     applyHighlight();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [highlightRect, targetPage, status]);
+  }, [highlightRect, targetPage, pdfStatus]);
 
   const applyHighlight = () => {
     if (!highlightRect || highlightRect.page !== targetPage) {
@@ -179,15 +176,15 @@ export function InlinePdfViewer({ src, page, highlightRect, className, onLoad, o
           style={highlightRect ? undefined : { display: "none" }}
           className="pointer-events-none absolute rounded-md border border-primary/60 bg-primary/20 backdrop-blur-[1px]"
         />
-        {status === "loading" ? (
+        {pdfStatus === "loading" ? (
           <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-xs text-text-secondaryLight dark:bg-background-cardDark/70 dark:text-text-secondaryDark">
             PDF 로딩 중입니다…
           </div>
         ) : null}
-        {status === "error" ? (
+        {pdfStatus === "error" ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white/80 p-3 text-center text-xs text-destructive dark:bg-background-cardDark/80">
             <p className="font-semibold">PDF를 불러오지 못했습니다</p>
-            {errorMessage ? <p className="text-[11px] text-destructive/80">{errorMessage}</p> : null}
+            {pdfError ? <p className="text-[11px] text-destructive/80">{pdfError}</p> : null}
           </div>
         ) : null}
       </div>

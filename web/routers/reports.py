@@ -12,7 +12,6 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from database import get_db
-from parse.tasks import generate_daily_brief
 from core.logging import get_logger
 from schemas.api.reports import (
     DailyBriefGenerateRequest,
@@ -22,7 +21,7 @@ from schemas.api.reports import (
     DigestPreviewResponse,
     FileArtifact,
 )
-from services import storage_service, lightmem_gate, lightmem_rate_limiter, digest_snapshot_service
+from services import storage_service, lightmem_gate, lightmem_rate_limiter, digest_snapshot_service, report_jobs
 from services.lightmem_config import DIGEST_RATE_LIMIT_PER_MINUTE
 from services.daily_brief_service import (
     DAILY_BRIEF_OUTPUT_ROOT,
@@ -31,6 +30,7 @@ from services.daily_brief_service import (
     resolve_daily_brief_paths,
 )
 from services.plan_service import PlanContext
+from services.web_utils import parse_uuid
 from web.deps import require_plan_feature
 from web.quota_guard import enforce_quota
 
@@ -60,15 +60,6 @@ def _make_artifact(payload: dict) -> FileArtifact:
     )
 
 
-def _parse_uuid(value: Optional[str]) -> Optional[uuid.UUID]:
-    if not value:
-        return None
-    try:
-        return uuid.UUID(value)
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID format.")
-
-
 @router.get("/digest/preview", response_model=DigestPreviewResponse)
 def read_digest_preview(
     timeframe: str = Query(default="daily", description="daily 혹은 weekly"),
@@ -79,8 +70,8 @@ def read_digest_preview(
     plan: PlanContext = Depends(require_plan_feature("search.export")),
 ) -> DigestPreviewResponse:
     normalized = "weekly" if str(timeframe).lower() == "weekly" else "daily"
-    user_id = _parse_uuid(x_user_id) if x_user_id else lightmem_gate.default_user_id()
-    org_id = _parse_uuid(x_org_id)
+    user_id = parse_uuid(x_user_id, detail="Invalid UUID format.") if x_user_id else lightmem_gate.default_user_id()
+    org_id = parse_uuid(x_org_id, detail="Invalid UUID format.")
     enforce_quota("watchlist.preview", plan=plan, user_id=user_id, org_id=org_id)
     owner_filters = {"user_id": user_id, "org_id": org_id}
     snapshot_payload = digest_snapshot_service.load_snapshot(
@@ -191,21 +182,19 @@ def trigger_daily_brief(
     reference_date_iso = payload.referenceDate.isoformat() if payload.referenceDate else None
 
     if payload.asyncMode:
-        task = generate_daily_brief.apply_async(
-            kwargs={
-                "target_date_iso": reference_date_iso,
-                "compile_pdf": payload.compilePdf,
-                "force": payload.force,
-            }
+        task_id = report_jobs.enqueue_daily_brief(
+            target_date_iso=reference_date_iso,
+            compile_pdf=payload.compilePdf,
+            force=payload.force,
         )
         ref_date = payload.referenceDate or datetime.now(_KST).date()
         return DailyBriefGenerateResponse(
             status="queued",
             referenceDate=ref_date,
-            taskId=task.id,
+            taskId=task_id,
         )
 
-    result = generate_daily_brief(
+    result = report_jobs.run_daily_brief(
         target_date_iso=reference_date_iso,
         compile_pdf=payload.compilePdf,
         force=payload.force,

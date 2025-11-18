@@ -2,26 +2,24 @@
 
 from __future__ import annotations
 
-import json
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
-from filelock import FileLock, Timeout
-
-from core.env import env_int, env_str
 from core.logging import get_logger
 from services.admin_audit import append_audit_log
 from services.admin_shared import now_iso
+from services.json_store import JsonStore
 from core.plan_constants import SUPPORTED_PLAN_TIERS
-from services.file_store import write_json_atomic
 
 DEFAULT_PLAN_CATALOG_PATH = Path("uploads") / "admin" / "plan_catalog.json"
 
-_PLAN_CATALOG_CACHE: Optional[Dict[str, Any]] = None
-_PLAN_CATALOG_PATH: Optional[Path] = None
-_PLAN_CATALOG_LOCK_TIMEOUT = env_int("PLAN_CATALOG_LOCK_TIMEOUT_SECONDS", 5, minimum=1)
 logger = get_logger(__name__)
+_PLAN_CATALOG_STORE = JsonStore(
+    path_env="PLAN_CATALOG_FILE",
+    default_path=DEFAULT_PLAN_CATALOG_PATH,
+    lock_timeout_env="PLAN_CATALOG_LOCK_TIMEOUT_SECONDS",
+)
 
 
 class PlanCatalogConflictError(RuntimeError):
@@ -101,20 +99,6 @@ _DEFAULT_TIER_CARDS: List[Dict[str, Any]] = [
     },
 
 ]
-
-
-def _catalog_path() -> Path:
-    global _PLAN_CATALOG_PATH
-    env_path = env_str("PLAN_CATALOG_FILE")
-    path = Path(env_path) if env_path else DEFAULT_PLAN_CATALOG_PATH
-    _PLAN_CATALOG_PATH = path
-    return path
-
-
-def _catalog_lock(path: Path) -> FileLock:
-    lock_path = path.parent / f"{path.name}.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    return FileLock(str(lock_path), timeout=_PLAN_CATALOG_LOCK_TIMEOUT)
 
 
 def _normalize_feature(feature: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -201,57 +185,44 @@ def _default_catalog() -> Dict[str, Any]:
     }
 
 
-def load_plan_catalog(*, reload: bool = False) -> Dict[str, Any]:
-    global _PLAN_CATALOG_CACHE
-    if _PLAN_CATALOG_CACHE is not None and not reload:
-        return deepcopy(_PLAN_CATALOG_CACHE)
+def _catalog_error_hook(path: Path, exc: Exception) -> None:
+    append_audit_log(
+        filename="plan_audit.jsonl",
+        actor="system",
+        action="plan_catalog_load_failed",
+        payload={"path": str(path), "error": str(exc)},
+    )
 
-    path = _catalog_path()
-    lock = _catalog_lock(path)
-    try:
-        with lock:
-            if not path.exists():
-                catalog = _default_catalog()
-                _PLAN_CATALOG_CACHE = deepcopy(catalog)
-                return catalog
 
+def _load_catalog_from_raw(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, Mapping):
+        raise ValueError("Plan catalog must be a JSON object.")
+
+    tiers_raw = raw.get("tiers")
+    normalized: List[Dict[str, Any]] = []
+    if isinstance(tiers_raw, list):
+        for entry in tiers_raw:
             try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as exc:
-                # When the file is corrupted, fall back to defaults to avoid runtime failures.
-                logger.warning("Plan catalog could not be parsed: %s", exc)
-                append_audit_log(
-                    filename="plan_audit.jsonl",
-                    actor="system",
-                    action="plan_catalog_load_failed",
-                    payload={"error": str(exc)},
-                )
-                catalog = _default_catalog()
-            else:
-                tiers = raw.get("tiers") if isinstance(raw, dict) else None
-                if not isinstance(tiers, list):
-                    catalog = _default_catalog()
-                else:
-                    normalized: List[Dict[str, Any]] = []
-                    for entry in tiers:
-                        try:
-                            normalized.append(_normalize_tier(entry or {}))
-                        except ValueError:
-                            continue
-                    if not normalized:
-                        normalized = deepcopy(_DEFAULT_TIER_CARDS)
-                    catalog = {
-                        "tiers": normalized,
-                        "updated_at": raw.get("updated_at"),
-                        "updated_by": raw.get("updated_by"),
-                        "note": raw.get("note"),
-                    }
-    except Timeout as exc:  # pragma: no cover - file lock contention
-        logger.error("Plan catalog lock timeout at %s: %s", path, exc)
-        raise RuntimeError("plan catalog is currently locked; please retry.") from exc
+                normalized.append(_normalize_tier(entry or {}))
+            except ValueError:
+                continue
+    if not normalized:
+        normalized = deepcopy(_DEFAULT_TIER_CARDS)
+    return {
+        "tiers": normalized,
+        "updated_at": raw.get("updated_at"),
+        "updated_by": raw.get("updated_by"),
+        "note": raw.get("note"),
+    }
 
-    _PLAN_CATALOG_CACHE = deepcopy(catalog)
-    return catalog
+
+def load_plan_catalog(*, reload: bool = False) -> Dict[str, Any]:
+    return _PLAN_CATALOG_STORE.load(
+        loader=_load_catalog_from_raw,
+        fallback=_default_catalog,
+        reload=reload,
+        on_error=_catalog_error_hook,
+    )
 
 
 def update_plan_catalog(
@@ -285,14 +256,7 @@ def update_plan_catalog(
         "note": (note or "").strip() or None,
     }
 
-    path = _catalog_path()
-    lock = _catalog_lock(path)
-    try:
-        with lock:
-            write_json_atomic(path, payload, logger=logger)
-    except Timeout as exc:  # pragma: no cover
-        logger.error("Plan catalog lock timeout during write at %s: %s", path, exc)
-        raise RuntimeError("plan catalog is currently locked; please retry.") from exc
+    _PLAN_CATALOG_STORE.save(payload)
 
     append_audit_log(
         filename="plan_audit.jsonl",
@@ -304,8 +268,6 @@ def update_plan_catalog(
         },
     )
 
-    global _PLAN_CATALOG_CACHE
-    _PLAN_CATALOG_CACHE = deepcopy(payload)
     return deepcopy(payload)
 
 

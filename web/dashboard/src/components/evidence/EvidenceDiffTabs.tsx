@@ -1,11 +1,13 @@
+import { useEvidencePanelStore } from "./EvidencePanelStore";
+
 type EvidenceDiffTabsProps = {
   diffEnabled?: boolean;
-  diffActive?: boolean;
   removedCount?: number;
   onToggleDiff?: (nextValue: boolean) => void;
 };
 
-export function EvidenceDiffTabs({ diffEnabled, diffActive, removedCount, onToggleDiff }: EvidenceDiffTabsProps) {
+export function EvidenceDiffTabs({ diffEnabled, removedCount, onToggleDiff }: EvidenceDiffTabsProps) {
+  const diffActive = useEvidencePanelStore((state) => state.diffActive);
   if (!diffEnabled) {
     return null;
   }

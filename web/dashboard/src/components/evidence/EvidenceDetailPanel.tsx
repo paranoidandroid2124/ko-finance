@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 
 import { InlinePdfViewer } from "@/components/evidence/InlinePdfViewer";
+import { EvidencePanelStoreProvider } from "@/components/evidence/EvidencePanelStore";
 import { useEvidenceWorkspaceStore } from "@/store/evidenceWorkspaceStore";
 import type { EvidencePanelItem } from "@/components/evidence";
 
@@ -185,13 +186,15 @@ export function EvidenceDetailPanel({ pdfUrl, pdfDownloadUrl }: EvidenceDetailPa
           ) : null}
         </header>
         {documentUrl ? (
-          <InlinePdfViewer
-            key={`${selected.urnId}-${documentUrl}-${pdfPage ?? "page"}`}
-            src={documentUrl}
-            page={pdfPage}
-            highlightRect={highlightRect}
-            className="h-[520px]"
-          />
+          <EvidencePanelStoreProvider>
+            <InlinePdfViewer
+              key={`${selected.urnId}-${documentUrl}-${pdfPage ?? "page"}`}
+              src={documentUrl}
+              page={pdfPage}
+              highlightRect={highlightRect}
+              className="h-[520px]"
+            />
+          </EvidencePanelStoreProvider>
         ) : (
           <div className="rounded-lg border border-dashed border-border-light/70 p-4 text-sm text-text-secondaryLight dark:border-border-dark/70 dark:text-text-secondaryDark">
             연동된 PDF URL이 없어 미리보기를 표시할 수 없습니다.

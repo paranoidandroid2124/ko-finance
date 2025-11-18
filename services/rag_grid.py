@@ -279,5 +279,4 @@ __all__ = [
     "process_grid_cell",
     "run_grid",
     "serialize_job",
-    "start_grid_job",
 ]

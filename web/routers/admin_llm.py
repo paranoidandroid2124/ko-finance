@@ -73,6 +73,16 @@ except Exception:  # pragma: no cover - best-effort bootstrap
     pass
 
 
+def _parse_prompt_channel_value(raw: str) -> PromptChannel:
+    try:
+        return PromptChannel(raw)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "admin.invalid_prompt_channel", "message": f"Unknown prompt channel '{raw}'."},
+        ) from exc
+
+
 def _to_profile_schema(record: Dict[str, object]) -> AdminLlmProfileSchema:
     return AdminLlmProfileSchema(
         name=str(record.get("name") or ""),
@@ -161,8 +171,9 @@ def list_system_prompts(channel: PromptChannel | None = Query(default=None)) -> 
     prompts = admin_llm_store.load_system_prompts()
     items: List[AdminSystemPromptSchema] = []
     for key, record in prompts.items():
+        parsed_channel = _parse_prompt_channel_value(key)
         schema = AdminSystemPromptSchema(
-            channel=key,  # type: ignore[arg-type]
+            channel=parsed_channel,
             prompt=str(record.get("prompt") or ""),
             updatedAt=record.get("updatedAt"),
             updatedBy=record.get("updatedBy"),

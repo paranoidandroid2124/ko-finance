@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useState } from "react";
-import { ChatInputDisclaimer } from "@/components/legal/ChatLegal";
+import { ChatInputDisclaimer } from "@/components/legal";
 
 export type ChatInputProps = {
   onSubmit?: (message: string) => void;

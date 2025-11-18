@@ -2,7 +2,7 @@
 
 import clsx from "clsx";
 import { CalendarDays, Newspaper, Radar, Sparkles, TrendingUp } from "lucide-react";
-import { DigestPdfFooter } from "@/components/legal/DigestLegal";
+import { DigestPdfFooter } from "@/components/legal";
 
 type Trend = "up" | "down" | "flat";
 type StatusTone = "positive" | "negative" | "neutral";
