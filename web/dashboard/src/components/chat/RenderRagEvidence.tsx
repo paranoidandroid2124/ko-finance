@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { ChatEvidencePanelNotice } from "@/components/legal/ChatLegal";
 import { NotebookQuickCaptureButton } from "@/components/notebook/NotebookQuickCaptureButton";
 import type {
   GuardrailLevel,
@@ -221,6 +222,7 @@ export function RagEvidencePanel({
         <div>
           <p className="text-[11px] font-semibold uppercase text-primary">RAG 근거</p>
           <p className="text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">{hintText}</p>
+          <ChatEvidencePanelNotice className="mt-1 text-[11px] text-text-secondaryLight dark:text-text-secondaryDark" />
         </div>
         {confidenceLabel && (
           <span className="rounded-md border border-primary/40 px-2 py-1 text-[11px] font-semibold text-primary dark:border-primary/30">

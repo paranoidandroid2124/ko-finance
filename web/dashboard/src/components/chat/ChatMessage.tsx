@@ -2,6 +2,7 @@
 
 import classNames from "classnames";
 import { useCallback, useMemo } from "react";
+import { ChatAnswerBadge } from "@/components/legal/ChatLegal";
 import type { ChatMessageMeta, ChatRole, CitationEntry, CitationMap } from "@/store/chatStore";
 import { useToastStore } from "@/store/toastStore";
 import { logEvent } from "@/lib/telemetry";
@@ -206,6 +207,9 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
             : "bg-background-cardLight text-text-primaryLight dark:bg-background-cardDark dark:text-text-primaryDark"
         )}
       >
+        {!isUser ? (
+          <ChatAnswerBadge className="mb-2 text-[11px] font-medium text-text-secondaryLight dark:text-text-secondaryDark" />
+        ) : null}
         <div className="flex items-start gap-2">
           <p className="flex-1 whitespace-pre-wrap leading-relaxed">
             {content}
