@@ -190,6 +190,96 @@ def _count_text_characters(chunks: Iterable[Dict[str, Any]], *, source: Optional
     return total
 
 
+def _map_sentiment_label(score: Optional[float]) -> Optional[str]:
+    if score is None:
+        return None
+    if score <= -0.2:
+        return "negative"
+    if score >= 0.2:
+        return "positive"
+    return "neutral"
+
+
+def _store_news_vector_entry(
+    news_signal: NewsSignal,
+    *,
+    chunk_text: Optional[str],
+    topics: Sequence[str],
+    sentiment_score: Optional[float],
+    reliability: Optional[float],
+) -> None:
+    text = (chunk_text or "").strip()
+    if not text:
+        return
+    if not getattr(news_signal, "id", None):
+        logger.debug("Skipping news vector upsert because signal ID is missing.")
+        return
+
+    published_at = getattr(news_signal, "published_at", None)
+    published_iso: Optional[str] = None
+    published_ts: Optional[float] = None
+    if isinstance(published_at, datetime):
+        if published_at.tzinfo is None:
+            published_at = published_at.replace(tzinfo=timezone.utc)
+        published_iso = published_at.isoformat()
+        published_ts = published_at.timestamp()
+
+    cleaned_topics: List[str] = []
+    seen_topics: set[str] = set()
+    for topic in topics or []:
+        if not isinstance(topic, str):
+            continue
+        normalized = topic.strip()
+        if not normalized or normalized in seen_topics:
+            continue
+        cleaned_topics.append(normalized)
+        seen_topics.add(normalized)
+
+    sentiment_label = _map_sentiment_label(sentiment_score)
+    metadata: Dict[str, Any] = {
+        "source_type": "news",
+        "source_id": str(news_signal.id),
+        "title": news_signal.headline,
+        "publisher": news_signal.source,
+        "source": news_signal.source,
+        "ticker": news_signal.ticker,
+        "article_url": news_signal.url,
+        "license_type": getattr(news_signal, "license_type", None),
+        "license_url": getattr(news_signal, "license_url", None),
+        "source_reliability": reliability,
+        "summary": text,
+    }
+    if published_iso:
+        metadata["filed_at"] = published_iso
+        metadata["filed_at_ts"] = published_ts
+        metadata["published_at"] = published_iso
+    if sentiment_label:
+        metadata["sentiment"] = sentiment_label
+        metadata["sentiments"] = [sentiment_label]
+    if sentiment_score is not None:
+        metadata["sentiment_score"] = float(sentiment_score)
+    if cleaned_topics:
+        metadata["topics"] = cleaned_topics
+    if news_signal.url:
+        metadata["viewer_url"] = news_signal.url
+
+    chunk_id = f"news:{news_signal.id}"
+    chunk_payload = {
+        "id": f"{chunk_id}#0",
+        "content": text,
+        "metadata": metadata,
+    }
+    try:
+        vector_service.store_chunk_vectors(
+            chunk_id,
+            [chunk_payload],
+            metadata=metadata,
+        )
+        logger.debug("Stored news vector chunk for %s", news_signal.url)
+    except Exception as exc:
+        logger.warning("Failed to store news vector for %s: %s", news_signal.url, exc, exc_info=True)
+
+
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 
 DIGEST_ZONE = ZoneInfo("Asia/Seoul")
@@ -1187,8 +1277,11 @@ def process_news_article(article_payload: Any) -> str:
 
         sentiment = validated.get("sentiment")
         topics = validated.get("topics") or []
-        rationale = validated.get("rationale")
-        evidence = {"rationale": rationale} if rationale else None
+        sanitized_rationale = sanitize_news_summary(
+            validated.get("rationale"),
+            max_chars=max(160, NEWS_SUMMARY_MAX_CHARS),
+        )
+        evidence = {"rationale": sanitized_rationale} if sanitized_rationale else None
 
         reliability = score_source_reliability(article.source, article.url)
         sanitized_summary = sanitize_news_summary(
@@ -1227,6 +1320,16 @@ def process_news_article(article_payload: Any) -> str:
         except Exception as exc:
             logger.warning("Failed to assign sector for news signal %s: %s", article.url, exc, exc_info=True)
         db.commit()
+        if sanitized_rationale:
+            _store_news_vector_entry(
+                news_signal,
+                chunk_text=sanitized_rationale,
+                topics=topics,
+                sentiment_score=sentiment,
+                reliability=reliability,
+            )
+        else:
+            logger.debug("News article %s skipped for vector store due to empty rationale.", article.url)
         logger.info("Stored news signal %s for %s", news_signal.id, article.url)
         return str(news_signal.id)
 

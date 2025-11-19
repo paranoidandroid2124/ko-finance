@@ -12,8 +12,21 @@ import {
   YAxis,
 } from "recharts";
 
+import type { CommanderRouteDecision } from "@/lib/chatApi";
+import { useToolStore } from "@/store/toolStore";
+
 type EventStudyPanelProps = {
   params?: Record<string, unknown>;
+  decision?: CommanderRouteDecision | null;
+};
+
+type EventStudyMemoryWrite = {
+  toolId?: string;
+  topic: string;
+  question?: string | null;
+  answer?: string | null;
+  highlights?: string[];
+  metadata?: Record<string, unknown>;
 };
 
 type EventStudyResponse = {
@@ -30,6 +43,7 @@ type EventStudyResponse = {
     type: string;
     return: number;
   }[];
+  memory_write?: EventStudyMemoryWrite;
 };
 
 const tooltipFormatter = (value: number) => [`${value.toFixed(2)}%`, "CAR"];
@@ -39,6 +53,7 @@ export function EventStudyPanel({ params }: EventStudyPanelProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const ticker = typeof params?.ticker === "string" ? params?.ticker : "005930";
+  const setMemoryDraft = useToolStore((state) => state.setMemoryDraft);
 
   useEffect(() => {
     let mounted = true;
@@ -66,12 +81,25 @@ export function EventStudyPanel({ params }: EventStudyPanelProps) {
           return;
         }
         setData(payload);
+        if (payload.memory_write) {
+          setMemoryDraft({
+            toolId: payload.memory_write.toolId ?? "event_study",
+            topic: payload.memory_write.topic,
+            question: payload.memory_write.question ?? undefined,
+            answer: payload.memory_write.answer ?? undefined,
+            highlights: payload.memory_write.highlights ?? [],
+            metadata: payload.memory_write.metadata ?? {},
+          });
+        } else {
+          setMemoryDraft(null);
+        }
       } catch (fetchError) {
         if (!mounted) {
           return;
         }
         setError(fetchError instanceof Error ? fetchError.message : "알 수 없는 오류가 발생했습니다.");
         setData(null);
+        setMemoryDraft(null);
       } finally {
         if (mounted) {
           setLoading(false);
@@ -85,7 +113,7 @@ export function EventStudyPanel({ params }: EventStudyPanelProps) {
       mounted = false;
       controller.abort();
     };
-  }, [ticker, params?.event_type, params?.period_days]);
+  }, [ticker, params?.event_type, params?.period_days, setMemoryDraft]);
 
   const summaryCards = useMemo(() => {
     if (!data) {

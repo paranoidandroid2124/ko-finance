@@ -13,10 +13,11 @@ import { usePlanUpgrade } from "@/hooks/usePlanUpgrade";
 export default function EvidenceWorkspacePage() {
   const searchParams = useSearchParams();
   const traceId = searchParams?.get("traceId");
+  const filingId = searchParams?.get("filingId");
   const urnId = searchParams?.get("urnId");
   const planTier = usePlanTier();
   const { requestUpgrade } = usePlanUpgrade();
-  const { data, isLoading, isError, error } = useEvidenceWorkspace(traceId, urnId);
+  const { data, isLoading, isError, error } = useEvidenceWorkspace(traceId, urnId, filingId);
 
   const status: "loading" | "ready" | "empty" | "anchor-mismatch" =
     isLoading ? "loading" : data && data.evidence.length === 0 ? "empty" : "ready";
@@ -30,7 +31,7 @@ export default function EvidenceWorkspacePage() {
             근거 스냅샷 뷰어
           </h1>
           <p className="text-sm text-text-secondaryLight dark:text-text-secondaryDark">
-            RAG 답변에 사용된 근거를 PDF·표 기반으로 재검증하는 화면입니다. traceId 파라미터로 원하는 세션을 열 수
+            RAG 답변에 사용된 근거를 PDF·표 기반으로 재검증하는 화면입니다. traceId 또는 filingId 파라미터로 원하는 세션을 열 수
             있어요.
           </p>
         </header>
@@ -56,8 +57,8 @@ export default function EvidenceWorkspacePage() {
           />
         ) : (
           <ErrorState
-            title="traceId가 필요합니다"
-            description="주소창에 traceId 파라미터를 추가해 주세요."
+            title="traceId 또는 filingId가 필요합니다"
+            description="주소창에 traceId나 filingId 파라미터를 추가해 주세요."
           />
         )}
       </div>

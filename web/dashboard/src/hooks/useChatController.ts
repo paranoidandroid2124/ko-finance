@@ -13,6 +13,7 @@ import {
   type RagQueryResponsePayload,
   type RagLegacyContext,
   type RagHighlightPayload,
+  type CommanderRouteDecision,
 } from '@/lib/chatApi';
 import {
   useChatStore,
@@ -33,7 +34,7 @@ import {
 import { usePlanTier, usePlanStore } from '@/store/planStore';
 import type { PlanTier } from "@/store/planStore/types";
 import { useToastStore } from '@/store/toastStore';
-import { useToolStore, type ToolAction } from '@/store/toolStore';
+import { useToolStore } from '@/store/toolStore';
 import { PLAN_TIER_CONFIG } from "@/config/planConfig";
 import { LEGAL_COPY } from "@/components/legal/LegalCopy";
 
@@ -744,6 +745,10 @@ export function useChatController(): ChatController {
         run_self_check: true,
         meta: {}
       };
+      const toolContext = useToolStore.getState().consumeToolContext(sessionId);
+      if (toolContext) {
+        ragPayload.meta = { tool_context: toolContext };
+      }
       if (referenceId) {
         ragPayload.filing_id = referenceId;
       }
@@ -906,17 +911,14 @@ export function useChatController(): ChatController {
         await streamRagQuery(ragPayload, {
           onEvent: (event) => {
             if (event.event === 'route') {
-              const decision = event.decision ?? {};
-              const actionValue = typeof decision.action === 'string' ? decision.action : undefined;
-              if (actionValue && actionValue.startsWith('TOOL_')) {
-                const parameters =
-                  decision.parameters && typeof decision.parameters === 'object'
-                    ? (decision.parameters as Record<string, unknown>)
-                    : {};
-                console.info('[ToolRouter] route event received', decision);
-                useToolStore
-                  .getState()
-                  .openTool(actionValue as ToolAction, parameters);
+              const decision = event.decision as CommanderRouteDecision | undefined;
+              if (decision?.tool_call?.name) {
+                console.info('[Commander] route decision received', decision);
+                useToolStore.getState().openFromDecision(decision, {
+                  sessionId: activeSessionId,
+                  turnId: typeof event.turn_id === 'string' ? event.turn_id : null,
+                  assistantMessageId: typeof event.id === 'string' ? event.id : null
+                });
               }
             } else if (event.event === 'chunk') {
               streamedAnswer += event.delta;

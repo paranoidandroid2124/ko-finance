@@ -59,7 +59,19 @@ module.exports = {
       },
       animation: {
         "motion-shimmer": "motion-shimmer var(--motion-medium-duration) var(--motion-medium-ease) infinite",
-        "lock-shake": "motion-lock-shake var(--motion-tactile-duration) var(--motion-tactile-ease)"
+        "lock-shake": "motion-lock-shake var(--motion-tactile-duration) var(--motion-tactile-ease)",
+        "grid-move": "grid-move 20s linear infinite",
+        "pulse-glow": "pulse-glow 8s ease-in-out infinite alternate"
+      },
+      keyframes: {
+        "grid-move": {
+          "0%": { transform: "translateY(0)" },
+          "100%": { transform: "translateY(40px)" }
+        },
+        "pulse-glow": {
+          "0%": { opacity: "0.5", transform: "translate(-50%, 0) scale(1)" },
+          "100%": { opacity: "0.8", transform: "translate(-50%, 0) scale(1.2)" }
+        }
       },
       boxShadow: {
         card: "0 10px 30px rgba(17, 24, 39, 0.08)"

@@ -169,11 +169,16 @@ export const mapWorkspacePayload = (payload: EvidenceWorkspaceResponsePayload): 
   diffEnabled: Boolean(payload.diff?.enabled),
 });
 
-export const useEvidenceWorkspace = (traceId?: string | null, urnId?: string | null) => {
+export const useEvidenceWorkspace = (traceId?: string | null, urnId?: string | null, filingId?: string | null) => {
   const query = useQuery<EvidenceWorkspaceResponsePayload, Error>({
-    queryKey: ["evidence-workspace", traceId, urnId],
-    queryFn: () => fetchEvidenceWorkspace(traceId!, urnId ? { urnId } : undefined),
-    enabled: Boolean(traceId),
+    queryKey: ["evidence-workspace", traceId, filingId, urnId],
+    queryFn: () =>
+      fetchEvidenceWorkspace({
+        traceId: traceId ?? undefined,
+        filingId: filingId ?? undefined,
+        urnId: urnId ?? undefined,
+      }),
+    enabled: Boolean(traceId || filingId),
     staleTime: 30_000,
   });
 

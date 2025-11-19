@@ -7,6 +7,7 @@ from textwrap import dedent
 from typing import Dict, List
 
 from schemas.router import RouteDecision
+from services.tool_registry import list_tools
 
 ROUTE_SCHEMA_JSON = json.dumps(
     RouteDecision.model_json_schema(),
@@ -14,28 +15,41 @@ ROUTE_SCHEMA_JSON = json.dumps(
     indent=2,
 )
 
-ACTION_GUIDANCE = dedent(
-    """
-    허용된 action 값:
-    - RAG_ANSWER: 일반적인 재무/기업 분석 답변이 필요할 때 사용.
-    - TOOL_NEWS: 최신 뉴스/속보/공시 패널을 열어야 할 때 사용.
-    - TOOL_DISCLOSURE: 특정 공시 원문을 열람하거나 공시 리스트를 보여줄 때 사용.
-    - TOOL_EVENT_STUDY: 과거 이벤트(실적발표, 유상증자 등) 전후 주가 패턴을 분석할 때 사용.
-    - TOOL_MARKET_BRIEF: ‘한눈에 보기’ 스타일의 마켓 브리핑을 보여줄 때 사용.
-    - CLARIFY: action 후보가 2개 이상으로 모호하고 추가 입력이 필요할 때 사용.
-    - BLOCK_COMPLIANCE: 투자 자문, 매수/매도 권유 등 규제 키워드가 포함될 때 사용.
+_TOOL_GUIDANCE_LINES: List[str] = []
+for tool in list_tools():
+    descriptor = (
+        f"- {tool.tool_id}: call_name='{tool.call_name}', intent='{tool.intent}', "
+        f"ui={tool.ui_container.value}, paywall={tool.paywall.value}. {tool.description}"
+    )
+    _TOOL_GUIDANCE_LINES.append(descriptor)
 
-    규칙:
-    1. action 은 위 목록 중 하나여야 한다.
-    2. confidence 는 0~1 사이의 소수로, 2 decimal precision 정도로 출력한다.
-    3. tickers 는 대문자, 하이픈 없는 종목 코드 목록으로 deduplicate 해서 채운다.
-    4. parameters 는 선택된 action 을 실행하는 데 필요한 argument 를 key-value 로 채운다.
-       예) 이벤트 스터디: {"ticker": "NVDA", "event_type": "earnings", "window_days": 30}
-    5. CLARIFY 일 때는 suggestions 배열에 2~3개의 대안을 넣고, 각 항목은 action/label/parameters 를 포함한다.
-    6. BLOCK_COMPLIANCE 일 때는 blocked_phrases 에 검출된 위험 키워드를 모두 넣는다.
-    7. JSON schema 를 반드시 준수하고, JSON 한 줄만 출력한다.
+TOOL_GUIDANCE = "\n".join(_TOOL_GUIDANCE_LINES)
+
+ROUTER_RULES = dedent(
     """
-).strip()
+    필드 규칙:
+    1. intent 는 commander tool intent (예: event_study, disclosure_lookup) 로 registry 표와 일치해야 함.
+    2. tool_call.name 은 registry 의 call_name 중 하나. arguments 는 필요한 파라미터만 포함.
+    3. ui_container 와 paywall 값은 registry 와 동일해야 함.
+    4. requires_context 는 도구 실행 전에 필요한 LightMem/tenant context 를 모두 채움.
+    5. safety.block 이 true 이면 응답을 차단하고 reason 에 사유를 설명, keywords 에 감지된 문구를 넣음.
+    6. tickers 는 질의에 등장한 종목 코드를 대문자/공백 제거 후 deduplicate 해서 채움.
+    7. reason 은 선택 근거를 한국어로 1~2문장 작성.
+    8. confidence 는 0~1 범위 실수 (소수점 둘째 자리 권장).
+    9. JSON schema 를 엄격히 준수하고, JSON 한 줄만 출력.
+
+    규제:
+    - "매수", "매도", "사라", "팔라", "추천", "목표가" 등 투자자문 표현이 있으면 tool_call.name="compliance.block" 으로 설정하고 safety.block=true.
+    - 단순 소통/스몰톡이면 rag.answer 사용.
+
+    라우팅 힌트:
+    - "왜 떨어졌어", "최근 뉴스 없어?", "악재/호재 있나" 처럼 리스크/이슈를 묻는 질문은 news.rag 를 선택하고 arguments 에 query 와 ticker 를 넣는다.
+    - "다 같이 빠지나?", "경쟁사랑 비교해 줘", "섹터 문제야?" 등 상대 비교 질문은 peer.compare 를 선택하고 ticker 와 기간(period_days)을 지정한다.
+
+    Commander Tool Reference:
+    {tool_reference}
+    """
+).strip().format(tool_reference=TOOL_GUIDANCE)
 
 
 def get_prompt(question: str) -> List[Dict[str, str]]:
@@ -43,11 +57,11 @@ def get_prompt(question: str) -> List[Dict[str, str]]:
 
     user_instructions = dedent(
         f"""
-        사용자가 보낸 한국어 질의에 대해 가장 적절한 action 을 선택하세요.
+        사용자의 한국어 질의를 분석하여 commander tool 을 결정하세요.
         JSON schema:
         {ROUTE_SCHEMA_JSON}
 
-        {ACTION_GUIDANCE}
+        {ROUTER_RULES}
 
         질의:
         {question.strip()}
@@ -56,10 +70,9 @@ def get_prompt(question: str) -> List[Dict[str, str]]:
 
     return [
         {"role": "system", "content": "너는 K-Finance Copilot 의 라우팅 엔진이다. 설명 없이 JSON 만 출력한다."},
-        {"role": "assistant", "content": ACTION_GUIDANCE},
+        {"role": "assistant", "content": ROUTER_RULES},
         {"role": "user", "content": user_instructions},
     ]
 
 
 __all__ = ["get_prompt"]
-

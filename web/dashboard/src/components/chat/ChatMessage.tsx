@@ -3,6 +3,7 @@
 import classNames from "classnames";
 import { useCallback, useMemo } from "react";
 import { ChatAnswerBadge } from "@/components/legal";
+import ToolWidgetRenderer from "@/components/chat/ToolWidgetRenderer";
 import type { ChatMessageMeta, ChatRole, CitationEntry, CitationMap } from "@/store/chatStore";
 import { useToastStore } from "@/store/toastStore";
 import { logEvent } from "@/lib/telemetry";
@@ -147,6 +148,44 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
   const canRetry = Boolean(meta?.retryable && onRetry);
   const showToast = useToastStore((state) => state.show);
   const normalizedCitations = useMemo(() => normalizeCitations(meta?.citations), [meta?.citations]);
+  const memoryMeta = (meta?.memory ?? null) as
+    | {
+        enabled?: boolean;
+        required?: boolean;
+        applied?: boolean;
+        reason?: string;
+      }
+    | null;
+
+  const memoryBadge = useMemo(() => {
+    if (!memoryMeta) {
+      return null;
+    }
+    if (memoryMeta.applied) {
+      return {
+        label: "LightMem 적용",
+        tone: "positive",
+        description: "최근 대화 요약과 비교 맥락을 활용했습니다."
+      };
+    }
+    if (memoryMeta.required && memoryMeta.enabled === false) {
+      return {
+        label: "LightMem 비활성",
+        tone: "warning",
+        description: memoryMeta.reason
+          ? `메모리를 사용할 수 없습니다: ${memoryMeta.reason}`
+          : "현재 플랜/설정에서 LightMem 기능이 꺼져 있습니다."
+      };
+    }
+    if (memoryMeta.required) {
+      return {
+        label: "LightMem 준비 중",
+        tone: "info",
+        description: "비교 요청을 위해 메모리를 불러오는 중입니다."
+      };
+    }
+    return null;
+  }, [memoryMeta]);
 
   const handleOpenCitation = useCallback(
     (citation: NormalizedCitation) => {
@@ -208,7 +247,22 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
         )}
       >
         {!isUser ? (
-          <ChatAnswerBadge className="mb-2 text-[11px] font-medium text-text-secondaryLight dark:text-text-secondaryDark" />
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-medium text-text-secondaryLight dark:text-text-secondaryDark">
+            <ChatAnswerBadge />
+            {memoryBadge ? (
+              <span
+                className={classNames(
+                  "rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide",
+                  memoryBadge.tone === "positive" && "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200",
+                  memoryBadge.tone === "warning" && "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200",
+                  memoryBadge.tone === "info" && "bg-primary/10 text-primary dark:bg-primary.dark/20 dark:text-primary.dark"
+                )}
+                title={memoryBadge.description}
+              >
+                {memoryBadge.label}
+              </span>
+            ) : null}
+          </div>
         ) : null}
         <div className="flex items-start gap-2">
           <p className="flex-1 whitespace-pre-wrap leading-relaxed">
@@ -260,6 +314,13 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
                 );
               })}
             </div>
+          </div>
+        ) : null}
+        {meta?.toolAttachments && meta.toolAttachments.length > 0 ? (
+          <div className="mt-3 space-y-3">
+            {meta.toolAttachments.map((attachment, index) => (
+              <ToolWidgetRenderer key={`${id}-attachment-${index}`} attachment={attachment} />
+            ))}
           </div>
         ) : null}
         {!isUser && status && (status === "error" || status === "blocked") && (

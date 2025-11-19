@@ -124,6 +124,37 @@ def _resolve_urn(chunk: Dict[str, Any], *, chunk_id: Optional[str]) -> str:
     return f"urn:chunk:{deterministic}"
 
 
+def _build_news_entry(chunk: Dict[str, Any], fallback_score: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    metadata = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
+    summary = metadata.get("summary") or chunk.get("quote") or chunk.get("content")
+    if not summary:
+        return None
+
+    def _first(*values: Any) -> Optional[str]:
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    published_at = _first(metadata.get("published_at"), chunk.get("filed_at"), chunk.get("published_at"))
+    url = _first(metadata.get("viewer_url"), metadata.get("article_url"), chunk.get("viewer_url"))
+    sentiment_label = _first(metadata.get("sentiment"), chunk.get("sentiment"))
+    sentiment_score = chunk.get("sentiment_score") or metadata.get("sentiment_score")
+
+    return {
+        "id": _first(chunk.get("chunk_id"), chunk.get("id"), metadata.get("source_id")),
+        "title": _first(metadata.get("title"), chunk.get("title")),
+        "source": _first(metadata.get("publisher"), chunk.get("publisher"), metadata.get("source")),
+        "summary": summary,
+        "sentiment": sentiment_label,
+        "sentimentScore": float(sentiment_score) if isinstance(sentiment_score, (int, float)) else None,
+        "publishedAt": published_at,
+        "url": url,
+        "ticker": metadata.get("ticker") or chunk.get("ticker"),
+        "score": float(fallback_score) if isinstance(fallback_score, (int, float)) else safe_float(chunk.get("score")),
+    }
+
+
 def _table_hint(metadata: Dict[str, Any], page_number: Optional[int]) -> Optional[Dict[str, Any]]:
     table_index = metadata.get("table_index")
     if table_index is None:
@@ -411,6 +442,69 @@ def _validate_grid_request(
         )
 
 
+def search_news_summaries(
+    query: str,
+    *,
+    ticker: Optional[str] = None,
+    limit: int = 6,
+) -> List[Dict[str, Any]]:
+    normalized_query = (query or "").strip()
+    if not normalized_query:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="query is required")
+
+    limit = max(1, min(limit, 20))
+    filters: Dict[str, Any] = {"source_type": "news"}
+    if ticker:
+        filters["ticker"] = ticker.strip()
+
+    try:
+        base_result = vector_service.query_vector_store(
+            normalized_query,
+            top_k=1,
+            max_filings=limit,
+            filters=filters,
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.error("News vector search failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "news_rag_unavailable", "message": "뉴스 검색이 지연되고 있습니다. 잠시 후 다시 시도해 주세요."},
+        ) from exc
+
+    ranked_docs = list(base_result.related_filings or [])
+    entries: List[Dict[str, Any]] = []
+
+    for doc in ranked_docs:
+        if len(entries) >= limit:
+            break
+        filing_id = str(doc.get("filing_id") or "")
+        if not filing_id:
+            continue
+        chunks: List[Dict[str, Any]] = []
+        if base_result.filing_id == filing_id and base_result.chunks:
+            chunks = list(base_result.chunks)
+        if not chunks:
+            try:
+                follow_up = vector_service.query_vector_store(
+                    normalized_query,
+                    filing_id=filing_id,
+                    top_k=1,
+                    max_filings=1,
+                    filters=filters,
+                )
+            except Exception as exc:  # pragma: no cover
+                logger.warning("News follow-up lookup failed for %s: %s", filing_id, exc)
+                continue
+            chunks = list(follow_up.chunks or [])
+        if not chunks:
+            continue
+        entry = _build_news_entry(chunks[0], fallback_score=doc.get("score"))
+        if entry:
+            entries.append(entry)
+
+    return entries
+
+
 @dataclass(slots=True)
 class IntentGateResult:
     decision: str
@@ -446,7 +540,9 @@ def _evaluate_intent_gate(
         response.meta = {
             **(response.meta or {}),
             "memory": dict(ctx.memory_info),
-            "router_action": action.value,
+            "router_action": route_decision.tool_name,
+            "router_intent": route_decision.intent,
+            "router_decision": route_decision.model_dump_route(),
         }
         db.commit()
         _enqueue_session_summary_if_allowed(plan_memory_enabled, needs_summary, ctx.session.id)
@@ -468,7 +564,9 @@ def _evaluate_intent_gate(
         response.meta = {
             **(response.meta or {}),
             "memory": dict(ctx.memory_info),
-            "router_action": action.value,
+            "router_action": route_decision.tool_name,
+            "router_intent": route_decision.intent,
+            "router_decision": route_decision.model_dump_route(),
         }
         db.commit()
         _enqueue_session_summary_if_allowed(plan_memory_enabled, needs_summary, ctx.session.id)
@@ -1245,8 +1343,16 @@ def _prepare_rag_session(
     _enforce_chat_quota(plan, user_id)
 
     user_meta = dict(request.meta or {})
+    tool_context_value = user_meta.get("tool_context")
+    tool_context: Optional[str] = None
+    if isinstance(tool_context_value, str):
+        stripped = tool_context_value.strip()
+        if stripped:
+            tool_context = stripped
     user_settings = _load_user_lightmem_settings(user_id)
     plan_memory_enabled = _plan_memory_enabled(plan, user_settings=user_settings)
+    if tool_context:
+        prompt_metadata["tool_context"] = tool_context
 
     session = _resolve_session(
         db,
@@ -1277,14 +1383,14 @@ def _prepare_rag_session(
     conversation_memory = chat_service.build_conversation_memory(db, session)
     memory_session_key = f"chat:{session.id}"
     tenant_id_value, user_id_value = _memory_subject_ids(session, user_id, org_id)
-    conversation_memory, memory_info = rag_audit.merge_lightmem_context(
-        question,
-        conversation_memory,
-        session_key=memory_session_key,
-        tenant_id=tenant_id_value,
-        user_id=user_id_value,
-        plan_memory_enabled=plan_memory_enabled,
-    )
+    memory_info: Dict[str, Any] = {
+        "enabled": False,
+        "reason": "not_evaluated",
+        "applied": False,
+        "captured": False,
+        "hydrated": False,
+        "required": False,
+    }
 
     return RagSessionStage(
         question=question,
@@ -1309,6 +1415,69 @@ def _prepare_rag_session(
         tenant_id_value=tenant_id_value,
         user_id_value=user_id_value,
     )
+
+
+def _requires_lightmem(route_decision: RouteDecision) -> bool:
+    contexts = route_decision.requires_context or []
+    for ctx in contexts:
+        if isinstance(ctx, str) and ctx.strip().lower() == "lightmem.summary":
+            return True
+    return False
+
+
+def _compose_lightmem_context(
+    question: str,
+    conversation_memory: Optional[Dict[str, Any]],
+    *,
+    session_key: str,
+    tenant_id: Optional[str],
+    user_id: Optional[str],
+    plan_memory_enabled: bool,
+    require_lightmem: bool,
+) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+    info: Dict[str, Any] = {
+        "enabled": False,
+        "required": require_lightmem,
+        "hydrated": True,
+        "applied": False,
+        "captured": False,
+    }
+    if not require_lightmem:
+        info["reason"] = "not_requested"
+        return conversation_memory, info
+    if not plan_memory_enabled:
+        info["reason"] = "plan_disabled"
+        return conversation_memory, info
+    if not tenant_id or not user_id:
+        info["reason"] = "missing_subject"
+        return conversation_memory, info
+    merged_memory, memory_info = rag_audit.merge_lightmem_context(
+        question,
+        conversation_memory,
+        session_key=session_key,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        plan_memory_enabled=plan_memory_enabled,
+    )
+    memory_info.setdefault("required", True)
+    memory_info["hydrated"] = True
+    return merged_memory, memory_info
+
+
+def _hydrate_lightmem_context(ctx: RagSessionStage, require_lightmem: bool) -> None:
+    if ctx.memory_info.get("hydrated"):
+        return
+    conversation_memory, memory_info = _compose_lightmem_context(
+        ctx.question,
+        ctx.conversation_memory,
+        session_key=ctx.memory_session_key,
+        tenant_id=ctx.tenant_id_value,
+        user_id=ctx.user_id_value,
+        plan_memory_enabled=ctx.plan_memory_enabled,
+        require_lightmem=require_lightmem,
+    )
+    ctx.conversation_memory = conversation_memory
+    ctx.memory_info = memory_info
 
 
 def _run_retrieval_stage(
@@ -1406,7 +1575,7 @@ def _render_rag_response(
     intent_decision: str,
     intent_reason: Optional[str],
     intent_model: Optional[str],
-    router_action: str,
+    route_decision: RouteDecision,
     persist_context: bool = True,
 ) -> Tuple[RAGQueryResponse, bool]:
     conversation_summary = None
@@ -1445,7 +1614,9 @@ def _render_rag_response(
         "intent_decision": intent_decision,
         "intent_reason": intent_reason,
         "intent_model": intent_model,
-        "router_action": router_action,
+        "router_action": route_decision.tool_name,
+        "router_intent": route_decision.intent,
+        "router_decision": route_decision.model_dump_route(),
     }
     if ctx.prompt_metadata:
         meta_payload["prompt"] = ctx.prompt_metadata
@@ -1604,9 +1775,13 @@ def query_rag(
 
     try:
         route_decision = _resolve_route_decision(route_decision, question)
-        ctx.user_meta["router_action"] = route_decision.action.value
+        ctx.user_meta["router_action"] = route_decision.tool_name
+        ctx.user_meta["router_intent"] = route_decision.intent
+        ctx.user_meta["router_decision"] = route_decision.model_dump_route()
         ctx.user_meta["router_confidence"] = route_decision.confidence
 
+        route_payload = route_decision.model_dump_route()
+        _hydrate_lightmem_context(ctx, _requires_lightmem(route_decision))
         intent_gate = _evaluate_intent_gate(
             ctx,
             route_decision,
@@ -1656,7 +1831,7 @@ def query_rag(
             intent_decision=intent_gate.decision,
             intent_reason=intent_gate.reason,
             intent_model=intent_gate.model,
-            router_action=intent_gate.route.action.value,
+            route_decision=intent_gate.route,
         )
         _record_rag_audit(
             ctx,
@@ -1742,8 +1917,12 @@ def query_rag_stream(
 
     try:
         route_decision = _resolve_route_decision(route_decision, question)
-        ctx.user_meta["router_action"] = route_decision.action.value
+        ctx.user_meta["router_action"] = route_decision.tool_name
+        ctx.user_meta["router_intent"] = route_decision.intent
+        ctx.user_meta["router_decision"] = route_decision.model_dump_route()
         ctx.user_meta["router_confidence"] = route_decision.confidence
+        route_payload = route_decision.model_dump_route()
+        _hydrate_lightmem_context(ctx, _requires_lightmem(route_decision))
         intent_gate = _evaluate_intent_gate(
             ctx,
             route_decision,
@@ -1758,6 +1937,14 @@ def query_rag_stream(
             payload_json = intent_gate.response.model_dump(mode="json")
 
             def intent_stream():
+                yield json.dumps(
+                    {
+                        "event": "route",
+                        "id": str(assistant_message.id),
+                        "turn_id": str(turn_id),
+                        "decision": route_payload,
+                    }
+                ) + "\n"
                 yield json.dumps(
                     {
                         "event": "done",
@@ -1816,6 +2003,14 @@ def query_rag_stream(
             def no_context_stream():
                 yield json.dumps(
                     {
+                        "event": "route",
+                        "id": str(assistant_message.id),
+                        "turn_id": str(turn_id),
+                        "decision": route_payload,
+                    }
+                ) + "\n"
+                yield json.dumps(
+                    {
                         "event": "done",
                         "id": str(assistant_message.id),
                         "turn_id": str(turn_id),
@@ -1847,6 +2042,14 @@ def query_rag_stream(
             if prompt_metadata:
                 initial_meta["prompt"] = prompt_metadata
             initial_meta["memory"] = dict(memory_info)
+            yield json.dumps(
+                {
+                    "event": "route",
+                    "id": str(assistant_message.id),
+                    "turn_id": str(turn_id),
+                    "decision": route_payload,
+                }
+            ) + "\n"
             yield json.dumps(
                 {
                     "event": "metadata",
@@ -1946,7 +2149,7 @@ def query_rag_stream(
                     intent_decision=intent_decision,
                     intent_reason=intent_reason,
                     intent_model=intent_model,
-                    router_action=route_decision.action.value,
+                    route_decision=route_decision,
                 )
                 _record_rag_audit(
                     ctx,
@@ -2046,7 +2249,9 @@ def query_rag_v2(
     _enforce_chat_quota(plan, user_id)
 
     user_meta = dict(payload.meta or {})
-    user_meta.setdefault("router_action", route_decision.action.value)
+    user_meta.setdefault("router_action", route_decision.tool_name)
+    user_meta.setdefault("router_intent", route_decision.intent)
+    user_meta.setdefault("router_decision", route_decision.model_dump_route())
     user_meta.setdefault("router_confidence", route_decision.confidence)
     user_settings = _load_user_lightmem_settings(user_id)
     plan_memory_enabled = _plan_memory_enabled(plan, user_settings=user_settings)
@@ -2081,13 +2286,14 @@ def query_rag_v2(
         conversation_memory = chat_service.build_conversation_memory(db, session)
         memory_session_key = f"chat:{session.id}"
         tenant_id_value, user_id_value = _memory_subject_ids(session, user_id, org_id)
-        conversation_memory, memory_info = rag_audit.merge_lightmem_context(
+        conversation_memory, memory_info = _compose_lightmem_context(
             question,
             conversation_memory,
             session_key=memory_session_key,
             tenant_id=tenant_id_value,
             user_id=user_id_value,
             plan_memory_enabled=plan_memory_enabled,
+            require_lightmem=_requires_lightmem(route_decision),
         )
 
         judge_result = llm_service.assess_query_risk(question)
@@ -2229,6 +2435,7 @@ def query_rag_v2(
             "totalMs": _stringify_ms(pipeline_result.timings_ms.get("totalMs")),
             "relatedCount": str(len(pipeline_result.related_documents)),
             "modelUsed": llm_payload.get("model_used"),
+            "memory": memory_info,
         }
 
         return RagQueryV2Response(
@@ -2310,6 +2517,7 @@ __all__ = [
     "query_rag_grid",
     "create_rag_grid_job",
     "read_rag_grid_job",
+    "search_news_summaries",
 ]
 
 

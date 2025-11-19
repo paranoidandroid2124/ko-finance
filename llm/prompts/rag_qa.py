@@ -106,6 +106,11 @@ def _format_meta_block(meta: Optional[Dict[str, Any]]) -> str:
             lines.append(f"- 요청된 기간: {display} ({start_local} ~ {end_local})")
         else:
             lines.append(f"- 요청된 기간: {display}")
+    tool_context = meta.get("tool_context")
+    if isinstance(tool_context, str):
+        stripped = tool_context.strip()
+        if stripped:
+            lines.append(f"- 현재 툴 컨텍스트:\n{stripped}")
     return "\n".join(lines)
 
 

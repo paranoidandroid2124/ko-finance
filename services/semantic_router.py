@@ -9,7 +9,14 @@ from pydantic import ValidationError
 
 from core.logging import get_logger
 from llm import llm_service
-from schemas.router import RouteAction, RouteDecision
+from schemas.router import (
+    RouteAction,
+    RouteDecision,
+    SafetyDecision,
+    ToolCall,
+    UiContainer,
+    PaywallTier,
+)
 
 logger = get_logger(__name__)
 
@@ -70,18 +77,27 @@ class SemanticRouter:
         if not triggered:
             return None
         return RouteDecision(
-            action=RouteAction.BLOCK_COMPLIANCE,
+            intent="compliance_block",
             reason="금융 규제 키워드 감지됨",
             confidence=1.0,
-            blocked_phrases=triggered,
+            tool_call=ToolCall(name="compliance.block", arguments={}),
+            ui_container=UiContainer.INLINE_CARD,
+            paywall=PaywallTier.FREE,
+            requires_context=[],
+            safety=SafetyDecision(block=True, reason="금융 규제 문구 감지", keywords=triggered),
             metadata={"source": "regex_blocklist"},
         )
 
     def _fallback_decision(self, reason: str) -> RouteDecision:
         return RouteDecision(
-            action=RouteAction.RAG_ANSWER,
+            intent="rag_answer",
             reason=reason,
             confidence=0.0,
+            tool_call=ToolCall(name="rag.answer", arguments={}),
+            ui_container=UiContainer.INLINE_CARD,
+            paywall=PaywallTier.FREE,
+            requires_context=[],
+            safety=SafetyDecision(block=False, reason=None, keywords=[]),
             metadata={"fallback": True},
         )
 

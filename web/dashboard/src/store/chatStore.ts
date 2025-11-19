@@ -48,6 +48,13 @@ export type CitationObject = {
 export type CitationEntry = string | CitationObject;
 export type CitationMap = Record<string, CitationEntry[]>;
 
+export type ToolAttachment = {
+  type: "news_cards" | "value_chain";
+  title?: string;
+  description?: string;
+  data?: Record<string, unknown>;
+};
+
 export type ChatMessageMeta = {
   status?: ChatMessageStatus;
   errorMessage?: string;
@@ -63,6 +70,16 @@ export type ChatMessageMeta = {
   warnings?: string[];
   citations?: CitationMap;
   model?: string | null;
+  memory?: {
+    enabled?: boolean;
+    required?: boolean;
+    hydrated?: boolean;
+    applied?: boolean;
+    captured?: boolean;
+    reason?: string;
+    [key: string]: unknown;
+  };
+  toolAttachments?: ToolAttachment[];
   [key: string]: unknown;
 };
 

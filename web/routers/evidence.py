@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, desc
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -48,8 +48,38 @@ def _load_trace_snapshots(
     response_model=EvidenceWorkspaceResponse,
     summary="Evidence workspace payload for a specific trace identifier.",
 )
+def _resolve_trace_id_for_filing(
+    db: Session,
+    filing_id: str,
+    *,
+    org_id: Optional[uuid.UUID],
+    user_id: Optional[uuid.UUID],
+) -> Optional[str]:
+    stmt = select(EvidenceSnapshot.payload["trace_id"].astext).where(
+        EvidenceSnapshot.payload["filing_id"].astext == filing_id
+    )
+    if org_id:
+        stmt = stmt.where(EvidenceSnapshot.org_id == org_id)
+    elif user_id:
+        stmt = stmt.where(EvidenceSnapshot.user_id == user_id)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "evidence.owner_required", "message": "User or organization context is required."},
+        )
+    stmt = stmt.order_by(desc(EvidenceSnapshot.updated_at)).limit(1)
+    result = db.execute(stmt).scalar_one_or_none()
+    return result
+
+
+@router.get(
+    "/workspace",
+    response_model=EvidenceWorkspaceResponse,
+    summary="Evidence workspace payload for a specific trace identifier or filing.",
+)
 def get_evidence_workspace(
-    trace_id: str = Query(..., alias="traceId", min_length=3),
+    trace_id: Optional[str] = Query(None, alias="traceId", min_length=3),
+    filing_id: Optional[str] = Query(None, alias="filingId"),
     urn_id: Optional[str] = Query(None, alias="urnId"),
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
@@ -73,7 +103,18 @@ def get_evidence_workspace(
         if x_org_id
         else None
     )
-    snapshots = _load_trace_snapshots(db, trace_id, org_id=org_id, user_id=user_id)
+    resolved_trace_id = trace_id
+    if not resolved_trace_id:
+        if not filing_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "evidence.trace_required", "message": "traceId or filingId must be provided."},
+            )
+        resolved_trace_id = _resolve_trace_id_for_filing(db, filing_id, org_id=org_id, user_id=user_id)
+        if not resolved_trace_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_trace_not_found")
+
+    snapshots = _load_trace_snapshots(db, resolved_trace_id, org_id=org_id, user_id=user_id)
     if not snapshots:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_trace_not_found")
     payloads: List[Dict[str, Any]] = []
@@ -115,7 +156,7 @@ def get_evidence_workspace(
     )
 
     return EvidenceWorkspaceResponse(
-        traceId=trace_id,
+        traceId=resolved_trace_id,
         evidence=evidence_models,
         diff=diff_schema,
         pdfUrl=pdf_url,

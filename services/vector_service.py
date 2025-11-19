@@ -333,6 +333,25 @@ def query_vector_store(
             range_kwargs["lte"] = float(max_ts)
         filter_conditions.append(models.FieldCondition(key="filed_at_ts", range=models.Range(**range_kwargs)))
 
+    source_type = filters.get("source_type")
+    if source_type:
+        if isinstance(source_type, (list, tuple, set)):
+            values = [str(value) for value in source_type if isinstance(value, str) and value.strip()]
+            if values:
+                filter_conditions.append(
+                    models.FieldCondition(
+                        key="source_type",
+                        match=models.MatchAny(any=values),
+                    )
+                )
+        elif isinstance(source_type, str):
+            filter_conditions.append(
+                models.FieldCondition(
+                    key="source_type",
+                    match=models.MatchValue(value=source_type),
+                )
+            )
+
     query_filter = models.Filter(must=filter_conditions) if filter_conditions else None
 
     search_limit = max(top_k * max_filings * 4, top_k)

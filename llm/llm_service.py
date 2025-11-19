@@ -27,6 +27,7 @@ from llm.prompts import (
     self_check,
     summarize_report,
     table_aware_rag,
+    value_chain_extract,
 )
 from services import deeplink_service
 
@@ -320,14 +321,16 @@ def classify_filing_content(raw_md: str) -> Dict[str, Any]:
 
 
 _ROUTER_FALLBACK = {
-    "action": "RAG_ANSWER",
+    "intent": "rag_answer",
     "reason": "semantic_router_fallback",
     "confidence": 0.0,
+    "tool_call": {"name": "rag.answer", "arguments": {}},
+    "ui_container": "inline_card",
+    "paywall": "free",
+    "requires_context": [],
+    "safety": {"block": False, "reason": None, "keywords": []},
     "tickers": [],
-    "parameters": {},
     "metadata": {"fallback": True},
-    "suggestions": [],
-    "blocked_phrases": [],
 }
 
 
@@ -473,6 +476,46 @@ def analyze_news_article(article_text: str) -> Dict[str, Any]:
         return validated
     logger.info("News analysis sentiment=%s", validated.get("sentiment"))
     return validated
+
+
+def extract_value_chain_relations(ticker: str, context_text: str) -> Dict[str, Any]:
+    """Extract suppliers/customers/competitors from unstructured text."""
+
+    normalized_context = (context_text or "").strip()
+    if not normalized_context:
+        return {"suppliers": [], "customers": [], "competitors": []}
+
+    messages = value_chain_extract.get_prompt(ticker, normalized_context)
+    fallback = {"suppliers": [], "customers": [], "competitors": []}
+    result = _run_json_prompt(
+        label="Value chain extraction",
+        model=QUALITY_FALLBACK_MODEL,
+        messages=messages,
+        default_on_error=dict(fallback),
+        log_level="warning",
+    )
+    if not isinstance(result, dict):
+        return dict(fallback)
+
+    def _sanitize(entries: Any) -> List[Dict[str, str]]:
+        sanitized: List[Dict[str, str]] = []
+        if not isinstance(entries, list):
+            return sanitized
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            ticker_value = str(entry.get("ticker") or entry.get("symbol") or "").strip()
+            label_value = str(entry.get("label") or entry.get("name") or ticker_value or "").strip()
+            sanitized.append({"ticker": ticker_value, "label": label_value or ticker_value or ""})
+            if len(sanitized) >= 5:
+                break
+        return sanitized
+
+    return {
+        "suppliers": _sanitize(result.get("suppliers")),
+        "customers": _sanitize(result.get("customers")),
+        "competitors": _sanitize(result.get("competitors")),
+    }
 
 
 def self_check_extracted_info(raw_md: str, candidate_facts: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1182,6 +1225,7 @@ __all__ = [
     "generate_watchlist_personal_note",
     "set_guardrail_copy",
     "assess_query_risk",
+    "extract_value_chain_relations",
     "JUDGE_BLOCK_MESSAGE",
 ]
 
