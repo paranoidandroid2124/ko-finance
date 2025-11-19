@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
 from database import Base
+from models._metadata_proxy import JSONMetadataProxy
 
 REQUEST_TYPE = Enum("export", "delete", name="dsar_request_type", create_type=False)
 REQUEST_STATUS = Enum("pending", "processing", "completed", "failed", name="dsar_request_status", create_type=False)
@@ -41,7 +42,8 @@ class DSARRequest(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
     artifact_path = Column(Text, nullable=True)
     failure_reason = Column(Text, nullable=True)
-    metadata = Column(JSONB, nullable=False, default=dict)  # type: ignore[assignment]
+    metadata_json = Column("metadata", JSONB, nullable=False, default=dict)  # type: ignore[assignment]
+    metadata = JSONMetadataProxy("metadata_json")  # type: ignore[assignment]
 
 
 __all__ = ["DSARRequest"]

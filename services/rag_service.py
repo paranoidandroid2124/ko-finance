@@ -39,6 +39,7 @@ from schemas.api.rag_v2 import (
     RagQueryResponse as RagQueryV2Response,
     RagWarningSchema,
 )
+from schemas.router import RouteDecision, RouteAction
 from services import (
     chat_service,
     date_range_parser,
@@ -52,6 +53,7 @@ from services import (
     vector_service,
 )
 from services.audit_log import audit_rag_event
+from services.semantic_router import DEFAULT_ROUTER
 from services.user_settings_service import UserLightMemSettings
 from services.rag_shared import build_anchor_payload, normalize_reliability, safe_float, safe_int
 from models.chat import ChatMessage, ChatSession
@@ -415,19 +417,19 @@ class IntentGateResult:
     reason: Optional[str]
     model: Optional[str]
     response: Optional[RAGQueryResponse]
+    route: RouteDecision
 
 
 def _evaluate_intent_gate(
     ctx: "RagSessionStage",
-    intent_result: Mapping[str, Any],
+    route_decision: RouteDecision,
     db: Session,
     *,
     plan_memory_enabled: bool,
 ) -> IntentGateResult:
-    decision = (intent_result.get("decision") or "pass").lower()
-    reason = intent_result.get("reason")
-    model_used = intent_result.get("model_used")
-    if decision != "pass":
+    action = route_decision.action
+    reason = route_decision.reason
+    if action == RouteAction.BLOCK_COMPLIANCE:
         response, needs_summary = build_intent_reply(
             db,
             question=ctx.question,
@@ -436,19 +438,60 @@ def _evaluate_intent_gate(
             turn_id=ctx.turn_id,
             user_message=ctx.user_message,
             assistant_message=ctx.assistant_message,
-            decision=decision,
+            decision="block",
             reason=reason,
-            model_used=model_used,
+            model_used=None,
             conversation_memory=ctx.conversation_memory,
         )
         response.meta = {
             **(response.meta or {}),
             "memory": dict(ctx.memory_info),
+            "router_action": action.value,
         }
         db.commit()
         _enqueue_session_summary_if_allowed(plan_memory_enabled, needs_summary, ctx.session.id)
-        return IntentGateResult(decision, reason, model_used, response)
-    return IntentGateResult(decision, reason, model_used, None)
+        return IntentGateResult("block", reason, None, response, route_decision)
+    if action == RouteAction.CLARIFY:
+        response, needs_summary = build_intent_reply(
+            db,
+            question=ctx.question,
+            trace_id=ctx.trace_id,
+            session=ctx.session,
+            turn_id=ctx.turn_id,
+            user_message=ctx.user_message,
+            assistant_message=ctx.assistant_message,
+            decision="semi_pass",
+            reason=reason,
+            model_used=None,
+            conversation_memory=ctx.conversation_memory,
+        )
+        response.meta = {
+            **(response.meta or {}),
+            "memory": dict(ctx.memory_info),
+            "router_action": action.value,
+        }
+        db.commit()
+        _enqueue_session_summary_if_allowed(plan_memory_enabled, needs_summary, ctx.session.id)
+        return IntentGateResult("semi_pass", reason, None, response, route_decision)
+    return IntentGateResult("pass", reason, None, None, route_decision)
+
+
+def _resolve_route_decision(
+    provided: Optional[RouteDecision],
+    question: str,
+) -> RouteDecision:
+    if provided is not None:
+        return provided
+    try:
+        return DEFAULT_ROUTER.route(question)
+    except Exception as exc:
+        logger.warning("SemanticRouter failed; falling back to RAG: %s", exc, exc_info=True)
+        return RouteDecision(
+            action=RouteAction.RAG_ANSWER,
+            reason="router_error",
+            confidence=0.0,
+            metadata={"fallback": True, "error": str(exc)},
+        )
 
 
 def _handle_empty_vector_response(
@@ -1363,6 +1406,7 @@ def _render_rag_response(
     intent_decision: str,
     intent_reason: Optional[str],
     intent_model: Optional[str],
+    router_action: str,
     persist_context: bool = True,
 ) -> Tuple[RAGQueryResponse, bool]:
     conversation_summary = None
@@ -1401,6 +1445,7 @@ def _render_rag_response(
         "intent_decision": intent_decision,
         "intent_reason": intent_reason,
         "intent_model": intent_model,
+        "router_action": router_action,
     }
     if ctx.prompt_metadata:
         meta_payload["prompt"] = ctx.prompt_metadata
@@ -1526,6 +1571,7 @@ def query_rag(
     idempotency_key_header: Optional[str],
     plan: PlanContext,
     db: Session,
+    route_decision: Optional[RouteDecision] = None,
 ) -> RAGQueryResponse:
     ctx = _prepare_rag_session(
         request,
@@ -1557,9 +1603,13 @@ def query_rag(
     user_meta = ctx.user_meta
 
     try:
+        route_decision = _resolve_route_decision(route_decision, question)
+        ctx.user_meta["router_action"] = route_decision.action.value
+        ctx.user_meta["router_confidence"] = route_decision.confidence
+
         intent_gate = _evaluate_intent_gate(
             ctx,
-            llm_service.classify_query_intent(question),
+            route_decision,
             db,
             plan_memory_enabled=plan_memory_enabled,
         )
@@ -1606,6 +1656,7 @@ def query_rag(
             intent_decision=intent_gate.decision,
             intent_reason=intent_gate.reason,
             intent_model=intent_gate.model,
+            router_action=intent_gate.route.action.value,
         )
         _record_rag_audit(
             ctx,
@@ -1658,6 +1709,7 @@ def query_rag_stream(
     idempotency_key_header: Optional[str],
     plan: PlanContext,
     db: Session,
+    route_decision: Optional[RouteDecision] = None,
 ):
     ctx = _prepare_rag_session(
         request,
@@ -1689,33 +1741,21 @@ def query_rag_stream(
     user_meta = ctx.user_meta
 
     try:
-        intent_result = llm_service.classify_query_intent(question)
-        intent_decision = (intent_result.get("decision") or "pass").lower()
-        intent_reason = intent_result.get("reason")
-        intent_model = intent_result.get("model_used")
+        route_decision = _resolve_route_decision(route_decision, question)
+        ctx.user_meta["router_action"] = route_decision.action.value
+        ctx.user_meta["router_confidence"] = route_decision.confidence
+        intent_gate = _evaluate_intent_gate(
+            ctx,
+            route_decision,
+            db,
+            plan_memory_enabled=plan_memory_enabled,
+        )
+        intent_decision = intent_gate.decision
+        intent_reason = intent_gate.reason
+        intent_model = intent_gate.model
 
-        if intent_decision != "pass":
-            response, needs_summary = build_intent_reply(
-                db,
-                question=question,
-                trace_id=trace_id,
-                session=session,
-                turn_id=turn_id,
-                user_message=user_message,
-                assistant_message=assistant_message,
-                decision=intent_decision,
-                reason=intent_reason,
-                model_used=intent_model,
-                conversation_memory=conversation_memory,
-            )
-            response.meta = {
-                **(response.meta or {}),
-                "memory": dict(memory_info),
-            }
-            db.commit()
-            _enqueue_session_summary_if_allowed(plan_memory_enabled, needs_summary, session.id)
-
-            payload_json = response.model_dump(mode="json")
+        if intent_gate.response:
+            payload_json = intent_gate.response.model_dump(mode="json")
 
             def intent_stream():
                 yield json.dumps(
@@ -1906,6 +1946,7 @@ def query_rag_stream(
                     intent_decision=intent_decision,
                     intent_reason=intent_reason,
                     intent_model=intent_model,
+                    router_action=route_decision.action.value,
                 )
                 _record_rag_audit(
                     ctx,
@@ -1985,11 +2026,13 @@ def query_rag_v2(
     x_org_id: Optional[str],
     plan: PlanContext,
     db: Session,
+    route_decision: Optional[RouteDecision] = None,
 ) -> RagQueryV2Response:
     question = payload.query.strip()
     if not question:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="question_required")
 
+    route_decision = _resolve_route_decision(route_decision, question)
     trace_id = str(uuid.uuid4())
     user_id = _resolve_lightmem_user_id(x_user_id)
     org_id = _parse_uuid(x_org_id)
@@ -2003,6 +2046,8 @@ def query_rag_v2(
     _enforce_chat_quota(plan, user_id)
 
     user_meta = dict(payload.meta or {})
+    user_meta.setdefault("router_action", route_decision.action.value)
+    user_meta.setdefault("router_confidence", route_decision.confidence)
     user_settings = _load_user_lightmem_settings(user_id)
     plan_memory_enabled = _plan_memory_enabled(plan, user_settings=user_settings)
 

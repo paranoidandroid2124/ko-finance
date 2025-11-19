@@ -329,7 +329,7 @@ export function AdminOpsWatchlistPanel({ adminActor: _adminActor, toast }: Admin
         <p className="mt-1 text-xs leading-relaxed">
           더 자세한 히스토리는 워치리스트 레이더 페이지에서 확인하거나 Slack 재전송 버튼을 사용해 주세요.
           <span className="ml-1">
-            <a href="/watchlist" className="font-semibold text-primary underline dark:text-primary.dark">
+            <a href="/alerts" className="font-semibold text-primary underline dark:text-primary.dark">
               사용자 화면 열기
             </a>
           </span>

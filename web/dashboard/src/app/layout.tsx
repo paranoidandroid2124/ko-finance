@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { AppFooter } from "@/components/layout/AppFooter";
 import { Providers } from "@/lib/providers";
 import "@/app/globals.css";
 
@@ -13,10 +12,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ko" suppressHydrationWarning>
       <body className="min-h-screen bg-background text-text-primaryLight dark:bg-background-dark dark:text-text-primaryDark">
         <Providers>
-          <div className="flex min-h-screen flex-col">
-            <main className="flex-1">{children}</main>
-            <AppFooter />
-          </div>
+          <main className="flex min-h-screen flex-col">{children}</main>
         </Providers>
       </body>
     </html>

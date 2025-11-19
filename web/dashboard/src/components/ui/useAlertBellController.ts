@@ -439,9 +439,9 @@ export const useAlertBellController = (): AlertBellController => {
       }
 
       if (alert.title.includes("뉴스")) {
-        pushRoute("/news");
+        pushRoute("/chat");
       } else if (alert.title.includes("공시")) {
-        pushRoute("/filings");
+        pushRoute("/evidence");
       } else if (pathname !== "/chat") {
         if (activeSessionId) {
           pushRoute(`/chat?session=${activeSessionId}`);

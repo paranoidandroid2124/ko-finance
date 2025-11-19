@@ -22,7 +22,7 @@ from llm.prompts import (
     classify_filing,
     extract_info,
     judge_guard,
-    query_intent,
+    semantic_router,
     rag_qa,
     self_check,
     summarize_report,
@@ -122,7 +122,7 @@ NEWS_ANALYSIS_MODEL = os.getenv("LLM_NEWS_MODEL", "baseline")
 RAG_MODEL = os.getenv("LLM_RAG_MODEL", "baseline")
 QUALITY_FALLBACK_MODEL = os.getenv("LLM_QUALITY_FALLBACK_MODEL", "fallback_model")
 JUDGE_MODEL = os.getenv("LLM_GUARD_JUDGE_MODEL", "judge_model")
-INTENT_MODEL = os.getenv("LLM_INTENT_MODEL", QUALITY_FALLBACK_MODEL)
+ROUTER_MODEL = os.getenv("LLM_ROUTER_MODEL", QUALITY_FALLBACK_MODEL)
 
 RAG_REQUIRE_SNIPPET = env_bool("RAG_REQUIRE_SNIPPET", False)
 RAG_LINK_DEEPLINK = env_bool("RAG_LINK_DEEPLINK", False)
@@ -292,19 +292,6 @@ def _run_json_prompt(
     return normalized
 
 
-def _normalize_intent_result(result: Dict[str, Any]) -> Dict[str, Any]:
-    normalized = dict(result)
-    decision_raw = normalized.get("decision")
-    if isinstance(decision_raw, str):
-        decision = decision_raw.strip().lower()
-        if decision not in {"pass", "semi_pass", "block"}:
-            decision = "pass"
-    else:
-        decision = "pass"
-    normalized["decision"] = decision
-    return normalized
-
-
 def _format_guard_result(result: Dict[str, Any]) -> Dict[str, Any]:
     decision_raw = str(result.get("decision") or "").strip().lower()
     decision = decision_raw if decision_raw in {"pass", "semi_pass", "block", "unknown"} else "unknown"
@@ -332,14 +319,28 @@ def classify_filing_content(raw_md: str) -> Dict[str, Any]:
     )
 
 
-def classify_query_intent(question: str) -> Dict[str, Any]:
-    messages = query_intent.get_prompt(question)
+_ROUTER_FALLBACK = {
+    "action": "RAG_ANSWER",
+    "reason": "semantic_router_fallback",
+    "confidence": 0.0,
+    "tickers": [],
+    "parameters": {},
+    "metadata": {"fallback": True},
+    "suggestions": [],
+    "blocked_phrases": [],
+}
+
+
+def route_chat_query(question: str) -> Dict[str, Any]:
+    """Invoke the SemanticRouter prompt to classify a query into actions."""
+
+    messages = semantic_router.get_prompt(question)
     return _run_json_prompt(
-        label="Intent classification",
-        model=INTENT_MODEL,
+        label="Semantic router",
+        model=ROUTER_MODEL,
         messages=messages,
-        normalizer=_normalize_intent_result,
-        default_on_error={"decision": "pass", "reason": "fallback"},
+        default_on_error=dict(_ROUTER_FALLBACK),
+        log_level="warning",
     )
 
 
@@ -1167,7 +1168,7 @@ def generate_watchlist_personal_note(prompt_text: str) -> Tuple[str, Dict[str, A
 
 __all__ = [
     "classify_filing_content",
-    "classify_query_intent",
+    "route_chat_query",
     "extract_structured_info",
     "summarize_filing_content",
     "generate_daily_brief_trend",

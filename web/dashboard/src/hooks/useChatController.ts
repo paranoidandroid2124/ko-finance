@@ -33,6 +33,7 @@ import {
 import { usePlanTier, usePlanStore } from '@/store/planStore';
 import type { PlanTier } from "@/store/planStore/types";
 import { useToastStore } from '@/store/toastStore';
+import { useToolStore, type ToolAction } from '@/store/toolStore';
 import { PLAN_TIER_CONFIG } from "@/config/planConfig";
 import { LEGAL_COPY } from "@/components/legal/LegalCopy";
 
@@ -673,10 +674,9 @@ export function useChatController(): ChatController {
   const handleOpenFiling = useCallback(() => {
     if (!isFilingContext) return;
     if (filingReferenceId) {
-      const filingsRoute = `/filings?filingId=${filingReferenceId}` as Route;
-      router.push(filingsRoute);
+      router.push(`/evidence?filingId=${filingReferenceId}` as Route);
     } else {
-      router.push('/filings' as Route);
+      router.push("/evidence" as Route);
     }
   }, [filingReferenceId, isFilingContext, router]);
   const runQuery = useCallback(
@@ -905,7 +905,20 @@ export function useChatController(): ChatController {
       try {
         await streamRagQuery(ragPayload, {
           onEvent: (event) => {
-            if (event.event === 'chunk') {
+            if (event.event === 'route') {
+              const decision = event.decision ?? {};
+              const actionValue = typeof decision.action === 'string' ? decision.action : undefined;
+              if (actionValue && actionValue.startsWith('TOOL_')) {
+                const parameters =
+                  decision.parameters && typeof decision.parameters === 'object'
+                    ? (decision.parameters as Record<string, unknown>)
+                    : {};
+                console.info('[ToolRouter] route event received', decision);
+                useToolStore
+                  .getState()
+                  .openTool(actionValue as ToolAction, parameters);
+              }
+            } else if (event.event === 'chunk') {
               streamedAnswer += event.delta;
               updateMessage(sessionId, assistantMessageId, {
                 content: streamedAnswer || ASSISTANT_LOADING_RESPONSE,

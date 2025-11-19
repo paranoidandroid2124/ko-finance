@@ -34,6 +34,7 @@ _ROUTER_MODULES = [
     "table_explorer",
     "notebooks",
     "rag",
+    "tools",
     "ops",
     "search",
     "sectors",

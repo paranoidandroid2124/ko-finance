@@ -178,7 +178,7 @@ function EventActivityPanel({ matches, loading, errorMessage }: EventActivityPan
           </p>
         </div>
         <Link
-          href="/watchlist"
+          href="/alerts"
           className="inline-flex items-center gap-2 rounded-full border border-border-light px-3 py-1.5 text-xs font-semibold text-text-secondaryLight transition hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark"
         >
           전체 보기
