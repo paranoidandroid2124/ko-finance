@@ -219,6 +219,8 @@ lxml==6.0.2
     #   signxml
 markupsafe==3.0.3
     # via jinja2
+markdown==3.6
+    # via -r requirements.in
 minio==7.2.18
     # via -r requirements.in
 multidict==6.7.0
@@ -330,6 +332,8 @@ python-dotenv==1.2.1
     # via
     #   -r requirements.in
     #   litellm
+python-docx==1.1.0
+    # via -r requirements.in
 python-multipart==0.0.20
     # via -r requirements.in
 pywin32==311

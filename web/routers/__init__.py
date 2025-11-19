@@ -30,6 +30,7 @@ _ROUTER_MODULES = [
     "onboarding",
     "payments",
     "plan",
+    "report",
     "orgs",
     "table_explorer",
     "notebooks",

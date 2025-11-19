@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import math
@@ -1209,6 +1210,50 @@ def generate_watchlist_personal_note(prompt_text: str) -> Tuple[str, Dict[str, A
     return note.strip(), metadata
 
 
+async def write_investment_memo(ticker: str, context: str) -> str:
+    """Generate a Markdown-formatted investment memo for TOOL_REPORT."""
+
+    normalized_context = (context or "").strip()
+    if not normalized_context:
+        raise ValueError("context_required")
+
+    system_prompt = (
+        "당신은 시니어 주식 애널리스트입니다.\n"
+        "제공된 [Context]만을 기반으로 '투자 메모(Investment Memo)'를 작성하십시오.\n\n"
+        "[작성 원칙]\n"
+        "1. 어조: 건조하고 전문적인 금융 문체 (종결어미: '~함', '~로 판단됨')\n"
+        "2. 포맷: Markdown 형식을 사용 (헤더, 불렛 포인트 활용)\n"
+        "3. 할루시네이션 방지: 제공된 데이터에 없는 내용은 절대 지어내지 말고 생략할 것.\n\n"
+        "[리포트 구조]\n"
+        "# 1. Executive Summary (3줄 요약)\n"
+        "# 2. Key Investment Thesis (핵심 투자 포인트)\n"
+        "# 3. Key Risks (주요 리스크)\n"
+        "# 4. Market Sentiment (시장 반응 및 뉴스 요약)\n"
+    )
+    user_prompt = f\"다음 데이터를 바탕으로 '{ticker}'에 대한 투자 메모를 작성해:\\n\\n{normalized_context}\"
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    def _invoke() -> str:
+        response, model_used = _safe_completion(
+            QUALITY_FALLBACK_MODEL,
+            messages,
+            fallback_model=QUALITY_FALLBACK_MODEL,
+        )
+        if response is None:
+            raise RuntimeError(model_used or "investment_memo_generation_failed")
+        report = _choice_content(response) or ""
+        cleaned = report.strip()
+        if not cleaned:
+            raise RuntimeError("investment_memo_empty_response")
+        return cleaned
+
+    return await asyncio.to_thread(_invoke)
+
+
 __all__ = [
     "classify_filing_content",
     "route_chat_query",
@@ -1223,6 +1268,7 @@ __all__ = [
     "summarize_chat_transcript",
     "generate_watchlist_digest_overview",
     "generate_watchlist_personal_note",
+    "write_investment_memo",
     "set_guardrail_copy",
     "assess_query_risk",
     "extract_value_chain_relations",

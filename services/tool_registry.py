@@ -104,6 +104,18 @@ _TOOL_DEFINITIONS: Dict[str, ToolDefinition] = {
         requires_context=("tenant.snapshot",),
         memory_slots=("lightmem.summary",),
     ),
+    "investment_report": ToolDefinition(
+        tool_id="investment_report",
+        call_name="report.generate",
+        intent="investment_report",
+        title="투자 메모 리포트",
+        description="뉴스·피어 데이터를 병합해 Markdown 투자 메모를 작성합니다.",
+        ui_container=UiContainer.OVERLAY,
+        paywall=PaywallTier.PRO,
+        teaser_behavior="blur",
+        requires_context=("tenant.snapshot", "lightmem.summary"),
+        memory_slots=("lightmem.summary",),
+    ),
     "news_insights": ToolDefinition(
         tool_id="news_insights",
         call_name="news.rag",

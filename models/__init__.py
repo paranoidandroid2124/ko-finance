@@ -22,3 +22,5 @@ from .table_extraction import TableMeta, TableCell  # noqa: F401
 from .notebook import Notebook, NotebookEntry, NotebookShare  # noqa: F401
 from .sso_provider import SsoProvider, SsoProviderCredential, ScimToken  # noqa: F401
 from .dsar import DSARRequest  # noqa: F401
+from .value_chain import ValueChainEdge  # noqa: F401
+from .report import Report  # noqa: F401

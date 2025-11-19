@@ -127,8 +127,10 @@ export function ValueChainGraph({ data, onNodeSelect }: ValueChainGraphProps) {
 
   if (!data?.target) {
     return (
-      <div className="flex h-64 items-center justify-center rounded-3xl border border-white/10 bg-white/5 text-sm text-slate-300">
-        표시할 밸류체인 데이터가 없습니다.
+      <div className="flex h-64 flex-col items-center justify-center rounded-3xl border border-white/10 bg-[#040b1e] text-sm text-slate-200">
+        <div className="mb-3 h-6 w-6 animate-spin rounded-full border-2 border-white/30 border-t-transparent" />
+        <p className="text-sm text-slate-300">🤖 AI가 최신 뉴스로 밸류체인을 분석 중입니다...</p>
+        <p className="mt-1 text-xs text-slate-500">잠시만 기다리시면 관계도가 생성됩니다.</p>
       </div>
     );
   }

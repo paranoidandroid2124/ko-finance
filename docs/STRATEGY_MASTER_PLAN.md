@@ -106,29 +106,25 @@
     - 모바일 웹 뷰 최적화.
 *   **KPI:** 무료 -> 유료 전환율(CVR) 3% 달성.
 
-### 📅 Phase 3: 통합 인텔리전스 & 워크플로우 자동화 (6~9개월)
-*   **목표:** “궁금할 때만 쓰는 도구”에서 “이거 없으면 퇴근 못 하는 플랫폼”으로 진화.
-*   **핵심 미션:** 텍스트 정성 분석 + 능동 알림 + 보고서 자동화를 연결해, 질문·알림·산출물까지 하나의 흐름으로 제공.
+### 📅 Phase 3: 통합 인텔리전스 & 워크플로우 자동화 (완료)
+*   **성과 요약:**
+    - 뉴스/공시 요약을 벡터 스토어와 밸류체인 그래프로 연결해 Text Intelligence 체계 구축.
+    - 툴 호출 시 채팅 스트림 내 위젯으로 노출되는 Generative UI 패턴 정착(News/Peer/Value Chain).
+    - Proactive Signals, Paywall/Teaser, LightMem 연동까지 완료해 “궁금하면 불러 쓰는 워크플로우” 실현.
+*   **다음 적용 범위:** 밸류체인 관계 DB 영속화·Ticker 보정·Skeleton UX 등 유지보수성 확보(적용 완료) → Phase 4 전환 준비 완료.
 
-#### 3대 축 (Text · Push · Output)
-1. **🧠 Text Intelligence (Deep Search & Evidence)**
-    - 기능: 지능형 공시/뉴스 Evidence Workspace, RAG 기반 “해당 문단만 발췌” 검색, 차트 급락 지점과 뉴스/공시의 인과관계 매핑.
-    - 기술 과제: Vector DB(Chroma/Pinecone) 도입, PDF 파서·OCR 고도화, 증거 하이라이트/앵커 저장 구조 정비.
-2. **🔔 Proactive Signals (Watchdog System)**
-    - 기능: 복합 조건 알림(예: RSI+수급 변화)과 키워드 감시(“횡령/유상증자/소송” 등장 시 즉시 경보)로 Pull→Push 전환.
-    - 기술 과제: 백엔드 스케줄러(Celery/Redis) 확립, Slack·Telegram·Email Webhook 파이프라인, 알림 정책 저장/서명.
-3. **📄 One-Click Reporting (Last Mile)**
-    - 기능: Overlay 결과를 한 번에 PDF/Excel로 내보내고 AI 코멘트·뉴스 요약을 묶어 상신용 브리핑 자동 생성.
-    - 기술 과제: 서버사이드 렌더러(Puppeteer/ReportLab) 선택, 시계열 Raw Data Export(OHLCV+CAR) API, 템플릿화된 코멘터리 생성기.
+### 📅 Phase 4: Synthesis & Action (준비 중)
+*   **목표:** 파편화된 인사이트(뉴스·차트·밸류체인·공시)를 자동으로 종합해 “보고서 초안”을 명령 한 번에 생성.
+*   **핵심 미션:** TOOL_REPORT(AI 투자 메모) 오케스트레이터 구축 → 데이터 수집(Agent) → Structured Markdown → Export.
 
-#### Phase 3 실행 로드맵 (우선순위)
+#### Phase 4 우선 과제
 | 순서 | 작업명 | 목표 결과물 | 비즈니스 임팩트 |
 | :--- | :--- | :--- | :--- |
-| 1 | 뉴스/공시 RAG 파이프라인 | 채팅 질문 시 관련 문단 하이라이트+출처 제공 | 신뢰성 확보, 모든 워크플로우의 베이스 |
-| 2 | Alert/Signal 센터 | 관심 종목 조건 충족 시 Slack/메일/텔레그램 Push | 재방문·리텐션 증대 |
-| 3 | PDF/Excel Report Export | “분석 결과 다운로드” 버튼 + 자동 브리핑 | 상사 보고·엔터프라이즈 Lock-in |
+| 1 | Report Orchestrator (백엔드) | 뉴스를 비롯한 툴 결과를 병렬 수집 후 Markdown 메모 생성 | 애널리스트 초안 작성 시간 90% 절감 |
+| 2 | Tool Streaming/Progress UX | “뉴스 수집 → 경쟁사 비교 → 보고서 작성” 단계 표시 및 타닥 스트림 | 10~20초 작업도 “일하고 있다”는 체감 제공 |
+| 3 | ReportPanel & Export | `react-markdown` 렌더 + PDF 다운로드 + 컴플라이언스 문구 | 공유/상신 최적화 → Enterprise 락인 강화 |
 
-> **시니어 코멘트:** Phase 3의 첫 단추는 **뉴스/공시 데이터 파이프라인**이다. Evidence Workspace/RAG, Alert, Report 모두 동일 소스를 재사용하므로, 벡터·OCR·정규화 스키마 설계에 즉시 착수한다.
+> **Phase 4 메모:** Semantic Router·tool_registry 구조 덕분에 TOOL_REPORT 추가 시 최소 수정으로 확장 가능. 투자 메모 생성과 동시에 LightMem/툴 컨텍스트에 요약을 주입해 다음 대화에 활용한다.
 
 ---
 

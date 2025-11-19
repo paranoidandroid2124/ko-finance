@@ -6,13 +6,16 @@ from collections import defaultdict
 from datetime import date, timedelta
 from statistics import mean
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+import threading
 
-from sqlalchemy import asc
+from sqlalchemy import asc, func
 from sqlalchemy.orm import Session
 
 from core.logging import get_logger
+from database import SessionLocal
 from models.event_study import Price
 from models.security_metadata import SecurityMetadata
+from services import value_chain_repository
 
 logger = get_logger(__name__)
 
@@ -114,7 +117,71 @@ def _normalize_series(rows: Sequence[Price], *, max_points: int) -> Tuple[List[D
     return series, returns
 
 
-def _jit_generate_value_chain(ticker: str) -> Optional[Dict[str, List[Dict[str, str]]]]:
+def _lookup_ticker_by_label(db: Session, label: str) -> Optional[str]:
+    normalized = label.strip()
+    if not normalized:
+        return None
+    lowered = normalized.lower()
+    candidate = (
+        db.query(SecurityMetadata)
+        .filter(
+            (SecurityMetadata.ticker == normalized.upper())
+            | (func.lower(SecurityMetadata.corp_name) == lowered)
+        )
+        .first()
+    )
+    if candidate:
+        return candidate.ticker
+    # try partial match
+    partial = (
+        db.query(SecurityMetadata)
+        .filter(func.lower(SecurityMetadata.corp_name).like(f"%{lowered}%"))
+        .first()
+    )
+    return partial.ticker if partial else None
+
+
+def _enrich_entries_with_metadata(db: Session, payload: Dict[str, List[Dict[str, str]]]) -> Dict[str, List[Dict[str, str]]]:
+    enriched: Dict[str, List[Dict[str, str]]] = {}
+    for key, entries in payload.items():
+        decorated: List[Dict[str, str]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            label_value = entry.get("label") or entry.get("name") or entry.get("ticker") or ""
+            clean_label = label_value.strip() or "Unknown"
+            ticker_value = _normalize_ticker(entry.get("ticker"))
+            if not ticker_value and clean_label and db is not None:
+                ticker_value = _lookup_ticker_by_label(db, clean_label)
+            decorated.append(
+                {
+                    "ticker": ticker_value or "",
+                    "label": clean_label,
+                }
+            )
+        enriched[key] = decorated
+    return enriched
+
+
+def _persist_value_chain_async(center_ticker: str, payload: Dict[str, List[Dict[str, str]]]) -> None:
+    if not payload or not center_ticker:
+        return
+
+    def _task() -> None:
+        session = SessionLocal()
+        try:
+            value_chain_repository.upsert_relations(session, center_ticker, payload)
+            session.commit()
+        except Exception as exc:  # pragma: no cover - background logging only
+            session.rollback()
+            logger.debug("Value chain persistence failed for %s: %s", center_ticker, exc, exc_info=True)
+        finally:
+            session.close()
+
+    threading.Thread(target=_task, name=f"value-chain-{center_ticker}", daemon=True).start()
+
+
+def _jit_generate_value_chain(db: Session, ticker: str) -> Optional[Dict[str, List[Dict[str, str]]]]:
     normalized = _normalize_ticker(ticker)
     if not normalized:
         return None
@@ -155,8 +222,10 @@ def _jit_generate_value_chain(ticker: str) -> Optional[Dict[str, List[Dict[str, 
     }
     if not any(payload.values()):
         return None
-    VALUE_CHAIN_CACHE[normalized] = payload
-    return payload
+    enriched_payload = _enrich_entries_with_metadata(db, payload)
+    VALUE_CHAIN_CACHE[normalized] = enriched_payload
+    _persist_value_chain_async(normalized, enriched_payload)
+    return enriched_payload
 
 
 def get_peer_group(
@@ -418,7 +487,7 @@ def build_peer_comparison(
 
     raw_value_chain = VALUE_CHAIN_CACHE.get(base_symbol)
     if raw_value_chain is None:
-        raw_value_chain = _jit_generate_value_chain(base_symbol)
+        raw_value_chain = _jit_generate_value_chain(db, base_symbol)
     value_chain, value_chain_summary = _format_value_chain_payload(
         raw_value_chain,
         base_symbol=base_symbol,
