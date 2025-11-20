@@ -15,10 +15,7 @@ from sqlalchemy.orm import Session
 from core.logging import get_logger
 from models.alert import AlertDelivery, AlertRule
 from core.env import env_int
-from services import notification_service
-from services.digest import render_watchlist_digest_email
 from services.memory.facade import MEMORY_SERVICE
-from llm import llm_service
 from services.watchlist_tasks import generate_watchlist_personal_note_task
 from services.watchlist_utils import is_watchlist_rule
 
@@ -175,8 +172,6 @@ def collect_watchlist_alerts(
         },
     )
 
-    llm_overview = _generate_watchlist_llm_overview(summary, items)
-
     payload = {
         "generatedAt": now.isoformat(),
         "windowMinutes": effective_window_minutes,
@@ -186,7 +181,6 @@ def collect_watchlist_alerts(
         },
         "summary": summary,
         "items": items,
-        "llmOverview": llm_overview,
     }
     _maybe_capture_watchlist_memory(
         payload,
@@ -405,17 +399,6 @@ def _summarize_watchlist_rows(
         "windowEnd": window_end.isoformat(),
     }
     return summary, items
-
-
-def _generate_watchlist_llm_overview(summary: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> Optional[str]:
-    if not items:
-        return None
-    try:
-        overview = llm_service.generate_watchlist_digest_overview(summary, items[:5])
-        return overview.strip() if overview else None
-    except Exception as exc:  # pragma: no cover - LLM best-effort
-        logger.warning("Watchlist LLM overview generation failed: %s", exc, exc_info=True)
-        return None
 
 
 def _coerce_identifier(value: Optional[Any]) -> Optional[str]:
@@ -864,140 +847,8 @@ def collect_watchlist_rule_detail(
     }
 
 
-def render_watchlist_slack(payload: Mapping[str, Any], *, max_items: int = 5) -> str:
-    summary = payload.get("summary", {}) or {}
-    items = payload.get("items", []) or []
-    window_minutes = payload.get("windowMinutes") or 0
-    hours = window_minutes / 60
-    header = f":rotating_light: Watchlist Radar — 최근 {hours:.1f}시간"
-
-    lines = [header]
-    lines.append(
-        f"- 경보 {summary.get('totalDeliveries', 0)}건 / 이벤트 {summary.get('totalEvents', 0)}개 / 종목 {summary.get('uniqueTickers', 0)}개"
-    )
-    top_tickers = summary.get("topTickers") or []
-    if top_tickers:
-        lines.append("Top 종목: " + ", ".join(top_tickers[:3]))
-
-    for item in items[:max_items]:
-        ticker = item.get("ticker") or "N/A"
-        headline = item.get("headline") or item.get("summary") or item.get("message")
-        channel = item.get("channel") or ""
-        rule_name = item.get("ruleName") or ""
-        lines.append(f"• {ticker} · {headline} ({rule_name}, {channel})")
-
-    if len(items) > max_items:
-        lines.append(f"... 외 {len(items) - max_items}건")
-
-    return "\n".join(lines)
-
-
-def render_watchlist_email(payload: Mapping[str, Any]) -> str:
-    return render_watchlist_digest_email(payload)
-
-
-def dispatch_watchlist_digest(
-    db: Session,
-    *,
-    window_minutes: int,
-    limit: int,
-    slack_targets: Optional[Sequence[str]] = None,
-    email_targets: Optional[Sequence[str]] = None,
-    owner_filters: Optional[Mapping[str, Optional[Any]]] = None,
-    plan_memory_enabled: Optional[bool] = None,
-    session_id: Optional[str] = None,
-    tenant_id: Optional[str] = None,
-    user_id_hint: Optional[str] = None,
-) -> Dict[str, Any]:
-    payload = collect_watchlist_alerts(
-        db,
-        window_minutes=window_minutes,
-        limit=limit,
-        owner_filters=owner_filters,
-        plan_memory_enabled=plan_memory_enabled,
-        session_id=session_id,
-        tenant_id=tenant_id,
-        user_id_hint=user_id_hint,
-    )
-    summary = payload.get("summary") or {}
-    personal_note_state = {"used": 0}
-    personal_note = _build_personalized_watchlist_note(
-        payload,
-        plan_memory_enabled=plan_memory_enabled,
-        session_id=session_id,
-        tenant_id=tenant_id,
-        user_id_hint=user_id_hint,
-        owner_filters=owner_filters or {},
-        budget=personal_note_state,
-    )
-    if personal_note:
-        payload["llmPersonalNote"] = personal_note
-
-    normalized_slack = [
-        target.strip()
-        for target in (slack_targets or [])
-        if isinstance(target, str) and target.strip()
-    ]
-    normalized_email = [
-        target.strip()
-        for target in (email_targets or [])
-        if isinstance(target, str) and target.strip()
-    ]
-
-    results: List[Dict[str, Any]] = []
-
-    if normalized_slack:
-        slack_message = render_watchlist_slack(payload)
-        slack_result = notification_service.dispatch_notification(
-            "slack",
-            slack_message,
-            targets=normalized_slack,
-            metadata={"headline": "Watchlist Radar"},
-        )
-        results.append(
-            {
-                "channel": "slack",
-                "status": slack_result.status,
-                "delivered": slack_result.delivered,
-                "failed": slack_result.failed,
-                "error": slack_result.error,
-            }
-        )
-
-    if normalized_email:
-        email_html = render_watchlist_email(payload)
-        total_deliveries = summary.get("totalDeliveries", 0)
-        unique_tickers = summary.get("uniqueTickers", 0)
-        subject = f"[K-Finance] Watchlist Radar · 경보 {total_deliveries}건 · 종목 {unique_tickers}개"
-        plain_body = (
-            f"Watchlist Radar Digest\n"
-            f"경보 {total_deliveries}건 / 종목 {unique_tickers}개\n"
-            "자세한 내용은 HTML 본문을 참고하세요."
-        )
-        email_result = notification_service.dispatch_notification(
-            "email",
-            plain_body,
-            targets=normalized_email,
-            metadata={"subject": subject, "html_template": email_html},
-        )
-        results.append(
-            {
-                "channel": "email",
-                "status": email_result.status,
-                "delivered": email_result.delivered,
-                "failed": email_result.failed,
-                "error": email_result.error,
-            }
-        )
-
-    return {"payload": payload, "results": results}
-
-
 __all__ = [
     "collect_watchlist_alerts",
     "is_watchlist_rule",
-    "dispatch_watchlist_digest",
-    "render_watchlist_email",
-    "render_watchlist_slack",
     "collect_watchlist_rule_detail",
 ]

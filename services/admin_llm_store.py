@@ -1,4 +1,4 @@
-﻿"""Persistence helpers for administrator-managed LLM configuration."""
+"""Persistence helpers for administrator-managed LLM configuration."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ _SAMPLE_LIMIT_DEFAULT = 200
 
 _DEFAULT_PROMPTS: Dict[str, Dict[str, Any]] = {
     "chat": {
-        "prompt": "You are K-Finance Copilot. Respond with warm, social-enterprise tone.",
+        "prompt": "You are Nuvien Copilot. Respond with warm, social-enterprise tone.",
         "updatedBy": "system",
     },
     "rag": {
@@ -48,10 +48,10 @@ _DEFAULT_PROMPTS: Dict[str, Dict[str, Any]] = {
 
 _DEFAULT_GUARDRAIL_POLICY = {
     "intentRules": [{"name": "finance_only", "threshold": 0.7}],
-    "blocklist": ["pump and dump", "매수 추천", "확실한 수익"],
+    "blocklist": ["pump and dump", "?? ??", "??? ??"],
     "userFacingCopy": {
-        "fallback": "투자 자문이나 매수·매도 권고는 제공되지 않습니다. 정보 제공 목적의 분석 질문만 부탁드립니다.",
-        "blocked": "죄송해요, 이 주제는 내부 정책상 안내가 어려워요.",
+        "fallback": "?? ???? ??�?? ??? ???? ????. ?? ?? ??? ?? ??? ??????.",
+        "blocked": "????, ? ??? ?? ??? ??? ????.",
     },
     "updatedAt": None,
     "updatedBy": None,

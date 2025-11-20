@@ -1,7 +1,7 @@
 """Facade combining sensory, short-term, and long-term memory helpers.
 
 The goal of this initial scaffold is to provide a central place that other
-modules (watchlist chat, digest renderer, admin flows) can depend on while we
+modules (watchlist chat, admin flows) can depend on while we
 iteratively wire in the concrete storage/retrieval pieces.
 """
 
@@ -86,15 +86,12 @@ class MemoryService:
         self,
         *,
         plan_memory_enabled: Optional[bool] = None,
-        digest_context: bool = False,
         watchlist_context: bool = False,
     ) -> bool:
         if plan_memory_enabled is False:
             return False
         if plan_memory_enabled is True:
             return True
-        if digest_context:
-            return self._feature_flags.digest_enabled
         if watchlist_context:
             return self._feature_flags.watchlist_enabled
         return self._feature_flags.default_enabled
@@ -166,11 +163,10 @@ class MemoryService:
         user_id: Optional[str],
         rag_snippets: Optional[Iterable[str]] = None,
         plan_memory_enabled: Optional[bool] = None,
-        digest_context: bool = False,
         watchlist_context: bool = False,
     ) -> PromptComposition:
         if not self.is_enabled(
-            plan_memory_enabled=plan_memory_enabled, digest_context=digest_context, watchlist_context=watchlist_context
+            plan_memory_enabled=plan_memory_enabled, watchlist_context=watchlist_context
         ):
             compressed = compress_prompt(base_prompt, max_chars=self._runtime_settings.max_prompt_chars)
             return PromptComposition(

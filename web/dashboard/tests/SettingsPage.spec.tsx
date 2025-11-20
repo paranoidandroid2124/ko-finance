@@ -35,7 +35,6 @@ const mockedPlan: PlanContextPayload = {
   },
   memoryFlags: {
     watchlist: true,
-    digest: true,
     chat: true,
   },
   quota: {

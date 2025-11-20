@@ -55,11 +55,11 @@ _DEFAULT_ONBOARDING_CONTENT: Dict[str, Any] = {
             "cta": {"label": "샘플 질문 실행", "href": "/chat?sample=onboarding"},
         },
         {
-            "id": "report-digest",
-            "title": "일간 리포트/다이제스트",
-            "description": "뉴스/이벤트 다이제스트가 어떻게 구성되는지 미리 확인하세요.",
+            "id": "report-preview",
+            "title": "AI 리포트 미리보기",
+            "description": "생성형 리포트가 어떤 흐름으로 구성되는지 샘플로 확인해 보세요.",
             "tips": ["Slack/Email 채널 링크를 통해 팀 공유도 가능합니다."],
-            "cta": {"label": "샘플 리포트 보기", "href": "/reports/digest?sample=onboarding"},
+            "cta": {"label": "샘플 리포트 보기", "href": "/reports"},
         },
     ],
     "sampleBoard": {
@@ -100,17 +100,17 @@ _DEFAULT_ONBOARDING_CONTENT: Dict[str, Any] = {
                 ],
             },
             {
-                "id": "digest",
-                "title": "뉴스 다이제스트",
+                "id": "reports",
+                "title": "AI 리포트 샘플",
                 "items": [
                     {
-                        "type": "digest",
+                        "type": "report",
                         "headline": "전력·에너지 정책 업데이트",
                         "bullets": [
                             "산업부, 신재생 발전 비중 2030년 32% 목표",
                             "에너지 공기업, 2분기부터 REC 의무비율 상향 예정",
                         ],
-                        "link": "/reports/digest?sample=power",
+                        "link": "/reports",
                     }
                 ],
             },

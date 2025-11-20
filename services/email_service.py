@@ -18,7 +18,7 @@ EMAIL_TEMPLATE_DIR = REPO_ROOT / "templates" / "email"
 
 _ENV: Optional[Environment] = None
 
-BRAND_NAME = env_str("APP_BRAND_NAME") or "K-Finance"
+BRAND_NAME = env_str("APP_BRAND_NAME") or "Nuvien"
 SUPPORT_EMAIL = env_str("SUPPORT_EMAIL") or env_str("ALERT_EMAIL_FROM") or "support@kfinance.ai"
 FRONTEND_BASE_URL = (
     env_str("AUTH_FRONTEND_BASE_URL")

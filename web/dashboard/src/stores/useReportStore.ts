@@ -7,6 +7,14 @@ export type ReportSource = {
   date: string;
 };
 
+export type EventStudyKeyStats = {
+  source: "event_study";
+  title?: string;
+  description?: string;
+  generatedAt?: string;
+  data?: Record<string, unknown> | null;
+};
+
 interface ReportState {
   isOpen: boolean;
   content: string;
@@ -15,6 +23,7 @@ interface ReportState {
   ticker?: string;
   reportId?: string;
   charts?: Record<string, unknown> | null;
+  keyStats?: EventStudyKeyStats | null;
   openPanel: () => void;
   closePanel: () => void;
   setContent: (content: string) => void;
@@ -23,6 +32,7 @@ interface ReportState {
   setTicker: (ticker?: string) => void;
   setReportId: (id?: string) => void;
   setCharts: (charts?: Record<string, unknown> | null) => void;
+  setKeyStats: (stats?: EventStudyKeyStats | null) => void;
   reset: () => void;
 }
 
@@ -34,6 +44,7 @@ export const useReportStore = create<ReportState>((set) => ({
   ticker: undefined,
   reportId: undefined,
   charts: null,
+  keyStats: null,
   openPanel: () => set({ isOpen: true }),
   closePanel: () => set({ isOpen: false }),
   setContent: (content) => set({ content }),
@@ -42,6 +53,7 @@ export const useReportStore = create<ReportState>((set) => ({
   setTicker: (ticker) => set({ ticker }),
   setReportId: (reportId) => set({ reportId }),
   setCharts: (charts) => set({ charts: charts ?? null }),
+  setKeyStats: (keyStats) => set({ keyStats: keyStats ?? null }),
   reset: () =>
     set({
       content: "",
@@ -50,5 +62,6 @@ export const useReportStore = create<ReportState>((set) => ({
       ticker: undefined,
       reportId: undefined,
       charts: null,
+      keyStats: null,
     }),
 }));

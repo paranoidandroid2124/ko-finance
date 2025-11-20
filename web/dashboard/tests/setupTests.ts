@@ -325,7 +325,6 @@ const globalFetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestIni
         },
         memoryFlags: {
           watchlist: true,
-          digest: true,
           chat: true,
         },
         trial: {

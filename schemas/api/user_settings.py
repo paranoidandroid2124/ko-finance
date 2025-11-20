@@ -18,10 +18,6 @@ class UserLightMemSettingsSchema(BaseModel):
         default=True,
         description="워치리스트 알림·다이제스트에 LightMem을 사용할지 여부 (enabled가 true일 때만 적용).",
     )
-    digest: bool = Field(
-        default=True,
-        description="일일·주간 다이제스트에 LightMem을 허용할지 여부.",
-    )
     chat: bool = Field(
         default=True,
         description="Chat 세션 개인화에 LightMem을 허용할지 여부.",

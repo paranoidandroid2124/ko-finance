@@ -35,41 +35,49 @@ export function ChatStreamPane({
   inputDisabled,
 }: ChatStreamPaneProps) {
   return (
-    <div className="flex min-h-[70vh] flex-1 flex-col gap-4 rounded-xl border border-border-light bg-background-cardLight p-4 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
-      <div className="h-12 rounded-lg border border-border-light px-4 py-2 text-sm text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
-        세션: {sessionTitle}
+    <section className="relative flex min-h-[75vh] flex-1 flex-col overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-[0_35px_120px_rgba(3,7,18,0.55)] backdrop-blur-xl">
+      <div className="flex items-center justify-between border-b border-white/10 px-6 py-5">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.35em] text-slate-500">Session</p>
+          <p className="text-lg font-semibold text-white">{sessionTitle}</p>
+        </div>
+        <div className="rounded-full border border-white/10 px-4 py-1 text-xs text-slate-300">
+          {new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })} · 실시간 스트림
+        </div>
       </div>
-      {hasContextBanner && (
-        <div className="rounded-lg border border-border-light bg-white/70 px-4 py-3 text-sm dark:border-border-dark dark:bg-white/5">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[11px] font-semibold uppercase text-primary">컨텍스트 요약</p>
-              {isFilingContext && filingReferenceId ? (
-                <p className="text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">참조 ID: {filingReferenceId}</p>
+      <div className="space-y-3 px-6 py-4">
+        {hasContextBanner ? (
+          <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-sm text-slate-200">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-300">Context Highlights</p>
+                {isFilingContext && filingReferenceId ? (
+                  <p className="text-[11px] text-slate-400">참조 ID: {filingReferenceId}</p>
+                ) : null}
+              </div>
+              {isFilingContext ? (
+                <button
+                  type="button"
+                  onClick={onOpenFiling}
+                  className="rounded-full border border-white/20 bg-white/5 px-4 py-1 text-xs font-semibold text-slate-200 transition hover:border-white/40 hover:text-white"
+                >
+                  원문 열기
+                </button>
               ) : null}
             </div>
-            {isFilingContext ? (
-              <button
-                type="button"
-                onClick={onOpenFiling}
-                className="rounded-md border border-border-light px-3 py-1 text-xs font-semibold text-text-secondaryLight transition-colors hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover:border-primary.dark dark:hover:text-primary.dark"
-              >
-                공시 화면으로 이동
-              </button>
-            ) : null}
+            <p className="mt-3 leading-relaxed text-slate-300">{contextSummary}</p>
           </div>
-          <p className="mt-3 leading-relaxed text-text-secondaryLight dark:text-text-secondaryDark">{contextSummary}</p>
+        ) : null}
+        <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-4 py-3 text-[11px] leading-relaxed text-slate-400">
+          {disclaimer}
         </div>
-      )}
-      <div className="rounded-lg border border-dashed border-border-light bg-white/60 px-4 py-3 text-[11px] leading-relaxed text-text-secondaryLight dark:border-border-dark dark:bg-white/5 dark:text-text-secondaryDark">
-        {disclaimer}
       </div>
-      <div className="flex-1 space-y-4 overflow-y-auto pr-2">
+      <div className="flex-1 space-y-4 overflow-y-auto px-6 pb-44 pt-2">
         {showEmptyState ? (
           <EmptyState
             title="메시지가 없습니다"
             description="새 세션을 시작하거나 궁금한 점을 바로 질문해보세요."
-            className="rounded-lg border border-border-light px-4 py-6 text-xs dark:border-border-dark"
+            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-6 text-xs text-slate-300"
           />
         ) : (
           messages.map((message) => (
@@ -85,8 +93,10 @@ export function ChatStreamPane({
           ))
         )}
       </div>
-      <ChatInput onSubmit={onSend} disabled={inputDisabled} />
-    </div>
+      <div className="pointer-events-none absolute inset-x-0 bottom-32 h-32 bg-gradient-to-t from-[#050a1c] via-[#050a1c]/70 to-transparent" />
+      <div className="relative z-10 px-6 pb-6">
+        <ChatInput onSubmit={onSend} disabled={inputDisabled} />
+      </div>
+    </section>
   );
 }
-

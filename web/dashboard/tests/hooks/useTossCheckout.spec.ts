@@ -57,7 +57,7 @@ const mockCheckoutResponse = {
       planTier: "pro",
       amount: 1000,
       currency: "KRW",
-      orderName: "K-Finance Pro",
+      orderName: "Nuvien Pro",
       successPath: "/payments/success",
       failPath: "/payments/fail",
     }),

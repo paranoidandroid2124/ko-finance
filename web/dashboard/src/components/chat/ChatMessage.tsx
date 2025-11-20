@@ -7,6 +7,7 @@ import ToolWidgetRenderer from "@/components/chat/ToolWidgetRenderer";
 import type { ChatMessageMeta, ChatRole, CitationEntry, CitationMap } from "@/store/chatStore";
 import { useToastStore } from "@/store/toastStore";
 import { logEvent } from "@/lib/telemetry";
+import { renderChatContent } from "@/lib/renderChatContent";
 
 export type ChatMessageProps = {
   id: string;
@@ -240,10 +241,10 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
       )}
       <div
         className={classNames(
-          "max-w-xl rounded-2xl px-4 py-3 text-sm shadow-card transition-colors transition-motion-medium motion-safe:hover:-translate-y-1 motion-safe:group-hover:-translate-y-1",
+          "max-w-[80%] rounded-3xl px-5 py-4 text-sm leading-relaxed shadow-[0_15px_45px_rgba(3,7,18,0.45)] transition-all motion-safe:hover:-translate-y-1 motion-safe:group-hover:-translate-y-1",
           isUser
-            ? "bg-primary text-white"
-            : "bg-background-cardLight text-text-primaryLight dark:bg-background-cardDark dark:text-text-primaryDark"
+            ? "bg-gradient-to-br from-blue-600 to-cyan-500 text-white shadow-blue-500/30"
+            : "border border-white/10 bg-[#0b1425]/85 text-slate-200 backdrop-blur-xl"
         )}
       >
         {!isUser ? (
@@ -266,7 +267,7 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
         ) : null}
         <div className="flex items-start gap-2">
           <p className="flex-1 whitespace-pre-wrap leading-relaxed">
-            {content}
+            {typeof content === "string" ? renderChatContent(content) : content}
             {isGuardrail && (
               <span className="mt-2 block text-xs text-accent-warning">
                 guardrail 경고가 감지되어 안전 메시지로 대체되었습니다.

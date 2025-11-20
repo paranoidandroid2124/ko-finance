@@ -1,6 +1,5 @@
 import { type ComponentType } from "react";
 
-import { EventStudyPanel } from "@/components/tools/panels/EventStudyPanel";
 import { DisclosurePanel } from "@/components/tools/panels/DisclosurePanel";
 import { QuantScreenerPanel } from "@/components/tools/panels/QuantScreenerPanel";
 import { SnapshotPanel } from "@/components/tools/panels/SnapshotPanel";
@@ -10,7 +9,6 @@ import { PeerPanel } from "@/components/tools/panels/PeerPanel";
 import type { CommanderPaywallTier, CommanderRouteDecision, CommanderUiContainer } from "@/lib/chatApi";
 
 export type CommanderToolId =
-  | "event_study"
   | "disclosure_viewer"
   | "quant_screener"
   | "snapshot"
@@ -42,16 +40,6 @@ const buildDefinition = (
 });
 
 export const COMMANDER_TOOL_REGISTRY: Record<CommanderToolId, CommanderToolDefinition> = {
-  event_study: buildDefinition({
-    id: "event_study",
-    callName: "event_study.query",
-    title: "이벤트 스터디",
-    subtitle: "실적발표·IR 이후 CAR/CAAR 패턴을 분석합니다.",
-    uiContainer: "overlay",
-    paywall: "pro",
-    teaser: "blur",
-    component: EventStudyPanel,
-  }),
   disclosure_viewer: buildDefinition({
     id: "disclosure_viewer",
     callName: "disclosure.viewer",

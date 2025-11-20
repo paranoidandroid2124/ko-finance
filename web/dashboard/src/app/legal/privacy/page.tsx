@@ -6,7 +6,7 @@ import { LEGAL_COMPANY, buildDpoContactSection } from "@/app/legal/constants";
 const { updatedAt, name: companyName, contact: companyContact } = LEGAL_COMPANY;
 
 export const metadata: Metadata = {
-  title: "개인정보 처리방침 | K-Finance",
+  title: "개인정보 처리방침 | Nuvien",
   description: "수집 항목, 이용 목적, 보관 기간, 권리 행사 방법을 안내합니다.",
 };
 
@@ -28,9 +28,9 @@ const sections: LegalSection[] = [
         type: "list",
         title: "선택·생성 정보",
         items: [
-          "Chat·Notebook·Alert 등 사용자가 직접 입력한 분석 메모, 질문, 태그",
-          "LightMem·Digest 개인화 설정, Watchlist 구성",
-          "Admin/Workspace 운영자가 남긴 노트, 감사 코멘트, RBAC 관리 이력",
+          "Chat·Report·Alert 등 사용자가 직접 입력한 분석 메모, 질문, 태그",
+          "LightMem 개인화 설정, Watchlist 구성",
+          "Admin 운영자가 남긴 노트, 감사 코멘트, RBAC 관리 이력",
         ],
       },
     ],
@@ -42,7 +42,7 @@ const sections: LegalSection[] = [
       {
         type: "list",
         items: [
-          "서비스 제공: 공시·뉴스 탐색, AI 챗, Event Study, Alert, Digest 생성 및 전달",
+          "서비스 제공: 공시·뉴스 탐색, AI 챗, Event Study, Alert 생성 및 전달",
           "고객 지원: 문의 응대, 장애 대응, Audit Log 기반 이상 탐지",
           "과금·플랜 관리: PlanLock, Entitlement, 결제 정산",
           "법령 준수: 전자상거래법, 전자금융거래법, 개인정보보호법에서 요구하는 기록 보관",
@@ -65,9 +65,9 @@ const sections: LegalSection[] = [
           "감사 로그(audit_logs): 2년",
           "Chat 세션·메시지: 이용자가 직접 삭제하거나 마지막 활동 후 180일 경과 시 순차 삭제",
           "Chat Archive·Chat Audit: 365일",
-          "Digest Snapshot·Daily Digest Log: 180일",
+          "Report Export Log: 180일",
           "Alert Delivery Log·Evidence Snapshot: 365일",
-          "Notebook 공유 토큰: 만료 또는 해지 후 90일",
+          "Report 공유 링크/토큰: 만료 또는 해지 후 90일",
           "결제·거래 내역: 전자상거래법에 따라 5년",
         ],
       },
@@ -144,7 +144,7 @@ export default function PrivacyPage() {
   return (
     <LegalDocumentPage
       title="개인정보 처리방침"
-      subtitle="K-Finance Copilot이 수집·이용하는 개인정보와 이용자 권리를 투명하게 안내합니다."
+      subtitle="Nuvien Copilot이 수집·이용하는 개인정보와 이용자 권리를 투명하게 안내합니다."
       updatedAtLabel={updatedAt}
       sections={sections}
     />

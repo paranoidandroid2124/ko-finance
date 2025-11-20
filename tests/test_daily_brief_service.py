@@ -1,7 +1,6 @@
 from datetime import date
 import sys
 import types
-from uuid import uuid4
 
 fake_org_module = types.ModuleType("models.org")
 fake_org_module.Org = type("Org", (), {})
@@ -92,33 +91,6 @@ def patch_daily_brief_helpers(monkeypatch):
     monkeypatch.setattr(svc, "_collect_evidence", _mock_collect_evidence)
     monkeypatch.setattr(svc.admin_rag_service, "list_reindex_history", lambda limit=80: [{"id": 1}])
     monkeypatch.setattr(svc.admin_rag_service, "summarize_reindex_history", _mock_rag_summary)
-    monkeypatch.setattr(
-        svc,
-        "_fetch_digest_news",
-        lambda session, start, end, limit: [
-            {"headline": "샘플 하이라이트", "summary": "요약", "source": "Yonhap", "link": "https://example.com/news"}
-        ],
-    )
-
-    def _mock_dispatch_digest(_db, **kwargs):
-        return {
-            "payload": {
-                "summary": {"topTickers": ["0001"]},
-                "items": [
-                    {
-                        "ticker": "0001",
-                        "summary": "샘플 알림",
-                        "sentiment": 0.3,
-                        "deliveryStatus": "delivered",
-                    }
-                ],
-                "llmOverview": "overview",
-                "llmPersonalNote": "note",
-            },
-            "results": [],
-        }
-
-    monkeypatch.setattr(svc, "_dispatch_watchlist_digest", _mock_dispatch_digest)
 
 
 def test_build_daily_brief_payload_structure():
@@ -144,20 +116,3 @@ def test_build_daily_brief_payload_with_llm(monkeypatch):
     assert payload["report"]["headline"] == "맞춤 헤드라인"
     assert payload["notes"][0] == "요약 문장"
 
-
-def test_build_digest_preview_payload():
-    payload = svc.build_digest_preview(reference_date=date(2025, 1, 4), session=object(), plan_memory_enabled=True)
-    assert payload["news"], "news section should include mocked entry"
-    assert payload["watchlist"], "watchlist section should include mapped entry"
-    assert payload["sentiment"] is not None
-
-
-def test_build_digest_preview_respects_quota(monkeypatch):
-    monkeypatch.setattr(svc.quota_guard, "consume_quota", lambda *_, **__: False)
-    with pytest.raises(svc.DigestQuotaExceeded):
-        svc.build_digest_preview(
-            reference_date=date(2025, 1, 5),
-            session=object(),
-            owner_filters={"user_id": uuid4()},
-            enforce_quota_action="watchlist.preview",
-        )

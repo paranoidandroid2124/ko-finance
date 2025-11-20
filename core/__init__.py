@@ -1,2 +1,2 @@
-"""Core utilities package for K-Finance."""
+"""Core utilities package for Nuvien."""
 

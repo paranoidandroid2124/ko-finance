@@ -154,7 +154,7 @@ const sampleRule: AlertRule = {
       type: "email",
       targets: ["alerts@example.com"],
       template: "default",
-      metadata: { subject_template: "[K-Finance] 삼성전자 알림" },
+      metadata: { subject_template: "[Nuvien] 삼성전자 알림" },
     },
   ],
   messageTemplate: "default",

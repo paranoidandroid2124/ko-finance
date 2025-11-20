@@ -18,11 +18,9 @@ from core.logging import get_logger
 from database import SessionLocal
 from models.alert import AlertRule
 from models.chat import ChatMessage, ChatMessageArchive, ChatSession
-from models.digest import DigestSnapshot
 from models.dsar import DSARRequest
-from models.notebook import Notebook, NotebookEntry, NotebookShare
 from services.audit_log import record_audit_event
-from services import user_settings_service, watchlist_digest_schedule_service
+from services import user_settings_service
 
 logger = get_logger(__name__)
 
@@ -53,15 +51,6 @@ def _artifact_dir_for_request(request: DSARRequest) -> Path:
     destination = DSAR_EXPORT_ROOT / owner_segment / str(request.id)
     destination.mkdir(parents=True, exist_ok=True)
     return destination
-
-
-def _watchlist_owner_filters(request: DSARRequest) -> Dict[str, Optional[uuid.UUID]]:
-    """Return owner filters to scope watchlist digest schedules."""
-    if request.user_id:
-        return {"user_id": request.user_id, "org_id": None}
-    if request.org_id:
-        return {"user_id": None, "org_id": request.org_id}
-    return {"user_id": None, "org_id": None}
 
 
 @dataclass(frozen=True)
@@ -275,17 +264,9 @@ def _build_export_payload(session: Session, request: DSARRequest) -> Tuple[Dict[
         payload["chat"] = chat_data
         counts.update(chat_counts)
 
-        notebook_data, notebook_counts = _export_notebooks(session, user_id)
-        payload["notebookData"] = notebook_data
-        counts.update(notebook_counts)
-
         alerts = _export_alert_rules(session, user_id)
         payload["alertRules"] = alerts
         counts["alertRules"] = len(alerts)
-
-        snapshots = _export_digest_snapshots(session, user_id, org_id)
-        payload["digestSnapshots"] = snapshots
-        counts["digestSnapshots"] = len(snapshots)
 
         audit_rows = _export_audit_rows(session, user_id)
         payload["auditTrail"] = audit_rows
@@ -299,37 +280,7 @@ def _build_export_payload(session: Session, request: DSARRequest) -> Tuple[Dict[
         }
         counts["userLightmemSettings"] = 1
 
-    watchlist_schedules, watchlist_count = _export_watchlist_schedules(request)
-    payload["watchlistDigestSchedules"] = watchlist_schedules
-    counts["watchlistDigestSchedules"] = watchlist_count
-
     return payload, counts
-
-
-def _export_watchlist_schedules(request: DSARRequest) -> Tuple[List[Dict[str, Any]], int]:
-    filters = _watchlist_owner_filters(request)
-    if not (filters["user_id"] or filters["org_id"]):
-        return [], 0
-    entries = watchlist_digest_schedule_service.list_schedules(filters)
-    return entries, len(entries)
-
-
-def _delete_watchlist_schedules(request: DSARRequest) -> int:
-    filters = _watchlist_owner_filters(request)
-    if not (filters["user_id"] or filters["org_id"]):
-        return 0
-    entries = watchlist_digest_schedule_service.list_schedules(filters)
-    deleted = 0
-    for entry in entries:
-        schedule_id = entry.get("id")
-        if not schedule_id:
-            continue
-        try:
-            watchlist_digest_schedule_service.delete_schedule(uuid.UUID(str(schedule_id)), filters)
-            deleted += 1
-        except (KeyError, ValueError):
-            continue
-    return deleted
 
 
 def _export_chat_data(session: Session, user_id: uuid.UUID) -> Tuple[Dict[str, Any], Dict[str, int]]:
@@ -396,83 +347,6 @@ def _export_chat_data(session: Session, user_id: uuid.UUID) -> Tuple[Dict[str, A
     return {"sessions": serialized_sessions}, counts
 
 
-def _export_notebooks(session: Session, user_id: uuid.UUID) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
-    entries = (
-        session.query(NotebookEntry)
-        .filter(NotebookEntry.author_id == user_id)
-        .order_by(NotebookEntry.created_at.asc())
-        .all()
-    )
-    serialized: List[Dict[str, Any]] = []
-    notebook_ids: set[uuid.UUID] = set()
-    for entry in entries:
-        notebook_ids.add(entry.notebook_id)
-        serialized.append(
-            {
-                "id": str(entry.id),
-                "notebookId": str(entry.notebook_id),
-                "highlight": entry.highlight,
-                "annotation": entry.annotation,
-                "annotationFormat": entry.annotation_format,
-                "tags": entry.tags,
-                "source": entry.source,
-                "isPinned": entry.is_pinned,
-                "position": entry.position,
-                "createdAt": _to_iso(entry.created_at),
-                "updatedAt": _to_iso(entry.updated_at),
-            }
-        )
-    shares = (
-        session.query(NotebookShare)
-        .filter(NotebookShare.created_by == user_id)
-        .order_by(NotebookShare.created_at.desc())
-        .all()
-    )
-    serialized_shares = [
-        {
-            "id": str(share.id),
-            "notebookId": str(share.notebook_id),
-            "token": share.token,
-            "expiresAt": _to_iso(share.expires_at),
-            "revokedAt": _to_iso(share.revoked_at),
-            "lastAccessedAt": _to_iso(share.last_accessed_at),
-            "createdAt": _to_iso(share.created_at),
-        }
-        for share in shares
-    ]
-
-    notebooks = (
-        session.query(Notebook).filter(Notebook.id.in_(list(notebook_ids))).all()
-        if notebook_ids
-        else []
-    )
-    notebook_map = {
-        str(notebook.id): {
-            "title": notebook.title,
-            "summary": notebook.summary,
-            "tags": notebook.tags,
-            "createdAt": _to_iso(notebook.created_at),
-        }
-        for notebook in notebooks
-    }
-    entries_payload = [
-        {
-            **entry,
-            "notebook": notebook_map.get(entry["notebookId"]),
-        }
-        for entry in serialized
-    ]
-    payload = {
-        "entries": entries_payload,
-        "shares": serialized_shares,
-    }
-    counts = {
-        "notebookEntries": len(entries_payload),
-        "notebookShares": len(serialized_shares),
-    }
-    return payload, counts
-
-
 def _export_alert_rules(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]:
     rules = (
         session.query(AlertRule)
@@ -493,27 +367,6 @@ def _export_alert_rules(session: Session, user_id: uuid.UUID) -> List[Dict[str, 
             "updatedAt": _to_iso(rule.updated_at),
         }
         for rule in rules
-    ]
-
-
-def _export_digest_snapshots(
-    session: Session,
-    user_id: uuid.UUID,
-    org_id: Optional[uuid.UUID],
-) -> List[Dict[str, Any]]:
-    query = session.query(DigestSnapshot).filter(DigestSnapshot.user_id == user_id)
-    if org_id:
-        query = query.filter(DigestSnapshot.org_id == org_id)
-    snapshots = query.order_by(DigestSnapshot.digest_date.desc()).all()
-    return [
-        {
-            "digestDate": snapshot.digest_date.isoformat(),
-            "timeframe": snapshot.timeframe,
-            "channel": snapshot.channel,
-            "payload": snapshot.payload,
-            "updatedAt": _to_iso(snapshot.updated_at),
-        }
-        for snapshot in snapshots
     ]
 
 
@@ -557,24 +410,11 @@ def _run_deletion(session: Session, request: DSARRequest) -> Dict[str, Any]:
     deleted_rows["chat_messages"] = chat_deleted["messages"]
     deleted_rows["chat_messages_archive"] = chat_deleted["archives"]
 
-    deleted_rows["notebook_entries"] = _delete_notebook_rows(session, user_id)
     deleted_rows["alert_rules"] = _execute_delete(
         session,
         "DELETE FROM alert_rules WHERE user_id = :user_id",
         {"user_id": str(user_id)},
     )
-    deleted_rows["digest_snapshots"] = _execute_delete(
-        session,
-        "DELETE FROM digest_snapshots WHERE user_id = :user_id",
-        {"user_id": str(user_id)},
-    )
-    deleted_rows["notebook_shares"] = _execute_delete(
-        session,
-        "DELETE FROM notebook_shares WHERE created_by = :user_id",
-        {"user_id": str(user_id)},
-    )
-    deleted_rows["watchlist_digest_schedules"] = _delete_watchlist_schedules(request)
-
     lightmem_removed = user_settings_service.delete_user_lightmem_settings(user_id)
     deleted_rows["user_lightmem_settings"] = 1 if lightmem_removed else 0
 
@@ -610,40 +450,6 @@ def _delete_chat_rows(session: Session, user_id: uuid.UUID) -> Dict[str, int]:
         {"user_id": str(user_id)},
     )
     return stats
-
-
-def _delete_notebook_rows(session: Session, user_id: uuid.UUID) -> int:
-    rows = session.execute(
-        text(
-            """
-            DELETE FROM notebook_entries
-            WHERE author_id = :user_id
-            RETURNING notebook_id
-            """
-        ),
-        {"user_id": str(user_id)},
-    ).fetchall()
-    if not rows:
-        return 0
-
-    notebook_ids = {row[0] for row in rows if row[0]}
-    for notebook_id in notebook_ids:
-        remaining = session.execute(
-            text("SELECT COUNT(*) FROM notebook_entries WHERE notebook_id = :notebook_id"),
-            {"notebook_id": str(notebook_id)},
-        ).scalar_one()
-        session.execute(
-            text(
-                """
-                UPDATE notebooks
-                SET entry_count = :remaining,
-                    last_activity_at = NOW()
-                WHERE id = :notebook_id
-                """
-            ),
-            {"notebook_id": str(notebook_id), "remaining": int(remaining or 0)},
-        )
-    return len(rows)
 
 
 def _redact_audit_entries(session: Session, user_id: uuid.UUID) -> int:

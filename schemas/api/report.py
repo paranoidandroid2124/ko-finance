@@ -29,6 +29,13 @@ class ReportGenerateResponse(BaseModel):
 class ReportExportRequest(BaseModel):
     format: str
     chartImage: Optional[str] = None
+    keyStats: Optional[dict] = None
+
+
+class ReportFeedbackRequest(BaseModel):
+    sentiment: str
+    category: Optional[str] = None
+    comment: Optional[str] = None
 
 
 class ReportHistoryItem(BaseModel):
@@ -49,6 +56,7 @@ __all__ = [
     "ReportGenerateRequest",
     "ReportGenerateResponse",
     "ReportExportRequest",
+    "ReportFeedbackRequest",
     "ReportHistoryItem",
     "ReportHistoryResponse",
 ]

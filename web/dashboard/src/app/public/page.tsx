@@ -109,7 +109,7 @@ export default function PublicPreviewPage() {
       <header className="border-b border-slate-800 bg-slate-950/70 backdrop-blur">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-4">
           <div>
-            <p className="text-xs uppercase tracking-widest text-blue-300">K-Finance Preview</p>
+            <p className="text-xs uppercase tracking-widest text-blue-300">Nuvien Preview</p>
             <h1 className="text-2xl font-semibold">즉시 체험 가능한 공시 미리보기</h1>
           </div>
           <div className="flex gap-3">

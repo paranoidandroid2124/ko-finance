@@ -15,7 +15,7 @@ except Exception:  # pragma: no cover - fallback when Prometheus is absent
     generate_latest = None
 
 app = FastAPI(
-    title="K-Finance AI Research Copilot",
+    title="Nuvien AI Research Copilot",
     description="SSoT-aligned filings, news, and RAG backend API",
     version="0.1.0",
 )
@@ -64,7 +64,7 @@ async def track_sensitive_requests(request: Request, call_next):
 @app.get("/", summary="Health Check", tags=["Default"])
 def health_check():
     """API 상태를 확인하는 헬스 체크 엔드포인트입니다."""
-    return {"status": "ok", "message": "K-Finance AI Research Copilot API is running."}
+    return {"status": "ok", "message": "Nuvien AI Research Copilot API is running."}
 
 
 @app.get("/healthz", include_in_schema=False)
@@ -98,13 +98,12 @@ app.include_router(routers.rag.router, prefix="/api/v1")
 app.include_router(routers.search.router, prefix="/api/v1")
 app.include_router(routers.sectors.router, prefix="/api/v1")
 app.include_router(routers.company.router, prefix="/api/v1")
-app.include_router(routers.event_study.router, prefix="/api/v1")
 app.include_router(routers.evidence.router, prefix="/api/v1")
 app.include_router(routers.payments.router, prefix="/api/v1")
 app.include_router(routers.plan.router, prefix="/api/v1")
 app.include_router(routers.report.router, prefix="/api/v1")
+app.include_router(routers.admin.router, prefix="/api/v1")
 app.include_router(routers.onboarding.router, prefix="/api/v1")
-app.include_router(routers.boards.router, prefix="/api/v1")
 app.include_router(routers.orgs.router, prefix="/api/v1")
 app.include_router(routers.table_explorer.router, prefix="/api/v1")
 app.include_router(routers.auth.router, prefix="/api/v1")
@@ -113,13 +112,11 @@ app.include_router(routers.campaign.router, prefix="/api/v1")
 app.include_router(routers.analytics.router, prefix="/api/v1")
 app.include_router(routers.reports.router, prefix="/api/v1")
 app.include_router(routers.health.router, prefix="/api/v1")
-app.include_router(routers.workspaces.router, prefix="/api/v1")
 app.include_router(routers.account.router, prefix="/api/v1")
 app.include_router(routers.tools.router, prefix="/api/v1")
 app.include_router(routers.tools_text.router, prefix="/api/v1")
 app.include_router(routers.ops.router, prefix="/ops/api")
 app.include_router(routers.scim.router)
-app.include_router(routers.notebooks.router, prefix="/api/v1")
 
 if getattr(routers, "filing", None):
     app.include_router(routers.filing.router, prefix="/api/v1")

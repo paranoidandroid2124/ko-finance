@@ -12,15 +12,15 @@ export type PlanCheckoutPreset = {
 export const PLAN_CHECKOUT_PRESETS: Record<Exclude<PlanTier, "free">, PlanCheckoutPreset> = {
   starter: {
     amount: 9900,
-    orderName: "K-Finance Starter 플랜 구독",
+    orderName: "Nuvien Starter 플랜 구독",
   },
   pro: {
     amount: 39000,
-    orderName: "K-Finance Pro 플랜 구독",
+    orderName: "Nuvien Pro 플랜 구독",
   },
   enterprise: {
     amount: 185000,
-    orderName: "K-Finance Enterprise 플랜 구독",
+    orderName: "Nuvien Enterprise 플랜 구독",
   },
 };
 

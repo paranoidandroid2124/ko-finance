@@ -94,7 +94,6 @@ export const EmailChannel: Story = {
       helper: "쉼표나 줄바꿈으로 여러 이메일을 입력할 수 있어요.",
       templateOptions: [
         { value: "default", label: "기본" },
-        { value: "digest", label: "요약" },
       ],
     },
   },

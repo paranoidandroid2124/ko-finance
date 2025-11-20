@@ -43,7 +43,16 @@ const fetchReportAPI = async ({ ticker }: GenerateReportParams): Promise<Generat
 };
 
 export const useGenerateReport = () => {
-  const { setContent, setGenerating, openPanel, setSources, setTicker, setReportId, setCharts } = useReportStore(
+  const {
+    setContent,
+    setGenerating,
+    openPanel,
+    setSources,
+    setTicker,
+    setReportId,
+    setCharts,
+    setKeyStats,
+  } = useReportStore(
     (state) => ({
       setContent: state.setContent,
       setGenerating: state.setGenerating,
@@ -52,6 +61,7 @@ export const useGenerateReport = () => {
       setTicker: state.setTicker,
       setReportId: state.setReportId,
       setCharts: state.setCharts,
+      setKeyStats: state.setKeyStats,
     })
   );
 
@@ -64,6 +74,7 @@ export const useGenerateReport = () => {
       setTicker(variables.ticker);
       setReportId(undefined);
       setCharts(null);
+      setKeyStats(null);
       openPanel();
       return variables;
     },

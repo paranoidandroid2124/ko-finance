@@ -46,24 +46,27 @@ export function ChatContextPane() {
   );
 
   return (
-    <aside className="hidden w-80 flex-none space-y-4 rounded-xl border border-border-light bg-background-cardLight p-4 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark lg:block">
-      <section>
-        <h3 className="text-sm font-semibold">컨텍스트 하이라이트</h3>
-        {contextSummary ? (
-          <div className="mt-3 space-y-2 rounded-lg border border-border-light px-3 py-3 text-xs dark:border-border-dark">
-            <p className="text-[11px] font-semibold uppercase text-primary">{contextLabel}</p>
-            {referenceId && (
-              <p className="text-[11px] text-text-secondaryLight dark:text-text-secondaryDark">참조 ID: {referenceId}</p>
-            )}
-            <p className="leading-relaxed text-text-secondaryLight dark:text-text-secondaryDark">{contextSummary}</p>
+    <aside className="hidden w-[320px] flex-none flex-col gap-4 rounded-3xl border border-white/5 bg-black/20 p-4 text-sm text-slate-200 shadow-[0_25px_120px_rgba(3,7,18,0.55)] backdrop-blur-xl lg:flex">
+      <section className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500">Context</p>
+            <h3 className="text-base font-semibold text-white">컨텍스트 하이라이트</h3>
           </div>
+          {referenceId ? (
+            <span className="rounded-full border border-white/15 px-3 py-1 text-[11px] text-slate-400">ID: {referenceId}</span>
+          ) : null}
+        </div>
+        {contextSummary ? (
+          <p className="mt-3 text-sm text-slate-300">{contextSummary}</p>
         ) : (
-          <p className="mt-3 rounded-lg border border-dashed border-border-light px-3 py-4 text-xs text-text-secondaryLight dark:border-border-dark dark:text-text-secondaryDark">
-            이 세션에는 아직 연결된 컨텍스트가 없습니다. 공시 상세 화면에서 “질문하기” 버튼을 사용해 새 대화를 열어보세요.
+          <p className="mt-3 rounded-2xl border border-dashed border-white/10 px-3 py-3 text-xs text-slate-500">
+            이 세션에는 아직 연결된 컨텍스트가 없습니다. 공시 상세 화면에서 “질문하기” 버튼으로 새 대화를 열어보세요.
           </p>
         )}
+        <p className="mt-2 text-[11px] uppercase tracking-[0.2em] text-blue-300">{contextLabel}</p>
       </section>
-      <section>
+      <section className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
         <RagEvidencePanel
           status={evidence.status}
           items={evidence.items}
@@ -76,7 +79,7 @@ export function ChatContextPane() {
           onOpenSource={handleOpenSource}
         />
       </section>
-      <section>
+      <section className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
         <PdfHighlightMock
           documentTitle={highlight.documentTitle}
           pdfUrl={highlight.documentUrl}
@@ -87,7 +90,7 @@ export function ChatContextPane() {
         />
       </section>
       {activeSession?.context?.type === "filing" ? (
-        <section>
+        <section className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
           <FilingXmlViewer
             filingId={referenceId ?? undefined}
             evidenceItems={evidence.items}

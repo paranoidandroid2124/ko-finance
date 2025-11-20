@@ -10,8 +10,8 @@
 - Issuer-specific overrides are stored in `ingest_viewer_flags` and should be managed via the CLI:
   ```bash
   python scripts/ingest_viewer_flags.py list
-  python scripts/ingest_viewer_flags.py disable 00123456 --reason "Robots hold (LG legal case)" --updated-by ops@ko-finance
-  python scripts/ingest_viewer_flags.py enable 00123456 --updated-by ops@ko-finance
+  python scripts/ingest_viewer_flags.py disable 00123456 --reason "Robots hold (LG legal case)" --updated-by ops@nuvien
+  python scripts/ingest_viewer_flags.py enable 00123456 --updated-by ops@nuvien
   python scripts/ingest_viewer_flags.py clear-cache  # force-refresh cached flags
   ```
   The CLI wraps the same table used by migrations and automatically invalidates the in-process cache (`viewer_fallback_state`).

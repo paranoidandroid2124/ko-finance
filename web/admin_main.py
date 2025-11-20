@@ -6,7 +6,7 @@ from web import routers
 from web.background.rag_auto_retry import start_retry_scheduler
 
 app = FastAPI(
-    title="K-Finance Admin API",
+    title="Nuvien Admin API",
     description="Operations-only FastAPI surface for the admin console.",
     version="0.1.0",
 )
@@ -38,7 +38,7 @@ async def inject_plan_context(request: Request, call_next):
 @app.get("/", summary="Health Check", tags=["Default"])
 def health_check():
     """운영 세션 기본 상태를 확인하는 헬스 체크."""
-    return {"status": "ok", "message": "K-Finance Admin API is running."}
+    return {"status": "ok", "message": "Nuvien Admin API is running."}
 
 
 app.include_router(routers.admin.router, prefix="/api/v1")

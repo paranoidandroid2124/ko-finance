@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 SYSTEM_PROMPT = (
-    "당신은 K-Finance의 사전 심사 분석관입니다. 사용자가 입력한 질문을 검토해 "
+    "당신은 Nuvien의 사전 심사 분석관입니다. 사용자가 입력한 질문을 검토해 "
     "규제 위반 가능성과 문서 기반 증거(RAG)가 필요한지 여부를 함께 판정합니다.\n"
     "반드시 다음 JSON 스키마로만 응답하세요:\n"
     "{\n"

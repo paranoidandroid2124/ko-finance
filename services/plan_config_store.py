@@ -51,7 +51,6 @@ _DEFAULT_PLAN_CONFIG: Dict[str, Any] = {
                 "search.export",
                 "evidence.inline_pdf",
                 "rag.core",
-                "collab.notebook",
                 "reports.event_export",
             ],
             "quota": {
@@ -70,7 +69,6 @@ _DEFAULT_PLAN_CONFIG: Dict[str, Any] = {
                 "evidence.diff",
                 "rag.core",
                 "timeline.full",
-                "collab.notebook",
                 "reports.event_export",
             ],
             "quota": {

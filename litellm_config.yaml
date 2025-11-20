@@ -1,4 +1,4 @@
-﻿# K-Finance LiteLLM configuration
+# Nuvien LiteLLM configuration
 # - Default model: Gemini Flash-Lite (baseline)
 # - Fallback model: GPT-5 (fallback_model)
 # - Guardrail judge model: GPT-4o mini (judge_model)

@@ -35,7 +35,7 @@ Event Study PDF/ZIP Export는 `reports.event_export` 엔타이틀먼트와 `time
 ## 4. 운영 체크리스트
 
 1. **샘플 Export**  
-   - `/labs/event-study` 화면에서 Pro 플랜 계정을 사용해 Export를 실행합니다. 토스트가 presigned URL을 안내하는지와 생성된 PDF/ZIP 구조를 확인합니다.
+   - Commander Overlay에서 Event Study 툴(또는 내부 `generate_event_study_payload`)을 호출해 Export를 실행합니다. 토스트가 presigned URL을 안내하는지와 생성된 PDF/ZIP 구조를 확인합니다.
 2. **보관 디렉터리 확인**  
    - `ls uploads/admin/event_briefs` 혹은 `find uploads/admin/event_briefs -maxdepth 1 -type d` 명령으로 생성 시각별 폴더를 점검합니다.
    - `EVENT_BUNDLE_RETENTION_DAYS`보다 오래된 폴더가 자동으로 제거되는지 로그(`Removed expired event bundle directory ...`)를 확인합니다.

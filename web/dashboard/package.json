@@ -35,6 +35,8 @@
     "react-dom": "18.2.0",
     "reactflow": "^11.10.2",
     "recharts": "^3.4.1",
+    "swr": "^2.2.0",
+    "@supabase/supabase-js": "^2.45.1",
     "zustand": "^4.4.7"
   },
   "devDependencies": {

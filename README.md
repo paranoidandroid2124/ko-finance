@@ -1,4 +1,4 @@
-## K-Finance AI Research Copilot
+## Nuvien AI Research Copilot
 
 Backend copilot that ingests Korean filings, news, and documents to produce research signals. This README focuses on restoring the **M2 Market Mood** pipeline while keeping M1/M3 context.
 
@@ -37,8 +37,8 @@ pip install -r requirements.txt
 #### Email/Password Authentication Checklist
 1. **Apply the credential schema.** The combined SQL lives at `ops/migrations/add_email_password_auth.sql`. When using Docker Compose, copy it into the Postgres container and execute:
    ```bash
-   docker cp ops/migrations/add_email_password_auth.sql ko-finance-postgres-1:/tmp/add_email_password_auth.sql
-   docker exec -i ko-finance-postgres-1 psql -U kfinance -d kfinance_db -v ON_ERROR_STOP=1 -f /tmp/add_email_password_auth.sql
+   docker cp ops/migrations/add_email_password_auth.sql nuvien-postgres-1:/tmp/add_email_password_auth.sql
+   docker exec -i nuvien-postgres-1 psql -U kfinance -d kfinance_db -v ON_ERROR_STOP=1 -f /tmp/add_email_password_auth.sql
    ```
 2. **Backend endpoints.** `web/routers/auth.py` exposes `/api/v1/auth/register|login|email/verify|password-reset/*|session/refresh|logout` backed by `services/auth_service.py` (Argon2 hashing, `auth_tokens`, `session_tokens`, audit logging, rate limits). Error responses follow `{"detail": {"code": "...", "message": "...", "retryAfter"?: number}}` and rate limit violations also emit a `Retry-After` header.
    - 재전송/잠금 플로우: `/auth/email/verify/resend`, `/auth/account/unlock/request`, `/auth/account/unlock/confirm`가 추가되어 로그인 화면에서 CTA를 붙일 수 있습니다.
@@ -50,7 +50,7 @@ pip install -r requirements.txt
 
 - Run `make ci` locally or in CI to execute the default pipeline: `pip-compile` consistency check → `pytest -q` → `ruff check` → `mypy`.
 - To avoid polluting the repo with file-based plan/news state, wrap any pytest/migration command with `scripts/ci_tmp_env.sh`. Example: `./scripts/ci_tmp_env.sh make test` or `./scripts/ci_tmp_env.sh docker-compose run --rm api pytest -q`.
-- The script pins `PLAN_SETTINGS_FILE`, `PLAN_CONFIG_FILE`, `PLAN_CATALOG_FILE`, and `NEWS_SUMMARY_CACHE_PATH` to `/tmp/kofinance_state/...`; customize via `CI_STATE_ROOT` if your CI provides a different tmpfs mount.
+- The script pins `PLAN_SETTINGS_FILE`, `PLAN_CONFIG_FILE`, `PLAN_CATALOG_FILE`, and `NEWS_SUMMARY_CACHE_PATH` to `/tmp/nuvien_state/...`; customize via `CI_STATE_ROOT` if your CI provides a different tmpfs mount.
 - Long term we are migrating these JSON stores into PostgreSQL/Cloud Storage—see `docs/state_storage_migration.md` for the roadmap.
 
 #### SSO & SCIM (Enterprise)
@@ -65,7 +65,7 @@ DATABASE_URL=postgresql://kfinance:your_strong_password@localhost:5432/kfinance_
   ./ops/migrations/apply_all.sh
 
 # Docker Compose 컨테이너 내부에서 실행
-DOCKER_POSTGRES_CONTAINER=ko-finance-postgres-1 \
+DOCKER_POSTGRES_CONTAINER=nuvien-postgres-1 \
 POSTGRES_USER=kfinance \
 POSTGRES_DB=kfinance_db \
   ./ops/migrations/apply_all.sh
@@ -163,9 +163,3 @@ Ensure Redis/Postgres/Qdrant services are reachable via `.env`.
 - Google Workspace SSO를 붙일 경우 `GOOGLE_ADMIN_CLIENT_ID`(OAuth Client ID)와 `GOOGLE_ADMIN_ALLOWED_DOMAIN`을 환경변수로 지정하고, 프런트엔드에서 Google OAuth로 발급받은 `id_token`을 `/api/v1/admin/session`에 전달하면 됩니다. 설정이 없는 경우에는 기존의 정적 토큰(`token`) 흐름이 그대로 유지됩니다.
 - Workspace 없이 자체 인증을 쓰려면 `ADMIN_ALLOWED_EMAILS`, `ADMIN_MFA_SECRETS`, `ADMIN_REQUIRE_MFA`를 지정한 뒤 `/api/v1/admin/auth/login`으로 이메일+비밀번호(+TOTP) 검증을 통과해야 운영 세션을 발급받도록 구성했습니다. Admin UI의 로그인 카드도 해당 엔드포인트를 사용합니다.
 
-### Research Notebook (Labs)
-- **Schema**: apply `ops/migrations/add_research_notebooks.sql` to provision `notebooks`, `notebook_entries`, `notebook_shares` (+ triggers for `entry_count` / activity).
-- **API**: FastAPI router at `/api/v1/notebooks` (CRUD, tag filters, share links w/ password + TTL). Audit actions emit `collab.notebook.*`.
-- **Dashboard**: Next.js page at `/labs/notebook` (Markdown highlight composer, inline entry edit/delete, share panel) using `web/dashboard/src/components/notebook/*`.
-- **Public share**: password-aware viewer at `/labs/notebook/share/[token]` powered by `POST /api/v1/notebooks/shares/access`.
-- **Docs**: UX capture (`docs/ux/research_notebook.md`) and QA checklist (`docs/qa/research_notebook_checklist.md`) outline expected flows + validation steps.

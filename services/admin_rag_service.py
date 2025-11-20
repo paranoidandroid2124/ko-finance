@@ -1,4 +1,4 @@
-﻿"""Persistence helpers for administrator-managed RAG configuration."""
+"""Persistence helpers for administrator-managed RAG configuration."""
 
 from __future__ import annotations
 
@@ -41,9 +41,9 @@ _EVIDENCE_DIFF_SAMPLE_LIMIT = env_int("ADMIN_RAG_EVIDENCE_DIFF_SAMPLE_LIMIT", 20
 
 _DEFAULT_RAG_CONFIG: Dict[str, object] = {
     "sources": [
-        {"key": "filings", "name": "공시/재무제표", "enabled": True},
-        {"key": "news", "name": "뉴스&섹터", "enabled": True},
-        {"key": "patents", "name": "특허 데이터", "enabled": False},
+        {"key": "filings", "name": "??/????", "enabled": True},
+        {"key": "news", "name": "??&??", "enabled": True},
+        {"key": "patents", "name": "?? ???", "enabled": False},
     ],
     "filters": [],
     "similarityThreshold": 0.62,
@@ -160,18 +160,18 @@ def handle_reindex_sla_breach(
     queue_label = _format_duration_ms(queue_wait_ms)
 
     message = (
-        f"RAG 재색인 SLA {REINDEX_SLA_MINUTES}분 초과 :: {scope_label} "
-        f"(총 소요 {elapsed_label}, 처리 {duration_label}, 대기 {queue_label})"
+        f"RAG ??? SLA {REINDEX_SLA_MINUTES}? ?? :: {scope_label} "
+        f"(? ?? {elapsed_label}, ?? {duration_label}, ?? {queue_label})"
     )
     markdown_lines = [
-        "*RAG 재색인 SLA 초과 감지*",
-        f"- 범위: `{scope_label}`",
-        f"- 총 소요: {elapsed_label} (목표 {REINDEX_SLA_MINUTES}분)",
-        f"- 처리 시간: {duration_label}",
-        f"- 큐 대기: {queue_label}",
+        "*RAG ??? SLA ?? ??*",
+        f"- ??: `{scope_label}`",
+        f"- ? ??: {elapsed_label} (?? {REINDEX_SLA_MINUTES}?)",
+        f"- ?? ??: {duration_label}",
+        f"- ? ??: {queue_label}",
     ]
     if retry_mode:
-        markdown_lines.append(f"- Retry 모드: `{retry_mode}`")
+        markdown_lines.append(f"- Retry ??: `{retry_mode}`")
     if langfuse_trace_url:
         markdown_lines.append(f"- Trace: {langfuse_trace_url}")
 
@@ -179,9 +179,9 @@ def handle_reindex_sla_breach(
         {"title": "Task ID", "value": task_id, "short": True},
         {"title": "Scope", "value": scope_label, "short": True},
         {"title": "Actor", "value": actor or "system", "short": True},
-        {"title": "총 소요", "value": f"{elapsed_label} / 목표 {REINDEX_SLA_MINUTES}분", "short": False},
-        {"title": "처리 시간", "value": duration_label, "short": True},
-        {"title": "큐 대기", "value": queue_label, "short": True},
+        {"title": "? ??", "value": f"{elapsed_label} / ?? {REINDEX_SLA_MINUTES}?", "short": False},
+        {"title": "?? ??", "value": duration_label, "short": True},
+        {"title": "? ??", "value": queue_label, "short": True},
     ]
     if queue_id:
         attachment_fields.append({"title": "Queue ID", "value": queue_id, "short": True})
@@ -200,14 +200,14 @@ def handle_reindex_sla_breach(
         attachment_fields.append({"title": "Note", "value": trimmed_note, "short": False})
 
     metadata = {
-        "subject": "[RAG] 재색인 SLA 초과",
+        "subject": "[RAG] ??? SLA ??",
         "markdown": "\n".join(markdown_lines),
         "attachments": [
             {
                 "color": "#f97316",
-                "title": "재색인 SLA 자동 대응",
+                "title": "??? SLA ?? ??",
                 "fields": attachment_fields,
-                "footer": "K-Finance Admin · SLA Guard",
+                "footer": "Nuvien Admin � SLA Guard",
             }
         ],
     }

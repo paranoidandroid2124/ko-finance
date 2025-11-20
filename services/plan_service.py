@@ -50,13 +50,11 @@ class PlanMemoryFlags:
     """Fine-grained LightMem feature toggles stored with the plan."""
 
     watchlist_enabled: bool = False
-    digest_enabled: bool = False
     chat_enabled: bool = False
 
     def to_dict(self) -> Dict[str, bool]:
         return {
             "watchlist": self.watchlist_enabled,
-            "digest": self.digest_enabled,
             "chat": self.chat_enabled,
         }
 
@@ -117,7 +115,6 @@ class PlanContext:
     change_note: Optional[str] = None
     checkout_requested: bool = False
     memory_watchlist_enabled: bool = False
-    memory_digest_enabled: bool = False
     memory_chat_enabled: bool = False
     trial_tier: Optional[PlanTier] = None
     trial_starts_at: Optional[datetime] = None
@@ -139,14 +136,12 @@ class PlanContext:
             "evidence.diff": self.allows("evidence.diff"),
             "rag.core": self.allows("rag.core"),
             "timeline.full": self.allows("timeline.full"),
-            "collab.notebook": self.allows("collab.notebook"),
             "reports.event_export": self.allows("reports.event_export"),
         }
 
     def memory_flags(self) -> Mapping[str, bool]:
         return {
             "watchlist": self.memory_watchlist_enabled,
-            "digest": self.memory_digest_enabled,
             "chat": self.memory_chat_enabled,
         }
 
@@ -221,7 +216,6 @@ def _parse_memory_flags(payload: Optional[Mapping[str, Any]]) -> PlanMemoryFlags
         return PlanMemoryFlags()
     return PlanMemoryFlags(
         watchlist_enabled=bool(payload.get("watchlist")),
-        digest_enabled=bool(payload.get("digest")),
         chat_enabled=bool(payload.get("chat")),
     )
 
@@ -258,7 +252,6 @@ def _feature_flags_from_entitlements(entitlements: Iterable[str]) -> Dict[str, b
         "evidence.diff": "evidence.diff" in ent_set,
         "rag.core": "rag.core" in ent_set,
         "timeline.full": "timeline.full" in ent_set,
-        "collab.notebook": "collab.notebook" in ent_set,
         "reports.event_export": "reports.event_export" in ent_set,
     }
 
@@ -553,7 +546,6 @@ def _build_plan_context(
         change_note=change_note,
         checkout_requested=settings.checkout_requested if settings else False,
         memory_watchlist_enabled=memory_flags.watchlist_enabled,
-        memory_digest_enabled=memory_flags.digest_enabled,
         memory_chat_enabled=memory_flags.chat_enabled,
         trial_tier=trial_state.tier,
         trial_starts_at=trial_state.started_at,
@@ -734,7 +726,6 @@ def start_plan_trial(
             checkout_requested=False,
             memory_flags=PlanMemoryFlags(
                 watchlist_enabled=current.memory_watchlist_enabled,
-                digest_enabled=current.memory_digest_enabled,
                 chat_enabled=current.memory_chat_enabled,
             ),
             trial_state=PlanTrialState(),

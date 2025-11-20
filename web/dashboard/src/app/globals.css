@@ -6,22 +6,50 @@
 
 :root {
   color-scheme: light;
-  background-color: #f5f7fb;
-  color: #111827;
+  background-color: #f6f6f9;
+  color: #0b1220;
 }
 
 .dark {
   color-scheme: dark;
-  background-color: #0d1423;
-  color: #f9fafb;
+  background-color: #05070f;
+  color: #f7f9fc;
 }
 
 body {
-  @apply font-sans bg-background-light text-text-primaryLight dark:bg-background-dark dark:text-text-primaryDark;
+  @apply font-sans bg-canvas-light text-text-primaryLight antialiased transition-colors duration-300 dark:bg-canvas dark:text-text-primaryDark;
+  letter-spacing: -0.01em;
 }
 
 a {
-  @apply text-primary underline-offset-2 transition-colors hover:text-primary-hover;
+  @apply text-primary underline-offset-4 transition-colors duration-200 hover:text-primary-hover;
+}
+
+::selection {
+  background: rgba(59, 130, 246, 0.35);
+  color: #f7f9fc;
+}
+
+.glass-panel {
+  @apply border border-border-subtle bg-surface-elevated/90 backdrop-blur-glass;
+}
+
+.bento-grid {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.bento-card {
+  @apply rounded-3xl border border-border-subtle bg-surface-muted/90 p-6 shadow-subtle;
+}
+
+.page-shell {
+  @apply mx-auto w-full max-w-6xl px-6 py-10 lg:py-12;
+}
+
+.section-heading {
+  @apply text-xs font-semibold uppercase tracking-[0.35em] text-text-secondaryDark;
 }
 
 @media print {

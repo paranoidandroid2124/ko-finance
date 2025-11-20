@@ -29,10 +29,6 @@ def watchlist_memory_enabled(plan: PlanContext, user_settings: Optional[UserLigh
     return lightmem_gate.watchlist_enabled(plan, user_settings)
 
 
-def digest_memory_enabled(plan: PlanContext, user_settings: Optional[UserLightMemSettings]) -> bool:
-    return lightmem_gate.digest_enabled(plan, user_settings)
-
-
 def owner_filters(user_id: Optional[uuid.UUID], org_id: Optional[uuid.UUID]) -> Dict[str, Optional[uuid.UUID]]:
     return {"user_id": user_id, "org_id": org_id}
 
@@ -42,6 +38,5 @@ __all__ = [
     "resolve_lightmem_user_id",
     "load_user_lightmem_settings",
     "watchlist_memory_enabled",
-    "digest_memory_enabled",
     "owner_filters",
 ]

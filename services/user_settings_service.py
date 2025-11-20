@@ -56,7 +56,6 @@ class UserLightMemSettings:
 
     enabled: bool = False
     watchlist: bool = True
-    digest: bool = True
     chat: bool = True
 
     @classmethod
@@ -65,7 +64,6 @@ class UserLightMemSettings:
         return cls(
             enabled=bool(data.get("enabled", False)),
             watchlist=bool(data.get("watchlist", True)),
-            digest=bool(data.get("digest", True)),
             chat=bool(data.get("chat", True)),
         )
 
@@ -73,7 +71,6 @@ class UserLightMemSettings:
         return {
             "enabled": bool(self.enabled),
             "watchlist": bool(self.watchlist),
-            "digest": bool(self.digest),
             "chat": bool(self.chat),
         }
 

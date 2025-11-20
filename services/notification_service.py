@@ -28,7 +28,7 @@ NHN_EMAIL_BASE_URL = os.getenv("NHN_EMAIL_BASE_URL", "https://email.api.nhncloud
 NHN_APP_KEY = os.getenv("NHN_APP_KEY")
 NHN_SECRET_KEY = os.getenv("NHN_SECRET_KEY")
 NHN_SENDER_ADDRESS = os.getenv("NHN_SENDER_ADDRESS") or ALERT_EMAIL_FROM
-NHN_SENDER_NAME = os.getenv("NHN_SENDER_NAME") or os.getenv("APP_BRAND_NAME") or "K-Finance"
+NHN_SENDER_NAME = os.getenv("NHN_SENDER_NAME") or os.getenv("APP_BRAND_NAME") or "Nuvien"
 NHN_EMAIL_TIMEOUT = float(os.getenv("NHN_EMAIL_TIMEOUT", "10"))
 SMTP_HOST = os.getenv("SMTP_HOST")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
@@ -273,7 +273,7 @@ def _send_email_via_nhn_rest(
         return NotificationResult(status="failed", error="발신 주소 누락", failed=len(recipients))
 
     sender_name = metadata.get("sender_name") or NHN_SENDER_NAME
-    subject = metadata.get("subject") or rendered.get("subject") or "ko-finance 알림"
+    subject = metadata.get("subject") or rendered.get("subject") or "Nuvien 알림"
     body_text = rendered.get("body") or message
     html_template = metadata.get("html_template") or metadata.get("html")
     if isinstance(html_template, str):
@@ -323,7 +323,7 @@ def _send_email_via_smtp(
         return NotificationResult(status="failed", error="SMTP 설정이 누락되었습니다.", failed=len(recipients))
 
     email_msg = EmailMessage()
-    email_msg["Subject"] = rendered.get("subject") or "ko-finance 알림"
+    email_msg["Subject"] = rendered.get("subject") or "Nuvien 알림"
     email_msg["From"] = ALERT_EMAIL_FROM
     email_msg["To"] = ", ".join(recipients)
     reply_to = metadata.get("reply_to")
@@ -419,7 +419,7 @@ def _handle_webhook(
             payload = dict(payload_template)
             payload.setdefault("message", rendered.get("body") or message)
         else:
-            payload = {"message": rendered.get("body") or message, "origin": "ko-finance-alerts"}
+            payload = {"message": rendered.get("body") or message, "origin": "nuvien-alerts"}
         results.append(_post_with_backoff(url, payload, success_count=1, result_metadata={"webhook": url}))
     return _aggregate_results(results)
 
@@ -438,7 +438,7 @@ def _handle_pagerduty(
     if not routing_keys:
         return NotificationResult(status="failed", error="PagerDuty routing key가 필요합니다.")
     severity = metadata.get("severity", "info")
-    source = metadata.get("source", "ko-finance-alerts")
+    source = metadata.get("source", "nuvien-alerts")
     component = metadata.get("component")
     results: List[NotificationResult] = []
     for key in routing_keys:

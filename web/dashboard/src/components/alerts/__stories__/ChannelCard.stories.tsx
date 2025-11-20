@@ -24,17 +24,14 @@ const meta: Meta<typeof ChannelCard> = {
     requiresTarget: true,
     ui: {
       placeholder: "팀 이메일 주소를 입력해주세요",
-      helper: "예: alert@ko-finance.org, team@ko-finance.org",
-      templateOptions: [
-        { value: "default", label: "빠른 알림" },
-        { value: "digest", label: "요약 모드" },
-      ],
+      helper: "예: alert@nuvien.com, team@nuvien.com",
+      templateOptions: [{ value: "default", label: "빠른 알림" }],
     },
     state: baseState({
-      input: "alert@ko-finance.org",
-      targets: ["alert@ko-finance.org"],
+      input: "alert@nuvien.com",
+      targets: ["alert@nuvien.com"],
       metadata: { subject_template: "따끈한 소식을 전해요" },
-      template: "digest",
+      template: "default",
     }),
     errors: undefined,
     onToggle: () => {},

@@ -6,7 +6,7 @@ import { LEGAL_COMPANY, buildCompanyContactSection } from "@/app/legal/constants
 const { contact: companyContact, updatedAt } = LEGAL_COMPANY;
 
 export const metadata: Metadata = {
-  title: "데이터 & 라이선스 정책 | K-Finance",
+  title: "데이터 & 라이선스 정책 | Nuvien",
   description: "데이터 소스, Evidence 정책, 보존 주기, DSAR 절차를 안내합니다.",
 };
 
@@ -17,7 +17,7 @@ const sections: LegalSection[] = [
     contents: [
       {
         type: "paragraph",
-        text: "서비스는 OpenDART, KRX 시세·벤치마크, KISVALUE, ko-finance가 축적한 이벤트/섹터 데이터, 언론사와 협약한 뉴스 피드를 조합해 제공합니다.",
+        text: "서비스는 OpenDART, KRX 시세·벤치마크, KISVALUE, Nuvien이 축적한 이벤트/섹터 데이터, 언론사와 협약한 뉴스 피드를 조합해 제공합니다.",
       },
       {
         type: "list",
@@ -25,7 +25,7 @@ const sections: LegalSection[] = [
         items: [
           "OpenDART·공공데이터: 출처를 명시하고 원문이 항상 우선",
           "라이선스 뉴스: 제목·링크·요약 중심으로 노출하며 전문을 저장하거나 재배포하지 않음",
-          "사용자 업로드 자료(Evidence Bundle, Notebook 첨부 등): 업로더가 저작권·제3자 권리를 보유하고 있음을 전제로 기록",
+          "사용자 업로드 자료(Evidence Bundle, Report 첨부 등): 업로더가 저작권·제3자 권리를 보유하고 있음을 전제로 기록",
         ],
       },
     ],
@@ -59,8 +59,8 @@ const sections: LegalSection[] = [
           "Chat 세션/메시지: 180일",
           "Chat Archive·Chat Audit: 365일",
           "Alert Delivery·Evidence Snapshot: 365일",
-          "Digest Snapshot·Daily Digest Log: 180일",
-          "Notebook Share Token: 90일",
+          "Report Export Log: 180일",
+          "Report Share Token: 90일",
           "LightMem 설정 파일: 이용자 삭제 또는 계정 삭제 시 즉시 폐기",
         ],
       },
@@ -79,7 +79,7 @@ const sections: LegalSection[] = [
         items: [
           "Settings → Legal & Data에서 내보내기 또는 삭제 요청을 남기면 DSAR 요청 큐에 등록됩니다.",
           "요청은 최대 24시간마다 실행되는 Celery 작업에서 처리되며, 진행 상태와 다운로드 링크는 화면과 API로 안내됩니다.",
-          "삭제 요청 시 Chat·LightMem·Notebook 등의 개인 데이터를 우선 제거하고, 법적으로 보존해야 하는 데이터는 비식별화합니다.",
+          "삭제 요청 시 Chat·LightMem·Report 등의 개인 데이터를 우선 제거하고, 법적으로 보존해야 하는 데이터는 비식별화합니다.",
         ],
       },
       {

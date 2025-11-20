@@ -29,22 +29,9 @@ entries:
   sector-window-hourly:
     task: m2.aggregate_sector_windows
     cron: "20 * * * *"
-  daily-filing-digest:
-    task: m4.send_filing_digest
-    cron: "0 18 * * mon-fri"
-    kwargs:
-      timeframe: daily
-  weekly-filing-digest:
-    task: m4.send_filing_digest
-    cron: "30 9 * * mon"
-    kwargs:
-      timeframe: weekly
   daily-brief-pdf:
     task: m4.generate_daily_brief
     cron: "30 7 * * mon-fri"
-  watchlist-digest-scheduler:
-    task: watchlist.run_digest_schedules
-    cron: "*/5 * * * *"
   lightmem-longterm-update:
     task: memory.promote_long_term
     cron: "15 3 * * *"

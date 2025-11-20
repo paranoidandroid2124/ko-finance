@@ -45,11 +45,6 @@ def watchlist_enabled(plan: PlanContext, user_settings: Optional[user_settings_s
     return _is_enabled(plan.memory_watchlist_enabled, user_settings, "watchlist")
 
 
-def digest_enabled(plan: PlanContext, user_settings: Optional[user_settings_service.UserLightMemSettings]) -> bool:
-    """Whether LightMem digest personalization should run."""
-    return _is_enabled(plan.memory_digest_enabled, user_settings, "digest")
-
-
 def chat_enabled(plan: PlanContext, user_settings: Optional[user_settings_service.UserLightMemSettings]) -> bool:
     """Whether LightMem chat personalization should run."""
     return _is_enabled(plan.memory_chat_enabled, user_settings, "chat")
@@ -59,6 +54,5 @@ __all__ = [
     "default_user_id",
     "load_user_settings",
     "watchlist_enabled",
-    "digest_enabled",
     "chat_enabled",
 ]

@@ -1,4 +1,4 @@
-"""Centralised data retention helpers for audit, chat, digest, and evidence logs."""
+"""Centralised data retention helpers for audit, chat, and evidence logs."""
 
 from __future__ import annotations
 
@@ -79,35 +79,6 @@ def _purge_chat_audit(session: Session, now: datetime) -> int:
     return _execute_delete(session, "DELETE FROM chat_audit WHERE created_at < :cutoff", {"cutoff": cutoff})
 
 
-def _purge_digest_data(session: Session, now: datetime) -> int:
-    days = _retention_days("RETENTION_DIGEST_SNAPSHOT_DAYS", 180)
-    if days == 0:
-        return 0
-    cutoff_ts = now - timedelta(days=days)
-    cutoff_date = cutoff_ts.date()
-    return _execute_delete(
-        session,
-        """
-        DELETE FROM digest_snapshots
-        WHERE digest_date < :cutoff_date
-           OR updated_at < :cutoff_ts
-        """,
-        {"cutoff_date": cutoff_date, "cutoff_ts": cutoff_ts},
-    )
-
-
-def _purge_digest_logs(session: Session, now: datetime) -> int:
-    days = _retention_days("RETENTION_DIGEST_LOG_DAYS", 180)
-    if days == 0:
-        return 0
-    cutoff_date = (now - timedelta(days=days)).date()
-    return _execute_delete(
-        session,
-        "DELETE FROM daily_digest_logs WHERE digest_date < :cutoff_date",
-        {"cutoff_date": cutoff_date},
-    )
-
-
 def _purge_alert_logs(session: Session, now: datetime) -> int:
     days = _retention_days("RETENTION_ALERT_DELIVERY_DAYS", 365)
     if days == 0:
@@ -132,22 +103,6 @@ def _purge_evidence_snapshots(session: Session, now: datetime) -> int:
     )
 
 
-def _purge_notebook_shares(session: Session, now: datetime) -> int:
-    days = _retention_days("RETENTION_NOTEBOOK_SHARE_DAYS", 90)
-    if days == 0:
-        return 0
-    cutoff = now - timedelta(days=days)
-    return _execute_delete(
-        session,
-        """
-        DELETE FROM notebook_shares
-        WHERE (revoked_at IS NOT NULL OR expires_at IS NOT NULL)
-          AND COALESCE(revoked_at, expires_at, created_at) < :cutoff
-        """,
-        {"cutoff": cutoff},
-    )
-
-
 def apply_retention_policies(*, now: Optional[datetime] = None) -> Dict[str, int]:
     """Trim persisted data according to compliance retention windows."""
     session = SessionLocal()
@@ -158,11 +113,8 @@ def apply_retention_policies(*, now: Optional[datetime] = None) -> Dict[str, int
             stats["audit_logs"] = _purge_audit_logs(session, snapshot)
             stats["chat"] = _purge_chat_content(session, snapshot)
             stats["chat_audit"] = _purge_chat_audit(session, snapshot)
-            stats["digest_snapshots"] = _purge_digest_data(session, snapshot)
-            stats["digest_logs"] = _purge_digest_logs(session, snapshot)
             stats["alert_deliveries"] = _purge_alert_logs(session, snapshot)
             stats["evidence_snapshots"] = _purge_evidence_snapshots(session, snapshot)
-            stats["notebook_shares"] = _purge_notebook_shares(session, snapshot)
     except SQLAlchemyError:
         logger.exception("Data retention job failed; rolling back changes.")
         session.rollback()

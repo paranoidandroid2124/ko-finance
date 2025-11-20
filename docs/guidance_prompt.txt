@@ -2,7 +2,7 @@ Phase 5–8 Guidance
 ==================
 
 1. 프로젝트 개요
-- FastAPI 백엔드와 Next.js 대시보드로 구성된 K-Finance AI Research Copilot입니다.
+- FastAPI 백엔드와 Next.js 대시보드로 구성된 Nuvien AI Research Copilot입니다.
 - 핵심 도메인: 공시 기반 RAG Evidence, 플랜/결제(Toss), Admin Ops & Guardrail.
 - 운영 레이어: LiteLLM, Langfuse, Celery, MinIO, Qdrant로 구성되며 Langfuse trace와 감사 로그가 모든 플로우에 연결됩니다.
 

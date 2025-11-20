@@ -2,179 +2,21 @@
 
 from __future__ import annotations
 
-import logging
 import uuid
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
-from database import SessionLocal, get_db
+from database import get_db
 from models.chat import ChatSession
 from schemas.api.tools import ToolMemoryWriteRequest, ToolMemoryWriteResponse
-from services import event_study_service, lightmem_gate, rag_audit
+from services import lightmem_gate, rag_audit
 from services.plan_service import PlanContext
 from services.web_utils import parse_uuid
 from web.deps import require_plan_feature
 
-logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/tools", tags=["Tools"])
-
-
-def _safe_float(value: Any) -> Optional[float]:
-    if value is None:
-        return None
-    try:
-        if isinstance(value, (int, float)):
-            return float(value)
-        text = str(value).strip()
-        if not text:
-            return None
-        parsed = float(text)
-        if parsed != parsed or parsed in (float("inf"), float("-inf")):
-            return None
-        return parsed
-    except Exception:
-        return None
-
-
-def _transform_event_study_response(summary, events_response) -> Dict[str, Any]:
-    """Convert service objects into frontend-friendly JSON."""
-
-    chart_points: List[Dict[str, Any]] = []
-    for point in summary.caar:
-        day = int(point.get("t", 0))
-        car_value = _safe_float(point.get("caar"))
-        if car_value is None:
-            car_value = 0.0
-        chart_points.append({"day": day, "car": round(car_value, 6)})
-
-    history_rows: List[Dict[str, Any]] = []
-    for event in (events_response.events or [])[:8]:
-        event_date = None
-        if getattr(event, "event_date", None):
-            event_date = event.event_date.isoformat()
-        event_return = _safe_float(getattr(event, "caar", None))
-        history_rows.append(
-            {
-                "date": event_date,
-                "type": getattr(event, "event_type", None),
-                "return": event_return,
-                "corp_name": getattr(event, "corp_name", None),
-            }
-        )
-
-    return {
-        "summary": {
-            "samples": summary.n,
-            "win_rate": round(summary.hit_rate, 6),
-            "avg_return": round(summary.mean_caar, 6),
-            "confidence_interval": {
-                "low": _safe_float(summary.ci_lo),
-                "high": _safe_float(summary.ci_hi),
-            },
-            "p_value": _safe_float(summary.p_value),
-        },
-        "chart_data": chart_points,
-        "history": history_rows,
-    }
-
-
-def _build_event_memory_write(
-    ticker: str,
-    event_type: str,
-    window: int,
-    transformed: Dict[str, Any],
-) -> Dict[str, Any]:
-    summary = transformed.get("summary") or {}
-    samples = summary.get("samples")
-    win_rate = summary.get("win_rate")
-    avg_return = summary.get("avg_return")
-    highlights: List[str] = []
-    if isinstance(samples, int):
-        highlights.append(f"표본 {samples}건")
-    if isinstance(win_rate, (int, float)):
-        highlights.append(f"승률 {win_rate * 100:.1f}%")
-    if isinstance(avg_return, (int, float)):
-        highlights.append(f"평균 CAR {avg_return * 100:.2f}%")
-    topic = f"{ticker} {event_type} 이벤트 스터디 (T{ -window }~+{window })"
-    answer = " / ".join(highlights)
-    metadata = {
-        "ticker": ticker,
-        "event_type": event_type,
-        "window": {"start": -window, "end": window},
-        "template_slot": "event_study.last_request",
-    }
-    return {
-        "toolId": "event_study",
-        "topic": topic,
-        "question": f"{ticker} {event_type} 이벤트 스터디 결과를 요약해줘",
-        "answer": answer,
-        "highlights": highlights,
-        "metadata": metadata,
-    }
-
-
-@router.post("/event-study")
-def event_study_tool(
-    payload: dict = Body(
-        ...,
-        example={"ticker": "005930", "event_type": "earnings", "period_days": 5},
-    ),
-) -> dict:
-    normalized_ticker = event_study_service.normalize_single_value(payload.get("ticker"))
-    normalized_type = event_study_service.normalize_single_value(payload.get("event_type") or "earnings")
-    period_days = payload.get("period_days") or 5
-
-    if not normalized_ticker:
-        raise HTTPException(status_code=400, detail="ticker is required")
-    if not normalized_type:
-        raise HTTPException(status_code=400, detail="event_type is required")
-    try:
-        window = int(period_days)
-        if window <= 0 or window > 30:
-            raise ValueError
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=422, detail="period_days must be between 1 and 30")
-
-    db = SessionLocal()
-    try:
-        summary = event_study_service.compute_event_metrics(
-            db,
-            event_type=normalized_type,
-            window=(-window, window),
-            ticker=normalized_ticker,
-            min_samples=1,
-        )
-        if not summary:
-            raise HTTPException(status_code=404, detail="충분한 이벤트 데이터가 없습니다.")
-        events_response = event_study_service.fetch_event_rows(
-            db,
-            limit=10,
-            offset=0,
-            window_end=window,
-            event_types=[normalized_type],
-            ticker=normalized_ticker,
-            markets=None,
-            cap_buckets=None,
-            start_date=None,
-            end_date=None,
-            search_query=None,
-        )
-        transformed = _transform_event_study_response(summary, events_response)
-        transformed["ticker"] = normalized_ticker
-        transformed["event_type"] = normalized_type
-        transformed["window"] = {"start": -window, "end": window}
-        transformed["memory_write"] = _build_event_memory_write(normalized_ticker, normalized_type, window, transformed)
-        return transformed
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Event study tool failed: ticker=%s type=%s", normalized_ticker, normalized_type)
-        raise HTTPException(status_code=422, detail="이벤트 스터디 계산에 실패했습니다.") from exc
-    finally:
-        db.close()
 
 
 def _compute_memory_subject_ids(

@@ -25,7 +25,9 @@ export function PlanInfoCard({ title, description, loading = false, className, c
         className,
       )}
     >
-      <p className="text-base font-semibold text-text-primaryLight dark:text-text-primaryDark">{title}</p>
+      <p className="text-base font-semibold text-text-primaryLight dark:text-text-primaryDark" suppressHydrationWarning>
+        {title}
+      </p>
       {loading ? (
         <div className="mt-4 space-y-2">
           <div className="h-3 w-3/5 animate-pulse rounded bg-border-light/80 dark:bg-border-dark/60" />
@@ -33,7 +35,9 @@ export function PlanInfoCard({ title, description, loading = false, className, c
           <div className="h-3 w-1/2 animate-pulse rounded bg-border-light/40 dark:bg-border-dark/30" />
         </div>
       ) : body ? (
-        <p className="mt-3 leading-relaxed">{body}</p>
+        <p className="mt-3 leading-relaxed" suppressHydrationWarning>
+          {body}
+        </p>
       ) : null}
       {children ? <div className="mt-4 text-xs text-text-tertiaryLight dark:text-text-tertiaryDark">{children}</div> : null}
     </div>

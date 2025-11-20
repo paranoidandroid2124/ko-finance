@@ -10,14 +10,14 @@ export default function DashboardPage() {
   const { isOpen } = useReportStore((state) => ({ isOpen: state.isOpen }));
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-slate-50">
-      <main className={clsx("flex-1 transition-all duration-300", isOpen ? "mr-[480px]" : "")}>
+    <div className="relative flex h-screen w-full overflow-hidden">
+      <main className={clsx("flex-1 transition-all duration-300", isOpen ? "mr-[420px]" : "")}>
         <ChatInterface />
       </main>
       <aside
         className={clsx(
-          "fixed right-0 top-0 z-50 h-full w-[480px] border-l border-slate-100 bg-white shadow-2xl transition-transform duration-300",
-          isOpen ? "translate-x-0" : "translate-x-full"
+          "fixed right-4 top-4 z-40 h-[calc(100vh-2rem)] w-[360px] rounded-3xl border border-white/10 bg-[#050a1c]/70 p-4 shadow-[0_25px_120px_rgba(15,23,42,0.45)] backdrop-blur-2xl transition-transform duration-300",
+          isOpen ? "translate-x-0 opacity-100" : "translate-x-[420px] opacity-0"
         )}
       >
         <ReportEditor />

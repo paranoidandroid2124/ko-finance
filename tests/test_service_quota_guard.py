@@ -37,4 +37,4 @@ def test_consume_quota_normalizes_subject(monkeypatch):
 def test_consume_quota_returns_false_when_blocked(monkeypatch):
     decision = EntitlementDecision(allowed=False, remaining=0, limit=5)
     monkeypatch.setattr(quota_guard, "entitlement_service", SimpleNamespace(consume=lambda **_: decision))
-    assert quota_guard.consume_quota("watchlist.digest", user_id=uuid4(), org_id=None) is False
+    assert quota_guard.consume_quota("watchlist.preview", user_id=uuid4(), org_id=None) is False

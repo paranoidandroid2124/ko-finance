@@ -4,7 +4,7 @@ import { Providers } from "@/lib/providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "K-Finance Admin Console",
+  title: "Nuvien Admin Console",
   description: "운영자 전용 대시보드 앱",
 };
 

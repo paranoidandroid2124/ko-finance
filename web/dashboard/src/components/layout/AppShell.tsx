@@ -42,14 +42,20 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <PlanProvider>
-      <div className="flex min-h-screen flex-col bg-background-light text-text-primaryLight transition-colors dark:bg-background-dark dark:text-text-primaryDark">
-        <ToastContainer />
-        <ToolOverlay />
-        <OnboardingModal />
-        <main className="flex flex-1 flex-col px-6 pb-8 pt-6">
-          {FEATURE_STARTER_ENABLED ? <StarterPromoBanner /> : null}
-          <div className="flex-1 space-y-6">{children}</div>
-        </main>
+      <div className="relative min-h-screen w-full overflow-hidden bg-[#050a1c] text-white font-['Geist','Inter',sans-serif]">
+        <div className="pointer-events-none absolute inset-0 opacity-80">
+          <div className="absolute -left-20 -top-40 h-96 w-96 rounded-full bg-blue-600/25 blur-[160px]" />
+          <div className="absolute -right-32 bottom-[-180px] h-[28rem] w-[28rem] rounded-full bg-cyan-500/20 blur-[180px]" />
+        </div>
+        <div className="relative z-10 flex min-h-screen flex-col px-5 pb-8 pt-6 md:px-8">
+          <ToastContainer />
+          <ToolOverlay />
+          <OnboardingModal />
+          <main className="flex flex-1 flex-col gap-6">
+            {FEATURE_STARTER_ENABLED ? <StarterPromoBanner /> : null}
+            <div className="flex-1 space-y-6">{children}</div>
+          </main>
+        </div>
       </div>
     </PlanProvider>
   );

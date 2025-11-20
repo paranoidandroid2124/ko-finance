@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Ensure ephemeral state files land in tmpfs paths during CI/test runs.
-ROOT="${CI_STATE_ROOT:-/tmp/kofinance_state}"
+ROOT="${CI_STATE_ROOT:-/tmp/nuvien_state}"
 PLAN_DIR="$ROOT/plan"
 NEWS_DIR="$ROOT/news"
 

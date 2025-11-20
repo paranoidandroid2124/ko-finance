@@ -98,7 +98,7 @@ def _build_redirect_path(
 
 def _default_order_name(tier: PlanTier) -> str:
     label = _PLAN_LABELS.get(tier, tier.title())
-    return f"K-Finance {label} 플랜 구독"
+    return f"Nuvien {label} 플랜 구독"
 
 
 def _resolve_plan_amount(tier: PlanTier, override: Optional[int]) -> int:

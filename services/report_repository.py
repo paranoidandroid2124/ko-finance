@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from database import SessionLocal
 from models.report import Report
+from models.report_feedback import ReportFeedback
 
 
 def _get_session(session: Optional[Session]) -> tuple[Session, bool]:
@@ -82,4 +83,39 @@ def get_report_by_id(
             db.close()
 
 
-__all__ = ["create_report_record", "list_reports_for_user", "get_report_by_id"]
+def create_report_feedback(
+    *,
+    report_id: UUID,
+    user_id: UUID,
+    sentiment: str,
+    category: Optional[str] = None,
+    comment: Optional[str] = None,
+    session: Optional[Session] = None,
+) -> ReportFeedback:
+    db, managed = _get_session(session)
+    try:
+        feedback = ReportFeedback(
+            report_id=report_id,
+            user_id=user_id,
+            sentiment=sentiment,
+            category=category,
+            comment=comment,
+        )
+        db.add(feedback)
+        db.commit()
+        db.refresh(feedback)
+        return feedback
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        if managed:
+            db.close()
+
+
+__all__ = [
+    "create_report_record",
+    "list_reports_for_user",
+    "get_report_by_id",
+    "create_report_feedback",
+]

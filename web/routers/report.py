@@ -13,6 +13,7 @@ from schemas.api.report import (
     ReportGenerateRequest,
     ReportGenerateResponse,
     ReportExportRequest,
+    ReportFeedbackRequest,
     ReportHistoryItem,
     ReportHistoryResponse,
     ReportSourceSchema,
@@ -140,7 +141,7 @@ def export_report(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden.")
 
     format_value = (payload.format or "").lower()
-    if format_value not in {"pdf", "docx"}:
+    if format_value not in {"pdf", "docx", "xlsx"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported export format.")
 
     title = record.title or f"Investment Memo {record.ticker}"
@@ -155,7 +156,7 @@ def export_report(
         )
         media_type = "application/pdf"
         extension = "pdf"
-    else:
+    elif format_value == "docx":
         content_bytes = report_export_service.export_docx(
             title=title,
             markdown_body=record.content_md,
@@ -164,6 +165,15 @@ def export_report(
         )
         media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         extension = "docx"
+    else:
+        content_bytes = report_export_service.export_excel(
+            title=title,
+            markdown_body=record.content_md,
+            sources=sources,
+            key_stats=payload.keyStats,
+        )
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        extension = "xlsx"
 
     filename = f"{record.ticker or 'investment_memo'}.{extension}"
     return StreamingResponse(
@@ -171,3 +181,34 @@ def export_report(
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.post("/{report_id}/feedback", status_code=status.HTTP_201_CREATED)
+def submit_feedback(
+    report_id: uuid.UUID,
+    payload: ReportFeedbackRequest,
+    request: Request,
+) -> dict:
+    user = _require_user(request)
+    user_uuid = _coerce_uuid(user.id)
+    if user_uuid is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user context.")
+
+    record = report_repository.get_report_by_id(report_id)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found.")
+    if str(record.user_id) != str(user.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the owner can leave feedback.")
+
+    sentiment = (payload.sentiment or "").upper()
+    if sentiment not in {"LIKE", "DISLIKE"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="sentiment must be LIKE or DISLIKE")
+
+    report_repository.create_report_feedback(
+        report_id=record.id,
+        user_id=user_uuid,
+        sentiment=sentiment,
+        category=payload.category,
+        comment=payload.comment,
+    )
+    return {"status": "ok"}

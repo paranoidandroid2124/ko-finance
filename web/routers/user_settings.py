@@ -45,7 +45,6 @@ def _serialize(record: user_settings_service.UserLightMemSettingsRecord) -> User
         lightmem=UserLightMemSettingsSchema(
             enabled=settings.enabled,
             watchlist=settings.watchlist,
-            digest=settings.digest,
             chat=settings.chat,
         ),
         updatedAt=record.updated_at.isoformat() if record.updated_at else None,
@@ -67,7 +66,6 @@ def _ensure_lightmem_allowed(plan: PlanContext, settings: UserLightMemSettingsSc
 
     feature_labels = {
         "watchlist": "워치리스트",
-        "digest": "다이제스트",
         "chat": "대화 메모리",
     }
     for key, allowed in feature_labels.items():
@@ -112,7 +110,6 @@ def update_lightmem_settings(
         settings=user_settings_service.UserLightMemSettings(
             enabled=payload.lightmem.enabled,
             watchlist=payload.lightmem.watchlist,
-            digest=payload.lightmem.digest,
             chat=payload.lightmem.chat,
         ),
         actor=str(user_id),

@@ -108,8 +108,7 @@ export const enterprisePlanInfo: AlertPlanInfo = {
 
 export const sampleEmailChannel: AlertChannel = {
   type: "email",
-  targets: ["team@ko-finance.org"],
-  template: "digest",
+  targets: ["team@nuvien.com"],
   metadata: {
     subject_template: "주요 변경 사항 요약",
   },
@@ -163,7 +162,6 @@ const makePlanContext = (tier: PlanTier): PlanContextPayload => {
   const reportsEventExport = tier === "pro" || tier === "enterprise";
   const memoryFlags: PlanMemoryFlags = {
     watchlist: tier !== "free",
-    digest: tier !== "free",
     chat: tier !== "free",
   };
   return {

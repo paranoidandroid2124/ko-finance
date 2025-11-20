@@ -1,4 +1,4 @@
-﻿# 🧭 KO-FINANCE: Strategic Master Plan & Product Vision
+﻿# 🧭 Nuvien: Strategic Master Plan & Product Vision
 > **Version:** 2.0.0 (The "Generative UI" Pivot)  
 > **Last Updated:** 2025-11-19  
 > **Author:** Product Strategy Team  
@@ -23,7 +23,7 @@
 
 ## 2. 경쟁 우위 및 차별화 (Competitive Edge)
 
-| 비교 항목 | 전통적 강자 (S&P CapIQ, Bloomberg) | 일반 AI 챗봇 (ChatGPT, Perplexity) | **KO-FINANCE (To-Be)** |
+| 비교 항목 | 전통적 강자 (S&P CapIQ, Bloomberg) | 일반 AI 챗봇 (ChatGPT, Perplexity) | **NUVIEN (To-Be)** |
 | :--- | :--- | :--- | :--- |
 | **접근성** | ❌ **최악** (교육 없이는 사용 불가) | ✅ **최상** (자연어 대화) | ✅ **최상** (자연어 + 자동 UI) |
 | **데이터 깊이** | ✅ **최상** (모든 Raw Data 보유) | ❌ **낮음** (환각, 텍스트 요약 위주) | ✅ **상** (공시 원문 + 퀀트 연산) |
@@ -142,9 +142,9 @@
 | **구(舊) React(MUI) 대시보드** | `web/frontend/src/App.js`, `web/frontend/src/components/NewsSignals.js` | 저장소 분리 또는 제거 | Chat Commander 철학과 맞지 않는 테이블·필터 기반 UX, API 호출 중복. |
 | **GNB & Shell** | `web/dashboard/src/components/layout/{AppShell.tsx,SideNav.tsx,TopBar.tsx,UserMenu.tsx,AppFooter.tsx}` | 폐기 후 Chat 홈으로 대체 | 사이드바 라우트(`/watchlist`, `/news` 등) 전면 제거, Commander 진입점만 남김. |
 | **메뉴형 페이지 묶음** | `web/dashboard/src/app/{page.tsx,watchlist,news,filings,company,search,tables,viewer,workspace}` | “숨겨진 도구” 패턴으로 전환 또는 삭제 | 각 화면의 데이터 훅(`hooks/useDashboardOverview`, `hooks/useSectorSignals` 등)도 함께 정리. |
-| **Labs / Event Study 스택** | `web/dashboard/src/app/event-study`, `/labs/event-study`, `components/event-study/*`, `hooks/useEventStudy.ts` | Overlay 모듈로 이관 | Chat→Tool 호출만 허용, `/labs` 경로 제거, `EventStudyExportButton`를 Paywall-aware CTA로 묶기. |
+| **Event Study 도구 체인** | `services/agent_tools/event_study_tool.py`, `services/event_study_service.py` | Agent Tool로 일원화 | Commander·LLM이 직접 호출, 별도 페이지/라우터 삭제. |
 | **결제/플랜** | `web/dashboard/src/app/{pricing,payments}`, `components/plan/*`, `web/routers/{plan.py,payments.py}` | Paywall 모듈로 재구성 | Commander가 paywall 상태를 안내하고, UI는 흐릿 처리된 그래프/CTA만 노출. |
-| **Admin·Onboarding·Explorer** | `web/dashboard/src/app/{admin,alerts,digest,boards,onboarding,tables,legal}`, `components/sectors/*`, `components/table-explorer/*` | 내부툴 전환 또는 제거 | 일부는 Ops 콘솔(별도 repo)로 이동, 나머지는 슬래시 명령으로만 접근. |
+| **Admin·Onboarding·Explorer** | `web/dashboard/src/app/{admin,alerts,onboarding,tables,legal}`, `components/sectors/*`, `components/table-explorer/*` | 내부툴 전환 또는 제거 | 일부는 Ops 콘솔(별도 repo)로 이동, 나머지는 슬래시 명령으로만 접근. |
 
 - `web/dashboard/src/components/tools/ToolOverlay.tsx`와 `src/store/toolStore.ts`는 상기 정리 후 **Commander Overlay** 전용으로 재작성한다 (도구 ID/파라미터 체계 통합, paywall 상태/teaser UI까지 포함).
 - 제거 대상 코드 경로는 우선 lint-ignore → feature flag → 완전 삭제 순으로 단계적 정리하여 배포 리스크 최소화한다.
@@ -180,7 +180,7 @@
 ### 8.3 Chat → Tool API Contract
 | Tool | Endpoint & Method | Request 본문 (핵심) | Response 핵심 필드 | UI / Paywall |
 | :--- | :--- | :--- | :--- | :--- |
-| **Event Study Overlay** | `POST /api/v1/tools/event-study` | `ticker`, `event_type`, `window`(start/end), `teaser`(bool) | `summary.samples`, `summary.win_rate`, `chart_data[]`, `history[]`, `teaser`(true→blur) | Overlay · **Pro** (Starter는 `teaser=true` 자동) |
+| **Event Study Tool (Agent)** | Internal call → `services/agent_tools/event_study_tool.generate_event_study_payload` | `ticker`, `eventDate`, `windowKey` | `metrics.sampleSize`, `metrics.aar/caar[]`, `eventDetail`, `recentEvents[]` | Commander Overlay · **Pro** (LLM only, UI 페이지 제거) |
 | **Disclosure Viewer** | `POST /api/v1/tools/disclosure-viewer` → service: `web/routers/filing.py` | `receipt_no`, `section`(enum), `highlight_query`, `tenant_id` | `document_url`, `page`, `highlight_range`, `citations[]`, `source_links[]` | Side Panel · Starter+, inline CTA에서 Pro 심층 이동 |
 | **Quant Screener** | `POST /api/v1/tools/quant-screener` (신규, `services/screener_service.py`) | `filters[]`(metric/operator/value), `universe`, `limit`, `sort` | `items[]`(ticker, name, metrics{}), `queryEcho`, `runtime_ms` | Overlay · Pro, Starter는 top 3 & blur |
 | **Company Snapshot** | `GET /api/v1/company/{identifier}/snapshot` (`web/routers/company.py:132`) | Path `identifier`, opt. `metrics` query | `price`, `financials`, `holders`, `insights`, `lastUpdated`, `sources[]` | Inline Card · Free (full detail에 Pro 배지) |

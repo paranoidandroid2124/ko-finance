@@ -6,7 +6,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Mapping
 
 from pydantic import BaseModel
@@ -51,6 +51,10 @@ from services import (
     rag_grid,
     rag_pipeline,
     vector_service,
+)
+from services.agent_tools.event_study_tool import (
+    EventStudyNotFoundError,
+    generate_event_study_payload,
 )
 from services.audit_log import audit_rag_event
 from services.semantic_router import DEFAULT_ROUTER
@@ -266,7 +270,7 @@ def _memory_subject_ids(
 logger = get_logger(__name__)
 
 _GRID_CELL_LIMIT = 25
-_QUOTA_PROBLEM_TYPE = "https://kofinance.ai/docs/errors/plan-quota"
+_QUOTA_PROBLEM_TYPE = "https://nuvien.com/docs/errors/plan-quota"
 _CHAT_ACTION_LABEL = "AI 분석"
 
 
@@ -1425,6 +1429,142 @@ def _requires_lightmem(route_decision: RouteDecision) -> bool:
     return False
 
 
+def _should_call_event_study(route_decision: RouteDecision) -> bool:
+    intent = (route_decision.intent or "").strip().lower()
+    tool_name = (route_decision.tool_name or "").strip().lower()
+    return intent == "event_study" or tool_name == "event_study.query"
+
+
+def _parse_event_date(value: Optional[str]) -> Optional[date]:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed.date()
+
+
+def _extract_event_tool_args(
+    ctx: "RagSessionStage",
+    route_decision: RouteDecision,
+) -> Tuple[Optional[str], Optional[date], Optional[int], Optional[str]]:
+    args = route_decision.tool_call.arguments or {}
+    ticker = args.get("ticker") or args.get("symbol")
+    if not ticker:
+        filters = ctx.filter_payload.get("ticker")
+        if isinstance(filters, str):
+            ticker = filters
+    normalized_ticker = (str(ticker).strip().upper() if ticker else None)
+    event_date = _parse_event_date(args.get("event_date") or args.get("eventDate"))
+    window_value = safe_int(args.get("window"))
+    window_key = args.get("window_key") or args.get("windowKey")
+    return normalized_ticker, event_date, window_value, window_key
+
+
+def _format_percent(value: Optional[float]) -> Optional[str]:
+    if value is None:
+        return None
+    try:
+        return f"{float(value) * 100:.2f}%"
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_event_study_chunk(payload: Dict[str, Any]) -> Dict[str, Any]:
+    ticker = payload.get("ticker")
+    event_type = payload.get("eventType")
+    window_info = payload.get("window") or {}
+    metrics = payload.get("metrics") or {}
+
+    lines: List[str] = []
+    header = f"[Event Study] {ticker or ''} {event_type or ''}".strip()
+    lines.append(header)
+    if window_info:
+        label = window_info.get("label") or f"[{window_info.get('start')},{window_info.get('end')}]"
+        lines.append(f"Window: {label} (p={window_info.get('significance')})")
+
+    sample_size = metrics.get("sampleSize")
+    mean_caar = _format_percent(metrics.get("meanCaar"))
+    hit_rate = _format_percent(metrics.get("hitRate"))
+    ci_low = _format_percent(metrics.get("ciLo"))
+    ci_high = _format_percent(metrics.get("ciHi"))
+    p_value = metrics.get("pValue")
+
+    lines.append(f"Sample Size: {sample_size or 'N/A'}")
+    lines.append(f"Mean CAAR: {mean_caar or 'N/A'}")
+    lines.append(f"Hit Rate: {hit_rate or 'N/A'}")
+    lines.append(f"Confidence Interval: {ci_low or '-'} ~ {ci_high or '-'}")
+    lines.append(f"P-Value: {p_value if p_value is not None else 'N/A'}")
+
+    detail = payload.get("eventDetail") or {}
+    detail_title = detail.get("event_type") or detail.get("corp_name")
+    if detail_title or detail.get("event_date"):
+        lines.append(
+            f"Primary Event: {detail_title or 'Unknown'} on {detail.get('event_date') or 'N/A'}"
+        )
+
+    recent_section = payload.get("recentEvents") or {}
+    recent_events = []
+    if isinstance(recent_section, dict):
+        recent_events = recent_section.get("events") or []
+    elif isinstance(recent_section, list):
+        recent_events = recent_section
+    for entry in recent_events[:3]:
+        title = entry.get("title") or entry.get("corp_name") or "Peer Event"
+        event_date_value = entry.get("event_date") or entry.get("eventDate") or entry.get("published_at")
+        caar_value = _format_percent(entry.get("caar"))
+        lines.append(f"- {event_date_value or 'N/A'} · {title}: CAAR {caar_value or 'N/A'}")
+
+    chunk_id = f"event-study:{ticker or 'unknown'}:{payload.get('eventDate') or window_info.get('label') or 'latest'}"
+    metadata = {
+        "type": "event_study",
+        "ticker": ticker,
+        "event_type": event_type,
+        "window": window_info,
+        "metrics": metrics,
+        "source": "event_study_tool",
+    }
+    return {
+        "id": chunk_id,
+        "type": "event_study",
+        "content": "\n".join(lines),
+        "section": "event_study",
+        "source": "event_study_tool",
+        "metadata": metadata,
+    }
+
+
+def _maybe_run_event_study_tool(
+    ctx: "RagSessionStage",
+    route_decision: RouteDecision,
+    db: Session,
+) -> List[Dict[str, Any]]:
+    if not _should_call_event_study(route_decision):
+        return []
+    ticker, event_date, window_value, window_key = _extract_event_tool_args(ctx, route_decision)
+    if not ticker:
+        return []
+    try:
+        payload = generate_event_study_payload(
+            ticker=ticker,
+            event_date=event_date,
+            window=window_value,
+            window_key=window_key,
+            db=db,
+        )
+    except EventStudyNotFoundError as exc:
+        logger.info("Event study tool skipped: %s", exc)
+        return []
+    except Exception as exc:  # pragma: no cover - analytics best-effort
+        logger.warning("Event study tool failed for %s: %s", ticker, exc, exc_info=True)
+        return []
+    return [_build_event_study_chunk(payload)]
+
+
 def _compose_lightmem_context(
     question: str,
     conversation_memory: Optional[Dict[str, Any]],
@@ -1792,6 +1932,10 @@ def query_rag(
             return intent_gate.response
 
         retrieval_stage = _run_retrieval_stage(ctx, request, db)
+        event_chunks = _maybe_run_event_study_tool(ctx, route_decision, db)
+        if event_chunks:
+            retrieval_stage.context_chunks = event_chunks + retrieval_stage.context_chunks
+
         empty_response = _handle_empty_vector_response(
             ctx,
             retrieval_stage,

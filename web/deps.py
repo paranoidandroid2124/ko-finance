@@ -6,6 +6,7 @@ from fastapi import Depends, HTTPException, Request, status
 
 from services.plan_guard import PlanGuardError, ensure_entitlement
 from services.plan_service import PlanContext, resolve_plan_context
+from web.middleware.auth_context import AuthenticatedUser
 
 
 def get_plan_context(request: Request) -> PlanContext:
@@ -28,3 +29,23 @@ def require_plan_feature(entitlement: str):
         return plan
 
     return _dependency
+
+
+def get_current_user(request: Request) -> AuthenticatedUser:
+    user = getattr(request.state, "user", None)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "auth.required", "message": "로그인이 필요한 요청입니다."},
+        )
+    return user
+
+
+def require_admin_user(request: Request) -> AuthenticatedUser:
+    user = get_current_user(request)
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "auth.admin_required", "message": "관리자 권한이 필요합니다."},
+        )
+    return user

@@ -17,7 +17,6 @@ logger = get_logger(__name__)
 _ADMIN_PATH_PREFIXES = ("/ops/", "/api/v1/admin")
 _EXPORT_PATH_PREFIXES = (
     "/api/v1/reports",
-    "/api/v1/event-study/export",
     "/api/v1/table-explorer/export",
 )
 

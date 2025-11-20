@@ -62,7 +62,7 @@ def _hydrate(item: Mapping[str, Any]) -> Optional[TossOrderRecord]:
     user_id = _normalize_optional(item.get("user_id") or item.get("userId"))
     org_id = _normalize_optional(item.get("org_id") or item.get("orgId"))
     if not order_name:
-        order_name = f"K-Finance {plan_tier.title()} 플랜"
+        order_name = f"Nuvien {plan_tier.title()} 플랜"
     return TossOrderRecord(
         order_id=order_id,
         plan_tier=plan_tier,
@@ -157,7 +157,7 @@ def update_order_status(
         plan_tier = defaults.get("plan_tier")
         amount = int(defaults.get("amount") or 0)
         currency = str(defaults.get("currency") or "KRW")
-        order_name = str(defaults.get("order_name") or f"K-Finance {plan_tier or 'Plan'} 플랜 구독")
+        order_name = str(defaults.get("order_name") or f"Nuvien {plan_tier or 'Plan'} 플랜 구독")
         if not plan_tier:
             return None
         updated = TossOrderRecord(

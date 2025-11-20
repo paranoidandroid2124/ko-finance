@@ -28,7 +28,7 @@ const RECENT_EVENTS_LIMIT = 12;
 const SIMULATION_DEFAULT_WINDOW_MINUTES = 7 * 24 * 60;
 const SIMULATION_DEFAULT_LIMIT = 12;
 
-// TODO: tighten plan-tier gating once PlanContext exposes a dedicated alert/watchlist entitlement.
+// AlertsWatchlistPage enforces plan-tier gating (Pro+) via PlanContext.
 
 function AlertsWatchlistContent({ fallbackPlanTier }: { fallbackPlanTier: string }) {
   const controller = useWatchlistAlertsController({ recentEventsLimit: RECENT_EVENTS_LIMIT });

@@ -53,7 +53,7 @@ export function OnboardingModal() {
               <Sparkles className="h-4 w-4 text-amber-300" aria-hidden />
               Onboarding · 3분 루틴
             </p>
-            <h2 className="text-2xl font-bold leading-snug text-white">{hero?.title ?? "K-Finance 온보딩"}</h2>
+            <h2 className="text-2xl font-bold leading-snug text-white">{hero?.title ?? "Nuvien 온보딩"}</h2>
             <p className="text-base text-slate-300">{hero?.subtitle}</p>
             <ul className="space-y-2 text-sm text-slate-200">
               {(hero?.highlights ?? []).map((item) => (

@@ -46,6 +46,8 @@ ROUTER_RULES = dedent(
     - "왜 떨어졌어", "최근 뉴스 없어?", "악재/호재 있나" 처럼 리스크/이슈를 묻는 질문은 news.rag 를 선택하고 arguments 에 query 와 ticker 를 넣는다.
     - "다 같이 빠지나?", "경쟁사랑 비교해 줘", "섹터 문제야?" 등 상대 비교 질문은 peer.compare 를 선택하고 ticker 와 기간(period_days)을 지정한다.
 
+    - 특정 이벤트 이후 주가 영향을 묻는 질문은 event_study.query 를 선택하고 arguments 에 ticker, event_date(YYYY-MM-DD), window(정수, 기본 5)를 포함한다.
+
     Commander Tool Reference:
     {tool_reference}
     """
@@ -69,7 +71,7 @@ def get_prompt(question: str) -> List[Dict[str, str]]:
     ).strip()
 
     return [
-        {"role": "system", "content": "너는 K-Finance Copilot 의 라우팅 엔진이다. 설명 없이 JSON 만 출력한다."},
+        {"role": "system", "content": "너는 Nuvien Copilot 의 라우팅 엔진이다. 설명 없이 JSON 만 출력한다."},
         {"role": "assistant", "content": ROUTER_RULES},
         {"role": "user", "content": user_instructions},
     ]

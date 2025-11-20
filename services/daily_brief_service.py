@@ -24,16 +24,14 @@ except RuntimeError as exc:  # DATABASE_URL may be missing during tests
 else:
     _SESSION_IMPORT_ERROR = None
 from models.alert import AlertDelivery, AlertRule
-from models.digest import DailyDigestLog
 from models.evidence import EvidenceSnapshot
 from models.filing import Filing
 from models.news import NewsSignal
-from services import admin_rag_service, quota_guard, storage_service
+from services import admin_rag_service, storage_service
 from services.id_utils import normalize_uuid
 from services.aggregation.news_statistics import build_top_topics, summarize_news_signals
 from services.daily_brief_renderer import render_daily_brief
 from services.watchlist_utils import is_watchlist_rule
-from services.digest import render_daily_digest_email
 
 import llm.llm_service as llm_service
 
@@ -54,15 +52,6 @@ NEWS_TOP_TICKER_LIMIT = env_int("DAILY_BRIEF_TOP_TICKER_LIMIT", 5, minimum=1)
 NEWS_TOP_SOURCE_LIMIT = env_int("DAILY_BRIEF_TOP_SOURCE_LIMIT", 5, minimum=1)
 ALERT_TOP_TICKER_LIMIT = env_int("DAILY_BRIEF_ALERT_TOP_TICKER_LIMIT", 5, minimum=1)
 ALERT_TOP_CATEGORY_LIMIT = env_int("DAILY_BRIEF_ALERT_TOP_CATEGORY_LIMIT", 5, minimum=1)
-DIGEST_PREVIEW_NEWS_LIMIT = env_int("DIGEST_PREVIEW_NEWS_LIMIT", 4, minimum=1)
-DIGEST_PREVIEW_WATCHLIST_LIMIT = env_int("DIGEST_PREVIEW_WATCHLIST_LIMIT", 4, minimum=1)
-DIGEST_SOURCE_LABEL = "공시 · 뉴스 · 시황 지표"
-
-
-class DigestQuotaExceeded(RuntimeError):
-    """Raised when digest preview generation is blocked by plan quota."""
-
-
 def _ensure_session(session: Optional[Session]) -> Tuple[Session, bool]:
     if session is not None:
         return session, False
@@ -70,12 +59,6 @@ def _ensure_session(session: Optional[Session]) -> Tuple[Session, bool]:
         raise RuntimeError("SessionLocal is unavailable; DATABASE_URL must be configured.") from _SESSION_IMPORT_ERROR
     db = SessionLocal()
     return db, True
-
-
-def _dispatch_watchlist_digest(*args, **kwargs) -> Dict[str, Any]:
-    from services import watchlist_service as _watchlist_service
-
-    return _watchlist_service.dispatch_watchlist_digest(*args, **kwargs)
 
 
 def _daily_bounds(target_date: date, *, tz: ZoneInfo = KST) -> Tuple[datetime, datetime]:
@@ -189,30 +172,6 @@ def _summarize_news(session: Session, *, start: datetime, end: datetime) -> Dict
         "filtered_count": len(analysis_rows),
         "raw_count": len(rows),
     }
-
-
-def _fetch_digest_news(session: Session, *, start: datetime, end: datetime, limit: int) -> List[Dict[str, Any]]:
-    query = (
-        session.query(NewsSignal)
-        .filter(NewsSignal.published_at >= start, NewsSignal.published_at < end)
-        .order_by(NewsSignal.published_at.desc())
-        .limit(limit)
-    )
-    rows = query.all()
-    items: List[Dict[str, Any]] = []
-    for row in rows:
-        reliability = getattr(row, "source_reliability", None)
-        if reliability is not None and reliability < NEWS_MIN_RELIABILITY:
-            continue
-        items.append(
-            {
-                "headline": row.headline,
-                "summary": row.summary,
-                "source": row.source,
-                "link": row.url,
-            }
-        )
-    return items
 
 
 def _count_news(session: Session, *, start: datetime, end: datetime) -> int:
@@ -773,208 +732,6 @@ def build_daily_brief_payload(
             db.close()
 
 
-def _format_digest_period_label(reference_date: date, timeframe: str) -> str:
-    if timeframe == "weekly":
-        start_date = reference_date - timedelta(days=6)
-        return f"{start_date:%Y년 %m월 %d일} ~ {reference_date:%Y년 %m월 %d일} · 1주 하이라이트"
-    return f"{reference_date:%Y년 %m월 %d일} · 오늘의 다이제스트"
-
-
-def _tone_from_sentiment(value: Optional[float], delivery_status: Optional[str]) -> str:
-    status = (delivery_status or "").lower()
-    if status and status != "delivered":
-        return "alert"
-    if isinstance(value, (int, float)):
-        if value >= 0.2:
-            return "positive"
-        if value <= -0.2:
-            return "negative"
-    return "neutral"
-
-
-def _build_digest_sentiment_block(
-    current_summary: Mapping[str, Any],
-    previous_summary: Optional[Mapping[str, Any]],
-) -> Optional[Dict[str, Any]]:
-    total_articles = int(current_summary.get("count") or 0)
-    if total_articles <= 0:
-        return None
-    current_avg = float(current_summary.get("avg_sentiment") or 0.0)
-    previous_avg = float(previous_summary.get("avg_sentiment") or 0.0) if previous_summary else 0.0
-    delta = current_avg - previous_avg
-    if delta > 0.05:
-        trend = "up"
-    elif delta < -0.05:
-        trend = "down"
-    else:
-        trend = "flat"
-
-    score = int(max(min(((current_avg + 1.0) / 2.0) * 100, 100), 0))
-    summary_text = (
-        f"긍정 {int(current_summary.get('positive') or 0)}건 · "
-        f"중립 {int(current_summary.get('neutral') or 0)}건 · "
-        f"부정 {int(current_summary.get('negative') or 0)}건"
-    )
-    indicators = [
-        {"name": "Positive", "value": str(int(current_summary.get("positive") or 0)), "status": "positive"},
-        {"name": "Neutral", "value": str(int(current_summary.get("neutral") or 0)), "status": "neutral"},
-        {"name": "Negative", "value": str(int(current_summary.get("negative") or 0)), "status": "negative"},
-    ]
-    return {
-        "summary": summary_text,
-        "scoreLabel": f"{score}/100",
-        "trend": trend,
-        "indicators": indicators,
-    }
-
-
-def _build_digest_actions(
-    news_summary: Mapping[str, Any],
-    watchlist_summary: Mapping[str, Any],
-) -> List[Dict[str, Any]]:
-    actions: List[Dict[str, Any]] = []
-    top_topics = news_summary.get("top_topics") or []
-    if top_topics:
-        actions.append(
-            {
-                "title": f"{top_topics[0]} 모니터링",
-                "note": "해당 토픽 비중이 직전 기간 대비 확대되었습니다.",
-                "tone": "neutral",
-            }
-        )
-    top_watchlist = watchlist_summary.get("topTickers") or []
-    if top_watchlist:
-        actions.append(
-            {
-                "title": f"{top_watchlist[0]} 워치리스트 점검",
-                "note": "최근 알림이 집중된 종목이니 리스크 요인을 확인해 보세요.",
-                "tone": "alert",
-            }
-        )
-    return actions[:2]
-
-
-def _map_watchlist_items(items: Sequence[Mapping[str, Any]], limit: int) -> List[Dict[str, Any]]:
-    mapped: List[Dict[str, Any]] = []
-    for entry in list(items)[:limit]:
-        title = str(entry.get("ticker") or entry.get("company") or entry.get("ruleName") or "Watchlist")
-        description = str(entry.get("summary") or entry.get("message") or "").strip()
-        sentiment = entry.get("sentiment")
-        tone = _tone_from_sentiment(sentiment, entry.get("deliveryStatus"))
-        change_label: Optional[str] = None
-        if isinstance(sentiment, (int, float)):
-            change_label = f"Sentiment {sentiment:+.2f}"
-        elif (entry.get("deliveryStatus") or "").lower() != "delivered":
-            change_label = "주의"
-        mapped.append(
-            {
-                "title": title,
-                "description": description or title,
-                "changeLabel": change_label,
-                "tone": tone,
-            }
-        )
-    return mapped
-
-
-def build_digest_preview(
-    *,
-    reference_date: Optional[date] = None,
-    session: Optional[Session] = None,
-    timeframe: str = "daily",
-    news_limit: int = DIGEST_PREVIEW_NEWS_LIMIT,
-    watchlist_limit: int = DIGEST_PREVIEW_WATCHLIST_LIMIT,
-    plan_memory_enabled: Optional[bool] = None,
-    tenant_id: Optional[str] = None,
-    user_id_hint: Optional[str] = None,
-    owner_filters: Optional[Mapping[str, Optional[Any]]] = None,
-    enforce_quota_action: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Assemble a lightweight digest preview payload for the dashboard."""
-
-    ref_date = reference_date or datetime.now(KST).date()
-    normalized_timeframe = "weekly" if str(timeframe).lower() == "weekly" else "daily"
-    db, owns_session = _ensure_session(session)
-    try:
-        day_start, day_end = _daily_bounds(ref_date)
-        if normalized_timeframe == "weekly":
-            window_start = day_end - timedelta(days=7)
-            window_end = day_end
-        else:
-            window_start, window_end = day_start, day_end
-
-        prev_span = window_end - window_start
-        prev_start = window_start - prev_span
-        prev_end = window_start
-
-        news_items = _fetch_digest_news(db, start=window_start, end=window_end, limit=news_limit)
-        news_summary = _summarize_news(db, start=window_start, end=window_end)
-        previous_summary = _summarize_news(db, start=prev_start, end=prev_end)
-
-        window_minutes = max(int(prev_span.total_seconds() // 60), 60)
-        digest_session_id = f"digest:{tenant_id or user_id_hint or 'global'}:{normalized_timeframe}"
-        owner_filters = owner_filters or {}
-        owner_user_id = normalize_uuid(owner_filters.get("user_id"))
-        owner_org_id = normalize_uuid(owner_filters.get("org_id"))
-        normalized_owner_filters: Dict[str, Optional[uuid.UUID]] = {}
-        if owner_user_id:
-            normalized_owner_filters["user_id"] = owner_user_id
-        if owner_org_id:
-            normalized_owner_filters["org_id"] = owner_org_id
-
-        if enforce_quota_action:
-            allowed = quota_guard.consume_quota(
-                enforce_quota_action,
-                user_id=owner_user_id,
-                org_id=owner_org_id,
-                context="daily_brief.digest_preview",
-                extra={"timeframe": normalized_timeframe, "reference_date": ref_date.isoformat()},
-            )
-            if not allowed:
-                raise DigestQuotaExceeded(f"{enforce_quota_action}_blocked")
-
-        watchlist_result = _dispatch_watchlist_digest(
-            db,
-            window_minutes=window_minutes,
-            limit=watchlist_limit,
-            slack_targets=[],
-            email_targets=[],
-            owner_filters=normalized_owner_filters,
-            plan_memory_enabled=plan_memory_enabled,
-            session_id=digest_session_id,
-            tenant_id=tenant_id,
-            user_id_hint=user_id_hint,
-        )
-        watchlist_payload = watchlist_result.get("payload") or {}
-        watchlist_items = _map_watchlist_items(watchlist_payload.get("items") or [], watchlist_limit)
-        watchlist_summary = watchlist_payload.get("summary") or {}
-
-        sentiment_block = _build_digest_sentiment_block(news_summary, previous_summary)
-        actions = _build_digest_actions(news_summary, watchlist_summary)
-        period_label = _format_digest_period_label(ref_date, normalized_timeframe)
-        generated_label = datetime.now(KST).strftime("%Y-%m-%d %H:%M (%Z)")
-
-        result: Dict[str, Any] = {
-            "timeframe": normalized_timeframe,
-            "periodLabel": period_label,
-            "generatedAtLabel": generated_label,
-            "sourceLabel": DIGEST_SOURCE_LABEL,
-            "news": news_items,
-            "watchlist": watchlist_items,
-            "sentiment": sentiment_block,
-            "actions": actions,
-            "llmOverview": watchlist_payload.get("llmOverview"),
-            "llmPersonalNote": watchlist_payload.get("llmPersonalNote"),
-        }
-        email_html = render_daily_digest_email(result)
-        if email_html:
-            result["emailHtml"] = email_html
-        return result
-    finally:
-        if owns_session:
-            db.close()
-
-
 def render_daily_brief_document(
     *,
     payload: Optional[Dict[str, Any]] = None,
@@ -1074,11 +831,15 @@ def _store_daily_brief_artifacts(
                 entry["uploaded_at"] = datetime.now(timezone.utc).isoformat()
         artifacts[key] = entry
 
-    manifest = {
-        "reference_date": reference_date.isoformat(),
-        "channel": DAILY_BRIEF_CHANNEL,
-        "artifacts": artifacts,
-    }
+    manifest = _read_manifest(manifest_path)
+    manifest.update(
+        {
+            "reference_date": reference_date.isoformat(),
+            "channel": DAILY_BRIEF_CHANNEL,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "artifacts": artifacts,
+        }
+    )
     _write_manifest(manifest_path, manifest)
     return manifest
 
@@ -1093,87 +854,102 @@ def _resolve_remote_url(entry: Mapping[str, Any]) -> Optional[str]:
 def list_daily_brief_runs(
     *,
     limit: int = 10,
-    session: Optional[Session] = None,
+    session: Optional[Session] = None,  # retained for backward compatibility
 ) -> List[Dict[str, Any]]:
-    """List recent daily brief generations with filesystem metadata."""
+    """List recent daily brief generations using filesystem manifests."""
 
+    _ = session  # unused
     limit = max(int(limit or 10), 1)
-    db, owns_session = _ensure_session(session)
-    try:
-        rows = (
-            db.query(DailyDigestLog)
-            .filter(DailyDigestLog.channel == DAILY_BRIEF_CHANNEL)
-            .order_by(DailyDigestLog.digest_date.desc())
-            .limit(limit)
-            .all()
+    if not DAILY_BRIEF_OUTPUT_ROOT.exists():
+        return []
+
+    entries: List[Tuple[date, Path]] = []
+    for child in DAILY_BRIEF_OUTPUT_ROOT.iterdir():
+        if not child.is_dir():
+            continue
+        try:
+            folder_date = date.fromisoformat(child.name)
+        except ValueError:
+            continue
+        entries.append((folder_date, child))
+
+    entries.sort(key=lambda item: item[0], reverse=True)
+    runs: List[Dict[str, Any]] = []
+    for folder_date, _ in entries[:limit]:
+        paths = resolve_daily_brief_paths(folder_date)
+        tex_path = paths["tex"]
+        pdf_path = paths["pdf"]
+        manifest = _read_manifest(paths["manifest"])
+        artifacts = manifest.get("artifacts", {}) if isinstance(manifest, Mapping) else {}
+        tex_manifest = artifacts.get("tex", {}) if isinstance(artifacts, Mapping) else {}
+        pdf_manifest = artifacts.get("pdf", {}) if isinstance(artifacts, Mapping) else {}
+
+        tex_exists = tex_path.exists()
+        pdf_exists = pdf_path.exists()
+        tex_size = tex_path.stat().st_size if tex_exists else None
+        pdf_size = pdf_path.stat().st_size if pdf_exists else None
+
+        runs.append(
+            {
+                "id": manifest.get("id") or f"{folder_date.isoformat()}-{manifest.get('channel', DAILY_BRIEF_CHANNEL)}",
+                "reference_date": folder_date,
+                "channel": manifest.get("channel", DAILY_BRIEF_CHANNEL),
+                "generated_at": manifest.get("generated_at"),
+                "tex": {
+                    "path": tex_manifest.get("local_path") or _relative_to_repo(tex_path),
+                    "exists": tex_exists,
+                    "size_bytes": tex_size,
+                    "provider": tex_manifest.get("provider"),
+                    "download_url": _resolve_remote_url(tex_manifest),
+                },
+                "pdf": {
+                    "path": pdf_manifest.get("local_path") or _relative_to_repo(pdf_path),
+                    "exists": pdf_exists,
+                    "size_bytes": pdf_size,
+                    "provider": pdf_manifest.get("provider"),
+                    "download_url": _resolve_remote_url(pdf_manifest),
+                },
+            }
         )
 
-        runs: List[Dict[str, Any]] = []
-        for row in rows:
-            paths = resolve_daily_brief_paths(row.digest_date)
-            tex_path = paths["tex"]
-            pdf_path = paths["pdf"]
-            manifest_data = _read_manifest(paths["manifest"])
-            artifacts = manifest_data.get("artifacts", {}) if isinstance(manifest_data, Mapping) else {}
-            tex_manifest = artifacts.get("tex", {}) if isinstance(artifacts, Mapping) else {}
-            pdf_manifest = artifacts.get("pdf", {}) if isinstance(artifacts, Mapping) else {}
-
-            tex_exists = tex_path.exists()
-            pdf_exists = pdf_path.exists()
-
-            tex_size = tex_path.stat().st_size if tex_exists else None
-            pdf_size = pdf_path.stat().st_size if pdf_exists else None
-
-            runs.append(
-                {
-                    "id": row.id,
-                    "reference_date": row.digest_date,
-                    "channel": row.channel,
-                    "generated_at": row.sent_at,
-                    "tex": {
-                        "path": tex_manifest.get("local_path") or _relative_to_repo(tex_path),
-                        "exists": tex_exists,
-                        "size_bytes": tex_size,
-                        "provider": tex_manifest.get("provider"),
-                        "download_url": _resolve_remote_url(tex_manifest),
-                    },
-                    "pdf": {
-                        "path": pdf_manifest.get("local_path") or _relative_to_repo(pdf_path),
-                        "exists": pdf_exists,
-                        "size_bytes": pdf_size,
-                        "provider": pdf_manifest.get("provider"),
-                        "download_url": _resolve_remote_url(pdf_manifest),
-                    },
-                }
-            )
-
-        return runs
-    finally:
-        if owns_session:
-            db.close()
+    return runs
 
 
-def has_brief_been_generated(session: Session, *, reference_date: date, channel: str = DAILY_BRIEF_CHANNEL) -> bool:
-    record = (
-        session.query(DailyDigestLog)
-        .filter(DailyDigestLog.digest_date == reference_date, DailyDigestLog.channel == channel)
-        .one_or_none()
+def has_brief_been_generated(
+    session: Optional[Session],
+    *,
+    reference_date: date,
+    channel: str = DAILY_BRIEF_CHANNEL,
+) -> bool:
+    """Returns True if a brief artifact exists for the date."""
+
+    _ = session  # unused
+    paths = resolve_daily_brief_paths(reference_date)
+    pdf_exists = paths["pdf"].exists()
+    tex_exists = paths["tex"].exists()
+    return pdf_exists or tex_exists
+
+
+def record_brief_generation(
+    session: Optional[Session],
+    *,
+    reference_date: date,
+    channel: str = DAILY_BRIEF_CHANNEL,
+) -> None:
+    """Persist metadata for the generated brief without touching the database."""
+
+    _ = session  # unused
+    paths = resolve_daily_brief_paths(reference_date)
+    manifest_path = paths["manifest"]
+    manifest = _read_manifest(manifest_path)
+    manifest.update(
+        {
+            "reference_date": reference_date.isoformat(),
+            "channel": channel,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
     )
-    return record is not None
-
-
-def record_brief_generation(session: Session, *, reference_date: date, channel: str = DAILY_BRIEF_CHANNEL) -> None:
-    entry = (
-        session.query(DailyDigestLog)
-        .filter(DailyDigestLog.digest_date == reference_date, DailyDigestLog.channel == channel)
-        .one_or_none()
-    )
-    if entry is None:
-        entry = DailyDigestLog(digest_date=reference_date, channel=channel)
-        session.add(entry)
-    else:
-        entry.sent_at = datetime.now(timezone.utc)
-    session.commit()
+    _write_manifest(manifest_path, manifest)
 
 
 

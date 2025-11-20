@@ -49,7 +49,7 @@ export type CitationEntry = string | CitationObject;
 export type CitationMap = Record<string, CitationEntry[]>;
 
 export type ToolAttachment = {
-  type: "news_cards" | "value_chain";
+  type: "news_cards" | "value_chain" | "event_study";
   title?: string;
   description?: string;
   data?: Record<string, unknown>;

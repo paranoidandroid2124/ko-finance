@@ -15,11 +15,6 @@ export const LIGHTMEM_FLAG_OPTIONS: LightMemFlagOption[] = [
     helper: "LightMem으로 사용자별 워치리스트 알림·요약에 개인 맥락을 주입합니다.",
   },
   {
-    key: "digest",
-    label: "다이제스트 개인화",
-    helper: "메일·브리핑 다이제스트에 최근 관심사, 투자 메모 등을 반영합니다.",
-  },
-  {
     key: "chat",
     label: "Chat 세션 메모리",
     helper: "Chatbot 대화에서 장기 기억을 활성화해 연속적인 질의응답을 지원합니다.",

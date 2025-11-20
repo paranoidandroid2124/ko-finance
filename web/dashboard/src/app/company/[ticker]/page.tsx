@@ -1,7 +1,5 @@
 ﻿"use client";
 
-import Link from "next/link";
-import type { Route } from "next";
 import { useEffect, useMemo } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -17,11 +15,9 @@ import { CompanySummaryCard } from "@/components/company/CompanySummaryCard";
 import { PlanLock } from "@/components/ui/PlanLock";
 import { useCompanySnapshot, type CompanyFilingSummary, type EventItem } from "@/hooks/useCompanySnapshot";
 import { useCompanyTimeline } from "@/hooks/useCompanyTimeline";
-import { useBoards } from "@/hooks/useBoards";
 import { normalizeCompanySearchResult, type CompanySearchResult } from "@/hooks/useCompanySearch";
 
 const RECENT_COMPANIES_KEY = "kofilot_recent_companies";
-const BOARDS_ROUTE = "/boards" as Route;
 
 type TimelineItem = {
   id: string;
@@ -71,9 +67,6 @@ export default function CompanySnapshotPage({ params }: CompanySnapshotPageProps
   const identifier = decodeURIComponent(params.ticker ?? "").toUpperCase();
   const { data, isLoading, isError } = useCompanySnapshot(identifier);
   const { data: timelineData, isLoading: isTimelineLoading } = useCompanyTimeline(identifier, 180);
-  const boardTicker = data?.ticker ?? identifier;
-  const { data: boardsData } = useBoards({ ticker: boardTicker, enabled: Boolean(boardTicker) });
-
   const hasData = useMemo(() => {
     if (!data) return false;
     const statementCount = data.financialStatements?.length ?? 0;
@@ -103,17 +96,6 @@ const timelineItems = useMemo<TimelineItem[]>(() => {
     }));
 }, [timelineData]);
 
-const relatedBoards = useMemo(() => {
-  if (!boardsData || !data) {
-    return [];
-  }
-  const ticker = (data.ticker ?? identifier).toUpperCase();
-  return boardsData.filter((board) => board.tickers.some((value) => value.toUpperCase() === ticker));
-}, [boardsData, data, identifier]);
-const sectorName = useMemo(() => {
-  const sectorBoard = relatedBoards.find((board) => board.type === "sector");
-  return sectorBoard?.name ?? null;
-}, [relatedBoards]);
 
   useEffect(() => {
     if (!data || typeof window === "undefined") {
@@ -175,7 +157,7 @@ const sectorName = useMemo(() => {
     return (
       <AppShell>
         <div className="space-y-6">
-          <CompanyHeader name={data.corpName ?? identifier} ticker={data.ticker} corpCode={data.corpCode} sectorName={sectorName} />
+          <CompanyHeader name={data.corpName ?? identifier} ticker={data.ticker} corpCode={data.corpCode} />
           <RecentFilingsPanel filings={data.recentFilings} companyName={data.corpName ?? identifier} />
           <EmptyState
             title="표시할 데이터가 없습니다"
@@ -189,7 +171,7 @@ const sectorName = useMemo(() => {
   return (
     <AppShell>
       <div className="space-y-8">
-        <CompanyHeader name={data.corpName ?? identifier} ticker={data.ticker} corpCode={data.corpCode} sectorName={sectorName} />
+        <CompanyHeader name={data.corpName ?? identifier} ticker={data.ticker} corpCode={data.corpCode} />
 
         <section className="space-y-6">
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]">
@@ -235,7 +217,6 @@ const sectorName = useMemo(() => {
           <MajorEventsList events={data.majorEvents} />
           <div className="space-y-6">
             <NewsSignalCards signals={data.newsSignals} companyName={data.corpName ?? null} />
-            <RelatedBoardsCard boards={relatedBoards} />
             <TimelineCard items={timelineItems} isLoading={isTimelineLoading} />
           </div>
         </section>
@@ -270,53 +251,6 @@ const formatDateLabel = (value?: string | null) => {
   }
   return parsed.toLocaleDateString("ko-KR");
 };
-
-type RelatedBoardsCardProps = {
-  boards: Array<{
-    id: string;
-    name: string;
-    tickers: string[];
-    recentAlerts?: number | null;
-  }>;
-};
-
-function RelatedBoardsCard({ boards }: RelatedBoardsCardProps) {
-  return (
-    <section className="rounded-2xl border border-border-light bg-background-cardLight p-6 shadow-card dark:border-border-dark dark:bg-background-cardDark">
-      <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold text-text-primaryLight dark:text-text-primaryDark">관련 워치리스트</h2>
-        <Link href={BOARDS_ROUTE} className="text-xs font-semibold text-primary hover:underline dark:text-primary.dark">
-          보드 열기
-        </Link>
-      </div>
-      {boards.length === 0 ? (
-        <EmptyState
-          title="연결된 워치리스트가 없습니다"
-          description="Watchlist에서 이 종목이 포함된 룰을 만들면 자동으로 연결됩니다."
-          className="border-none"
-        />
-      ) : (
-        <ul className="mt-4 space-y-2 text-sm">
-          {boards.map((board) => (
-            <li key={board.id} className="rounded-xl border border-border-light px-3 py-2 dark:border-border-dark">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <p className="font-semibold text-text-primaryLight dark:text-text-primaryDark">{board.name}</p>
-                  <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-                    최근 알림 {board.recentAlerts ?? 0}건 · 종목 {board.tickers.length}개
-                  </p>
-                </div>
-                <Link href={`/boards/${board.id}` as Route} className="text-xs font-semibold text-primary hover:underline dark:text-primary.dark">
-                  보기
-                </Link>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
 
 type TimelineCardProps = {
   items: TimelineItem[];

@@ -36,7 +36,6 @@ type AlertChannelDraft = {
 const ALERT_CHANNEL_TEMPLATE_OPTIONS: Record<string, Array<{ value: string; label: string }>> = {
   email: [
     { value: "default", label: "표준 본문" },
-    { value: "digest", label: "요약 + 하이라이트" },
   ],
   telegram: [
     { value: "default", label: "표준" },

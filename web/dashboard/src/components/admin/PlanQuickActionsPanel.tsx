@@ -711,8 +711,8 @@ function PlanDebugOverrideNotice({ baseEntitlements, currentOverride, onApply, o
 
     const memoryPreset: PlanMemoryFlags =
       tier === 'free'
-        ? { watchlist: false, digest: false, chat: false }
-        : { watchlist: true, digest: true, chat: true };
+        ? { watchlist: false, chat: false }
+        : { watchlist: true, chat: true };
 
     onApply({
       enabled: true,

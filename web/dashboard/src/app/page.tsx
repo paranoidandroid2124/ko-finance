@@ -1,151 +1,246 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { ArrowRight, Command, FlaskConical, FileText, MessageSquare, Filter } from "lucide-react";
+import { useState } from "react";
+import { motion } from "framer-motion";
+import { BarChart2, Brain, Zap, FileSpreadsheet } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
-import { AppShell } from "@/components/layout/AppShell";
-import DeepTechLayout from "@/components/layout/DeepTechLayout";
-import SpotlightCard from "@/components/ui/SpotlightCard";
+import { HeroDemo } from "@/components/landing/HeroDemo";
+import { NuvienHero } from "@/components/landing/NuvienHero";
+import { TermDefinition } from "@/components/ui/TermDefinition";
 
-const COMMANDER_TOOLS = [
+type FeaturePreviewType = "extract" | "chart" | "export";
+
+type FeatureItem = {
+  id: string;
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  preview: FeaturePreviewType;
+};
+
+const features: FeatureItem[] = [
   {
-    title: "이벤트 스터디",
-    description: "실적발표·IR 이후의 CAR/CAAR 패턴을 바로 계산합니다.",
-    example: '예: "삼성전자 이벤트 스터디 -2~5일 구간 보여줘"',
-    icon: FlaskConical,
+    id: "extract",
+    icon: Zap,
+    title: "공시·뉴스 핵심 수치 추출",
+    description: "KRX·NASDAQ 공시 PDF와 주요 뉴스에서 재무 지표와 가이던스 문장을 자동으로 구조화합니다.",
+    preview: "extract",
   },
   {
-    title: "지능형 공시 뷰어",
-    description: "AI가 중요 문단을 찾아주고 관련 하이라이트를 오버레이합니다.",
-    example: '예: "LG화학 최근 공시에서 CAPEX 강조된 부분 열어줘"',
-    icon: FileText,
+    id: "chart",
+    icon: BarChart2,
+    title: "표준화된 차트와 비교 지표",
+    description: "주가 추이, 동종업계 대비 수익성, 이벤트 이후 CAR 등을 동일한 포맷으로 제공합니다.",
+    preview: "chart",
   },
   {
-    title: "퀀트 스크리너",
-    description: "자연어 조건으로 저평가 종목, 마진 개선 종목 등을 필터링합니다.",
-    example: '예: "영업이익률 20% 이상 바이오 종목 중 저평가를 보여줘"',
-    icon: Filter,
+    id: "export",
+    icon: Brain,
+    title: "자동화된 리서치 메모",
+    description: "요약 본문, 표, 인용 출처가 포함된 투자 메모를 바로 PDF·Word·Excel로 내보낼 수 있습니다.",
+    preview: "export",
   },
 ];
 
-const DIRECT_WORKSPACES = [
-  {
-    title: "Event Study Workspace",
-    description: "파라미터를 조정하며 직접 패턴을 비교하고 PDF를 추출할 수 있습니다.",
-    href: "/event-study",
-    icon: FlaskConical,
-  },
-  {
-    title: "Evidence Workspace",
-    description: "공시·리서치 전문을 탐색하며 하이라이트 구간을 직접 확인합니다.",
-    href: "/evidence",
-    icon: FileText,
-  },
-  {
-    title: "Labs · Research Tools",
-    description: "실험적 기능과 데이터 파이프라인을 테스트하는 공간입니다.",
-    href: "/labs",
-    icon: Command,
-  },
+const steps = [
+  { title: "1. 질문 입력", detail: "분석하려는 티커나 이슈를 입력합니다. 예: “삼성전자 2023 실적 핵심 지표.”" },
+  { title: "2. 데이터 처리", detail: "최근 공시, 뉴스, 가격 데이터를 불러와 표와 차트로 정리합니다." },
+  { title: "3. 리포트 생성", detail: "본문·표·출처 링크가 포함된 리포트를 편집하거나 바로 내보냅니다." },
 ];
 
-export default function CommanderHomePage() {
-  const router = useRouter();
+const logos = ["openai", "python", "nasdaq", "krx"];
+
+function FeatureCard({ icon: Icon, title, description, preview }: FeatureItem) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <motion.div
+      onHoverStart={() => setHovered(true)}
+      onHoverEnd={() => setHovered(false)}
+      whileHover={{ y: -6 }}
+      transition={{ duration: 0.3, ease: "easeOut" }}
+      className="rounded-2xl border border-border-subtle bg-surface-muted/80 p-5 shadow-subtle"
+    >
+      <div className="flex items-center gap-3">
+        <span className="rounded-full bg-primary-muted px-3 py-2">
+          <Icon className="h-5 w-5 text-primary" />
+        </span>
+        <h3 className="text-lg font-semibold text-white">{title}</h3>
+      </div>
+      <p className="mt-3 text-sm text-text-secondaryDark">{description}</p>
+      <FeaturePreview type={preview} active={hovered} />
+    </motion.div>
+  );
+}
+
+function FeaturePreview({ type, active }: { type: FeaturePreviewType; active: boolean }) {
+  if (type === "extract") {
+    const rows = [
+      { label: "매출", value: "₩6,493억 (+12%)" },
+      { label: "영업이익", value: "₩453억 (+9%)" },
+      { label: "지분변동", value: "-1.2% (기관)" },
+    ];
+    return (
+      <div className="mt-5 rounded-2xl border border-border-subtle bg-background-cardDark p-3">
+        {rows.map((row, index) => (
+          <motion.div
+            key={row.label}
+            className="flex items-center justify-between text-xs text-text-secondaryDark"
+            animate={{ x: active ? 0 : -6, opacity: active ? 1 : 0.6 }}
+            transition={{ duration: 0.35, delay: active ? index * 0.05 : 0 }}
+          >
+            <span>{row.label}</span>
+            <span className="font-semibold text-text-primaryDark">{row.value}</span>
+          </motion.div>
+        ))}
+      </div>
+    );
+  }
+
+  if (type === "chart") {
+    const pathD = "M5 50 L25 30 L45 38 L65 20 L85 32 L105 18";
+    return (
+      <div className="mt-5 rounded-2xl border border-border-subtle bg-background-cardDark/80 p-4">
+        <svg viewBox="0 0 110 60" className="h-28 w-full">
+          <line x1="0" y1="50" x2="110" y2="50" stroke="rgba(148,163,184,0.25)" strokeWidth="1" />
+          <line x1="0" y1="30" x2="110" y2="30" stroke="rgba(148,163,184,0.15)" strokeWidth="1" />
+          <motion.path
+            d={pathD}
+            fill="none"
+            stroke="#60A5FA"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            initial={{ pathLength: 0.25 }}
+            animate={{ pathLength: active ? 1 : 0.4 }}
+            transition={{ duration: 1.1, ease: "easeInOut" }}
+          />
+        </svg>
+        <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+          <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-white">
+            <p className="text-xs font-semibold text-white/80">AAPL vs Peer</p>
+            <p className="text-sm font-semibold text-emerald-300">+4.7% vs +2.1%</p>
+          </div>
+          <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-white">
+            <p className="text-xs font-semibold text-white/80">CAR (5일)</p>
+            <p className="text-sm font-semibold text-rose-300">-3.2% vs 시장 -0.8%</p>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-3">
+          <TermDefinition term="AAPL" description="Apple Inc.의 나스닥 상장 티커입니다." />
+          <TermDefinition term="Peer" description="동종 업계 대표 기업들의 평균치입니다." />
+          <TermDefinition term="CAR" description="Cumulative Abnormal Return, 이벤트 이후 누적 초과 수익률입니다." />
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <AppShell>
-      <DeepTechLayout className="px-4 pb-16 pt-12 md:px-12">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-14">
-          <section className="flex flex-col gap-10 md:flex-row md:items-center md:justify-between">
-            <div className="flex-1 space-y-6">
-              <span className="text-xs font-semibold tracking-[0.45em] text-indigo-200">CHAT AS A COMMANDER</span>
-              <h1 className="text-4xl font-semibold leading-tight text-white md:text-5xl">
-                말하면 차트와 도구가 바로 열리는 새로운 홈
-              </h1>
-              <p className="text-base text-slate-300">
-                복잡한 GNB 대신 챗 세션이 모든 Deep Tool을 호출합니다. 판단은 AI가, 검증은 UI가 진행하세요.
-              </p>
-              <div className="flex flex-wrap gap-3 text-xs uppercase tracking-wide text-slate-400">
-                <span className="rounded-full border border-white/10 px-3 py-1">Bloomberg Depth</span>
-                <span className="rounded-full border border-white/10 px-3 py-1">ChatGPT Usability</span>
-                <span className="rounded-full border border-white/10 px-3 py-1">Compliance Guard</span>
-              </div>
-            </div>
-            <SpotlightCard className="w-full max-w-sm self-stretch bg-white/[0.02] p-6 text-sm text-slate-100 shadow-[0_25px_55px_rgba(3,7,18,0.55)]">
-              <p className="text-sm font-semibold text-white">Commander가 열어줄 수 있는 주요 흐름</p>
-              <ul className="mt-4 space-y-2 text-[13px] text-slate-300">
-                <li>• 이벤트 스터디, 공시 뷰어, 퀀트 스크리너</li>
-                <li>• Paywall Teaser & LightMem 컨텍스트</li>
-                <li>• 규제 필터 및 출처 강제 표기</li>
-              </ul>
-              <button
-                onClick={() => router.push("/chat")}
-                className="mt-6 inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-[#6C63FF] via-[#7C4DFF] to-[#2DD4BF] px-4 py-2 text-sm font-semibold text-white shadow-[0_15px_45px_rgba(108,99,255,0.35)] transition hover:translate-y-[-1px]"
-              >
-                Commander 열기
-                <MessageSquare className="ml-2 h-4 w-4" aria-hidden="true" />
-              </button>
-            </SpotlightCard>
-          </section>
+    <div className="mt-5 rounded-2xl border border-border-subtle bg-background-cardDark/90 p-4 text-sm text-text-secondaryDark">
+      <div className="flex items-center justify-between text-xs uppercase tracking-[0.2em] text-text-secondaryDark">
+        <span>Export</span>
+        <motion.div animate={{ y: active ? 6 : 0 }} transition={{ duration: 0.4, ease: "easeOut" }}>
+          <FileSpreadsheet className="h-5 w-5 text-emerald-400" />
+        </motion.div>
+      </div>
+      <motion.button
+        type="button"
+        className="mt-3 inline-flex items-center gap-2 rounded-full bg-primary/90 px-4 py-2 text-xs font-semibold text-white"
+        animate={{ scale: active ? 1 : 0.98, boxShadow: active ? "0 8px 25px rgba(59,130,246,0.35)" : "none" }}
+        transition={{ duration: 0.3 }}
+      >
+        Excel 내보내기
+      </motion.button>
+      <p className="mt-3 text-xs">
+        {active ? "Excel 파일 링크가 생성되었습니다." : "내보내기 버튼을 누르면 Excel 파일을 만듭니다."}
+      </p>
+    </div>
+  );
+}
 
-          <section className="space-y-5">
-            <div className="flex flex-col gap-3 text-slate-200 md:flex-row md:items-center md:justify-between">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.4em] text-indigo-200">Commander Examples</p>
-                <h2 className="mt-2 text-2xl font-semibold text-white">Commander 호출 예시</h2>
-                <p className="text-sm text-slate-400">자연어 프롬프트만으로 분석 UI가 사용자 앞으로 펼쳐집니다.</p>
-              </div>
-              <button
-                onClick={() => router.push("/chat")}
-                className="inline-flex items-center gap-2 rounded-full border border-white/15 px-5 py-1.5 text-sm font-medium text-slate-200 transition hover:border-cyan-300 hover:text-white"
-              >
-                새 챗 시작
-                <ArrowRight className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="grid gap-5 md:grid-cols-3">
-              {COMMANDER_TOOLS.map(({ title, description, example, icon: Icon }) => (
-                <SpotlightCard key={title} className="h-full bg-white/[0.02] p-5 text-slate-200">
-                  <div className="mb-4 flex items-center gap-2 text-indigo-200">
-                    <Icon className="h-5 w-5" aria-hidden="true" />
-                    <span className="text-sm font-semibold uppercase tracking-wide">{title}</span>
-                  </div>
-                  <p className="text-sm text-slate-300">{description}</p>
-                  <p className="mt-4 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-slate-100">
-                    {example}
-                  </p>
-                </SpotlightCard>
-              ))}
-            </div>
-          </section>
+export default function LandingPage() {
+  return (
+    <div className="min-h-screen bg-slate-950 text-white">
+      <NuvienHero />
+      <main className="mx-auto flex w-full max-w-6xl flex-col gap-16 px-6 py-16">
+        <section className="rounded-[32px] border border-border-subtle bg-surface-muted/80 p-4 shadow-card">
+          <HeroDemo />
+        </section>
 
-          <section className="space-y-5">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.4em] text-indigo-200">Workflow Ready</p>
-              <h2 className="mt-2 text-2xl font-semibold text-white">직접 탐색 가능한 Workspaces</h2>
-              <p className="text-sm text-slate-400">반복 탐색이 필요한 핵심 툴은 여전히 독립 화면으로 접근 가능합니다.</p>
-            </div>
-            <div className="grid gap-5 md:grid-cols-3">
-              {DIRECT_WORKSPACES.map(({ title, description, href, icon: Icon }) => (
-                <Link key={title} href={href} className="group block">
-                  <SpotlightCard className="h-full bg-white/[0.02] p-5 text-slate-200 transition group-hover:-translate-y-1">
-                    <div className="flex items-center gap-2 text-cyan-200">
-                      <Icon className="h-5 w-5" aria-hidden="true" />
-                      <span className="text-sm font-semibold uppercase tracking-wide">{title}</span>
-                    </div>
-                    <p className="mt-3 text-sm text-slate-300">{description}</p>
-                    <span className="mt-6 inline-flex items-center text-sm font-semibold text-cyan-200 transition group-hover:text-white">
-                      바로 가기
-                      <ArrowRight className="ml-1 h-4 w-4" />
-                    </span>
-                  </SpotlightCard>
-                </Link>
-              ))}
-            </div>
-          </section>
-        </div>
-      </DeepTechLayout>
-    </AppShell>
+        <section className="space-y-6">
+          <p className="text-xs uppercase tracking-[0.4em] text-slate-500">Trusted Tech</p>
+          <div className="flex flex-wrap items-center gap-6 text-slate-400">
+            {logos.map((logo) => (
+              <span key={logo} className="text-sm uppercase tracking-wide text-slate-500">
+                {logo}
+              </span>
+            ))}
+          </div>
+        </section>
+
+        <section className="space-y-8">
+          <div>
+            <p className="text-xs uppercase tracking-[0.4em] text-slate-500">Capabilities</p>
+            <h2 className="mt-2 text-3xl font-semibold">반복적인 리서치 작업을 정리합니다</h2>
+          </div>
+          <div className="grid gap-6 md:grid-cols-3">
+            {features.map((feature) => (
+              <FeatureCard key={feature.id} {...feature} />
+            ))}
+          </div>
+        </section>
+
+        <section className="space-y-8">
+          <div>
+            <p className="text-xs uppercase tracking-[0.4em] text-slate-500">Workflow</p>
+            <h2 className="mt-2 text-3xl font-semibold">문제 제기부터 리포트까지</h2>
+          </div>
+          <div className="grid gap-5 md:grid-cols-3">
+            {steps.map(({ title, detail }) => (
+              <div key={title} className="rounded-2xl border border-white/10 bg-slate-900/70 p-6">
+                <span className="text-sm font-semibold uppercase tracking-[0.3em] text-blue-300">{title}</span>
+                <p className="mt-2 text-sm text-slate-300">{detail}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="space-y-4 rounded-3xl border border-white/10 bg-gradient-to-br from-blue-600/30 to-slate-900/80 p-8 text-center">
+          <p className="text-sm uppercase tracking-[0.4em] text-blue-200">Start today</p>
+          <h2 className="text-3xl font-semibold text-white">지금 바로 사용해 보세요.</h2>
+          <p className="text-slate-200">생성된 리포트는 참고용 자료이며, 모든 투자 판단과 책임은 이용자에게 있습니다.</p>
+          <div className="flex flex-wrap items-center justify-center gap-4">
+            <Link
+              href="/auth/signup"
+              className="inline-flex items-center rounded-full bg-white px-6 py-3 text-sm font-semibold text-slate-900 shadow-lg shadow-white/30"
+            >
+              무료 체험 시작
+            </Link>
+            <Link
+              href="/pricing"
+              className="inline-flex items-center rounded-full border border-white/30 px-6 py-3 text-sm font-semibold text-white transition hover:border-white/70"
+            >
+              요금제 살펴보기
+            </Link>
+          </div>
+        </section>
+
+        <footer className="flex flex-col gap-4 border-t border-white/10 pt-8 text-sm text-slate-500 md:flex-row md:items-center md:justify-between">
+          <div>© 2025 Nuvien. All rights reserved.</div>
+          <div className="flex flex-wrap items-center gap-4 text-xs uppercase tracking-wide">
+            <Link href="/legal/terms" className="hover:text-white">
+              이용약관
+            </Link>
+            <Link href="/legal/privacy" className="hover:text-white">
+              개인정보처리방침
+            </Link>
+            <Link href="mailto:hello@nuvien.com" className="hover:text-white">
+              문의하기
+            </Link>
+          </div>
+        </footer>
+      </main>
+    </div>
   );
 }

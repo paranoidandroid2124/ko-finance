@@ -19,7 +19,6 @@ _DEFAULT_LABELS: Dict[str, str] = {
     "evidence.diff": "Evidence Diff",
     "timeline.full": "전체 타임라인",
     "table.explorer": "Table Explorer",
-    "collab.notebook": "Research Notebook",
     "reports.event_export": "이벤트 리포트 Export (Pro+)",
 }
 

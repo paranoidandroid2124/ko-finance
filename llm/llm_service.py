@@ -1108,66 +1108,6 @@ def summarize_chat_transcript(transcript: List[Dict[str, str]]) -> str:
     summary_text = _choice_content(response) or ""
     return summary_text.strip()
 
-
-def _format_watchlist_digest_context(summary: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> str:
-    lines: List[str] = []
-    lines.append(
-        f"- 경보 {summary.get('totalDeliveries', 0)}건, 이벤트 {summary.get('totalEvents', 0)}건, 감시 종목 {summary.get('uniqueTickers', 0)}개"
-    )
-    top_tickers = summary.get("topTickers") or []
-    if top_tickers:
-        lines.append(f"- Top 종목: {', '.join(map(str, top_tickers[:5]))}")
-    for idx, item in enumerate(items[:5], start=1):
-        ticker = item.get("ticker") or "N/A"
-        rule_name = item.get("ruleName") or ""
-        headline = item.get("headline") or item.get("summary") or item.get("message") or ""
-        sentiment = item.get("sentiment")
-        sentiment_text = (
-            f"(sentiment={sentiment:.2f})" if isinstance(sentiment, (int, float)) else ""
-        )
-        lines.append(f"{idx}. {ticker} {rule_name} - {headline} {sentiment_text}".strip())
-    return "\n".join(lines)
-
-
-def generate_watchlist_digest_overview(
-    summary: Mapping[str, Any],
-    items: Sequence[Mapping[str, Any]],
-) -> str:
-    """LLM으로 Watchlist Digest 상단 요약문을 생성한다."""
-
-    context_block = _format_watchlist_digest_context(summary, items)
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "당신은 K-Finance Watchlist Digest를 작성하는 시니어 애널리스트입니다.\n"
-                "- 최근 모멘텀, 수급, 감성 신호를 3~5문장으로 정리하고, 각 문장은 25~60자 사이로 유지합니다.\n"
-                "- 첫 문장은 시장의 긍정적 흐름이나 주요 모멘텀, 두 번째는 핵심 종목/섹터 디테일, 세 번째는 리스크·주의 신호를 언급합니다.\n"
-                "- 필요하면 네 번째 문장으로 향후 관찰 포인트를 제시할 수 있습니다.\n"
-                "- 감탄사나 과도한 조언 없이 사실 기반·전문가 톤을 유지합니다."
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                "다음 워치리스트 알림 데이터를 읽고 요구사항에 맞는 디테일한 요약을 작성하십시오.\n"
-                "### 데이터\n"
-                f"{context_block}\n\n"
-                "### 출력 지침\n"
-                "1. 문장 수 3~5개, 각 문장은 25~60자.\n"
-                "2. 첫 문장은 모멘텀/수급, 두 번째는 종목·섹터 디테일, 세 번째는 리스크·주의 신호를 다룹니다.\n"
-                "3. 네 번째 문장이 있다면 다음 관찰 포인트를 제시합니다.\n"
-                "4. 불필요한 접두어(예: '요청하신', '다음은')는 제거하고 바로 내용으로 시작합니다."
-            ),
-        },
-    ]
-    response, _ = _safe_completion(SUMMARY_MODEL, messages, fallback_model=QUALITY_FALLBACK_MODEL)
-    if response is None:
-        raise RuntimeError("watchlist_overview_failed")
-    overview = _choice_content(response) or ""
-    return overview.strip()
-
-
 def generate_watchlist_personal_note(prompt_text: str) -> Tuple[str, Dict[str, Any]]:
     """사용자 맞춤 워치리스트 코멘트를 생성한다."""
 
@@ -1175,7 +1115,7 @@ def generate_watchlist_personal_note(prompt_text: str) -> Tuple[str, Dict[str, A
         {
             "role": "system",
             "content": (
-                "당신은 사용자의 워치리스트 히스토리를 이해하는 K-Finance Copilot입니다.\n"
+                "당신은 사용자의 워치리스트 히스토리를 이해하는 Nuvien Copilot입니다.\n"
                 "- 개인 메모는 3~5문장으로 구성하며, 각 문장은 25~65자 사이입니다.\n"
                 "- 첫 문장은 관찰된 패턴·이벤트, 두 번째는 해당 종목/섹터의 의미, 세 번째는 리스크·주의 포인트를 설명합니다.\n"
                 "- 네 번째 문장이 있다면 사용자에게 다음 액션(체크포인트, 비교 대상 등)을 제안합니다.\n"
@@ -1266,7 +1206,6 @@ __all__ = [
     "generate_rag_answer",
     "stream_rag_answer",
     "summarize_chat_transcript",
-    "generate_watchlist_digest_overview",
     "generate_watchlist_personal_note",
     "write_investment_memo",
     "set_guardrail_copy",

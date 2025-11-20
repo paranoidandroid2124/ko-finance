@@ -17,7 +17,7 @@ def test_record_and_retrieve_order(tmp_path: Path) -> None:
         plan_tier="pro",
         amount=39000,
         currency="KRW",
-        order_name="K-Finance Pro 플랜 구독",
+        order_name="Nuvien Pro 플랜 구독",
         user_id="user-1",
         org_id="org-1",
         metadata={"redirectPath": "/settings"},

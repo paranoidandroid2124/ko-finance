@@ -38,7 +38,6 @@ class PlanFeatureFlagsSchema(BaseModel):
 
 class PlanMemoryFlagsSchema(BaseModel):
     watchlist: bool = False
-    digest: bool = False
     chat: bool = False
 
 

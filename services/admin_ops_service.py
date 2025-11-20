@@ -1,4 +1,4 @@
-﻿"""Persistence utilities for admin-controlled operations settings."""
+"""Persistence utilities for admin-controlled operations settings."""
 
 from __future__ import annotations
 
@@ -33,8 +33,8 @@ _DEFAULT_PIPELINE: Dict[str, object] = {
         "https://www.hankyung.com/feed",
     ],
     "sectorMappings": {
-        "금융": ["금리", "은행"],
-        "반도체": ["메모리", "파운드리"],
+        "??": ["??", "??"],
+        "???": ["???", "????"],
     },
     "sentiment": {"threshold": 0.55},
     "updatedAt": None,
@@ -71,57 +71,57 @@ _DEFAULT_API_KEYS: Dict[str, object] = {
 _ALERT_TEMPLATE_GALLERY: List[Dict[str, object]] = [
     {
         "key": "slack-morning-brief",
-        "label": "슬랙 · 아침 투자 브리핑",
+        "label": "?? � ?? ?? ???",
         "channelType": "slack",
         "template": "markdown",
-        "messageTemplate": "[{company}] 오늘 새로 확인한 따뜻한 소식을 전해드려요! {message}",
+        "messageTemplate": "[{company}] ?? ?? ??? ??? ??? ?????! {message}",
         "metadata": {
-            "headline": "ESG 리포트가 새롭게 공개됐어요",
-            "summary": "핵심 변화를 두 줄로 요약해두었어요. 자세한 근거는 하단 링크에서 살펴보실 수 있어요.",
-            "url": "https://k-finance.example.com/evidence/esg-weekly",
-            "volume": "12,345주",
+            "headline": "ESG ???? ??? ?????",
+            "summary": "?? ??? ? ?? ???????. ??? ??? ?? ???? ???? ? ???.",
+            "url": "https://Nuvien.example.com/evidence/esg-weekly",
+            "volume": "12,345?",
             "markdown": (
                 "*{headline}*\n"
                 "{summary}\n"
-                "- 거래량: {volume}\n"
-                "- 바로가기: {url}"
+                "- ???: {volume}\n"
+                "- ????: {url}"
             ),
-            "subject": "[K-Finance] 오늘의 따뜻한 금융 브리핑",
+            "subject": "[Nuvien] ??? ??? ?? ???",
         },
-        "description": "슬랙 채널에 하루의 시작을 알리는 짧은 요약을 전달할 때 사용해요.",
+        "description": "?? ??? ??? ??? ??? ?? ??? ??? ? ????.",
     },
     {
         "key": "email-weekly-digest",
-        "label": "이메일 · 주간 인사이트",
+        "label": "??? � ?? ????",
         "channelType": "email",
         "template": None,
         "messageTemplate": None,
         "metadata": {
-            "subject_template": "[K-Finance] {company} 한 주 살펴보기",
+            "subject_template": "[Nuvien] {company} ? ? ????",
             "body_template": (
-                "안녕하세요! {company} 관련 새로 수집한 근거를 따뜻하게 정리해두었어요.\n\n"
-                "- 주요 이슈: {headline}\n"
-                "- 추가 자료: {url}\n\n"
-                "함께 나누고 싶은 의견이 있으면 언제든 답장 주세요!"
+                "?????! {company} ?? ?? ??? ??? ???? ???????.\n\n"
+                "- ?? ??: {headline}\n"
+                "- ?? ??: {url}\n\n"
+                "?? ??? ?? ??? ??? ??? ?? ???!"
             ),
-            "company": "샘플기업",
-            "headline": "재무 성과와 ESG 전략을 함께 정리했어요",
-            "url": "https://k-finance.example.com/reports/sample",
+            "company": "????",
+            "headline": "?? ??? ESG ??? ?? ?????",
+            "url": "https://Nuvien.example.com/reports/sample",
         },
-        "description": "구독자에게 주간 변화를 차분한 어조로 공유하는 이메일 형식이에요.",
+        "description": "????? ?? ??? ??? ??? ???? ??? ?????.",
     },
     {
         "key": "telegram-alert",
-        "label": "텔레그램 · 즉시 알림",
+        "label": "???? � ?? ??",
         "channelType": "telegram",
         "template": None,
-        "messageTemplate": "[긴급] {company} 관련 새 소식이 들어왔어요! {message}",
+        "messageTemplate": "[??] {company} ?? ? ??? ?????! {message}",
         "metadata": {
-            "company": "샘플은행",
-            "message": "신용평가사가 등급 전망을 상향했어요. 세부 지표를 바로 확인해보세요!",
-            "link": "https://k-finance.example.com/alerts/bnn",
+            "company": "????",
+            "message": "?????? ?? ??? ?????. ?? ??? ?? ??????!",
+            "link": "https://Nuvien.example.com/alerts/bnn",
         },
-        "description": "중요 이벤트를 빠르게 전달하면서도 배려 있는 문장을 유지한 템플릿입니다.",
+        "description": "?? ???? ??? ?????? ?? ?? ??? ??? ??????.",
     },
 ]
 
@@ -344,8 +344,8 @@ def _compute_token_alerts(
                     {
                         "source": f"langfuse:{name}",
                         "severity": "critical",
-                        "message": "Langfuse 토큰이 만료되어 새 키가 필요해요.",
-                        "detail": f"{name} 환경 키를 즉시 재발급해 주세요.",
+                        "message": "Langfuse ??? ???? ? ?? ????.",
+                        "detail": f"{name} ?? ?? ?? ???? ???.",
                     }
                 )
             elif warning_days and delta.days <= warning_days:
@@ -353,8 +353,8 @@ def _compute_token_alerts(
                     {
                         "source": f"langfuse:{name}",
                         "severity": "warning",
-                        "message": "Langfuse 토큰 만료가 가까워졌어요.",
-                        "detail": f"{name} 환경 키가 {delta.days}일 후 만료 예정이에요.",
+                        "message": "Langfuse ?? ??? ??????.",
+                        "detail": f"{name} ?? ?? {delta.days}? ? ?? ?????.",
                     }
                 )
     for api in external_apis:
@@ -370,8 +370,8 @@ def _compute_token_alerts(
                     {
                         "source": f"external:{name}",
                         "severity": "critical",
-                        "message": "외부 API 키가 만료되었어요.",
-                        "detail": f"{name} 키를 새로 발급받아 연결을 복구해 주세요.",
+                        "message": "?? API ?? ??????.",
+                        "detail": f"{name} ?? ?? ???? ??? ??? ???.",
                     }
                 )
             elif warning_days and delta.days <= warning_days:
@@ -379,8 +379,8 @@ def _compute_token_alerts(
                     {
                         "source": f"external:{name}",
                         "severity": "warning",
-                        "message": "외부 API 키 만료 알림",
-                        "detail": f"{name} 키가 {delta.days}일 후 만료될 예정이에요.",
+                        "message": "?? API ? ?? ??",
+                        "detail": f"{name} ?? {delta.days}? ? ??? ?????.",
                     }
                 )
     return alerts
@@ -798,7 +798,7 @@ def build_channel_preview_payload(
     if isinstance(base_metadata, Mapping):
         combined_metadata.update(base_metadata)
     if isinstance(sample_metadata, Mapping):
-        combined_metadata.update(sample_metadata)  # sample metadata 우선 적용
+        combined_metadata.update(sample_metadata)  # sample metadata ?? ??
 
     preview = build_channel_preview(
         channel_type=sanitized.get("channelType"),
@@ -989,43 +989,43 @@ def build_sample_metadata(
     metadata: Dict[str, Any] = dict(template_metadata)
     generated_ts = now_iso()
     if channel_key == "slack":
-        metadata.setdefault("headline", "ESG 리포트가 새롭게 공개됐어요")
+        metadata.setdefault("headline", "ESG ???? ??? ?????")
         metadata.setdefault(
             "summary",
-            "핵심 변화를 두 줄로 정리해두었어요. 자세한 근거는 하단 링크에서 살펴보실 수 있어요.",
+            "?? ??? ? ?? ???????. ??? ??? ?? ???? ???? ? ???.",
         )
-        metadata.setdefault("url", "https://k-finance.example.com/evidence/esg-weekly")
-        metadata.setdefault("volume", "12,345주")
+        metadata.setdefault("url", "https://Nuvien.example.com/evidence/esg-weekly")
+        metadata.setdefault("volume", "12,345?")
         metadata.setdefault(
             "markdown",
-            "*{headline}*\n{summary}\n- 거래량: {volume}\n- 바로가기: {url}",
+            "*{headline}*\n{summary}\n- ???: {volume}\n- ????: {url}",
         )
-        metadata.setdefault("subject", "[K-Finance] 오늘의 따뜻한 금융 브리핑")
+        metadata.setdefault("subject", "[Nuvien] ??? ??? ?? ???")
     elif channel_key == "email":
-        metadata.setdefault("company", "샘플기업")
-        metadata.setdefault("headline", "재무 성과와 ESG 전략을 함께 정리했어요")
-        metadata.setdefault("url", "https://k-finance.example.com/reports/sample")
+        metadata.setdefault("company", "????")
+        metadata.setdefault("headline", "?? ??? ESG ??? ?? ?????")
+        metadata.setdefault("url", "https://Nuvien.example.com/reports/sample")
         metadata.setdefault(
             "subject_template",
-            "[K-Finance] {company} 한 주 살펴보기",
+            "[Nuvien] {company} ? ? ????",
         )
         metadata.setdefault(
             "body_template",
-            "안녕하세요! {company} 관련 새로 수집한 근거를 따뜻하게 정리해두었어요.\n\n- 주요 이슈: {headline}\n- 추가 자료: {url}\n\n함께 나누고 싶은 의견이 있으면 언제든 답장 주세요!",
+            "?????! {company} ?? ?? ??? ??? ???? ???????.\n\n- ?? ??: {headline}\n- ?? ??: {url}\n\n?? ??? ?? ??? ??? ??? ?? ???!",
         )
     elif channel_key == "telegram":
-        metadata.setdefault("company", "샘플은행")
+        metadata.setdefault("company", "????")
         metadata.setdefault(
             "message",
-            "신용평가사가 등급 전망을 상향했어요. 세부 지표를 바로 확인해보세요!",
+            "?????? ?? ??? ?????. ?? ??? ?? ??????!",
         )
-        metadata.setdefault("link", "https://k-finance.example.com/alerts/bnn")
+        metadata.setdefault("link", "https://Nuvien.example.com/alerts/bnn")
     else:
-        metadata.setdefault("message", "오늘도 투자 여정이 순항 중이에요. 궁금한 점이 생기면 바로 도와드릴게요!")
+        metadata.setdefault("message", "??? ?? ??? ?? ????. ??? ?? ??? ?? ??????!")
     metadata.setdefault("generatedAt", generated_ts)
     metadata.setdefault("channel_type", channel_key)
     if selected and selected.get("messageTemplate"):
-        metadata.setdefault("message", selected["messageTemplate"].format(company="K-Finance", message="새 알림이 도착했어요."))
+        metadata.setdefault("message", selected["messageTemplate"].format(company="Nuvien", message="? ??? ?????."))
     return metadata
 
 

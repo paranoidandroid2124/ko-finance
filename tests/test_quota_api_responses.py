@@ -49,7 +49,6 @@ def _plan_context(entitlements: set[str]) -> PlanContext:
         entitlements=frozenset(entitlements),
         quota=PlanQuota(chat_requests_per_day=80, rag_top_k=5, self_check_enabled=True, peer_export_row_limit=25),
         memory_watchlist_enabled=True,
-        memory_digest_enabled=True,
         memory_chat_enabled=True,
     )
 
@@ -169,36 +168,6 @@ def test_watchlist_radar_returns_problem_detail(alerts_client, monkeypatch: pyte
     payload = response.json()["detail"]
     assert payload["code"] == "plan.quota_exceeded"
     assert payload["quota"]["limit"] == 3
-
-
-def test_watchlist_digest_unavailable_returns_problem(alerts_client, monkeypatch: pytest.MonkeyPatch):
-    _patch_quota(
-        monkeypatch,
-        decision=EntitlementDecision(allowed=False, remaining=0, limit=0),
-    )
-    response = alerts_client.post(
-        "/api/v1/alerts/watchlist/dispatch",
-        json={},
-        headers={"X-User-Id": str(uuid.uuid4())},
-    )
-    assert response.status_code == 403
-    payload = response.json()["detail"]
-    assert payload["code"] == "plan.quota_unavailable"
-    assert payload["quota"]["limit"] == 0
-
-
-def test_digest_preview_quota_response(reports_client, monkeypatch: pytest.MonkeyPatch):
-    _patch_quota(
-        monkeypatch,
-        decision=EntitlementDecision(allowed=False, remaining=0, limit=1),
-    )
-    response = reports_client.get(
-        "/api/v1/reports/digest/preview",
-        headers={"X-User-Id": str(uuid.uuid4())},
-    )
-    assert response.status_code == 429
-    payload = response.json()["detail"]
-    assert payload["quota"]["action"] == "watchlist.preview"
 
 
 def test_rag_query_quota_response(rag_client, monkeypatch: pytest.MonkeyPatch):

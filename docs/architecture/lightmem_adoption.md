@@ -1,7 +1,7 @@
 # LightMem 도입 검토 메모
 
 ## 개요
-- **목적**: K-Finance 서비스에서 LLM이 `사용자별 서비스 이용 맥락`(다이제스트 룰, 알림 이력 등)을 기억하도록 하는 외부 메모리 계층 도입을 검토한다.
+- **목적**: Nuvien 서비스에서 LLM이 `사용자별 서비스 이용 맥락`(다이제스트 룰, 알림 이력 등)을 기억하도록 하는 외부 메모리 계층 도입을 검토한다.
 - **참고 자료**: LightMem(https://github.com/zjunlp/LightMem) 구조 및 논문 `Lightweight and Efficient Memory-Augmented Generation (arXiv:2510.18866)`.
 - **핵심 질문**: 토큰 비용을 절감하면서도 사용자 맞춤형 응답/다이제스트 품질을 높일 수 있는가? 개인정보·보안 리스크는 제어 가능한가?
 

@@ -12,7 +12,6 @@ ALERT_EVALUATION_LIMIT = env_int("ALERT_EVALUATION_LIMIT", 200, minimum=1)
 ALERT_EVALUATION_PREFETCH_FACTOR = env_int("ALERT_EVALUATION_PREFETCH_FACTOR", 4, minimum=1)
 CELERY_TIMEZONE = env_str("CELERY_TIMEZONE", "Asia/Seoul") or "UTC"
 CELERY_DEFAULT_QUEUE = env_str("CELERY_DEFAULT_QUEUE", "default") or "default"
-CELERY_DIGEST_QUEUE = env_str("CELERY_DIGEST_QUEUE", "digest_llm") or "digest_llm"
 
 app = Celery(
     "kfinance",
@@ -25,13 +24,8 @@ app.conf.update(
     task_track_started=True,
     timezone=CELERY_TIMEZONE,
     task_default_queue=CELERY_DEFAULT_QUEUE,
-    task_queues=(
-        Queue(CELERY_DEFAULT_QUEUE),
-        Queue(CELERY_DIGEST_QUEUE),
-    ),
-    task_routes={
-        "m4.send_filing_digest": {"queue": CELERY_DIGEST_QUEUE},
-    },
+    task_queues=(Queue(CELERY_DEFAULT_QUEUE),),
+    task_routes={},
     beat_schedule={},
 )
 

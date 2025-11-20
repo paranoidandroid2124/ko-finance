@@ -10,10 +10,9 @@ import {
   XCircle,
 } from "lucide-react";
 
-import { useDispatchWatchlistDigest, useWatchlistRuleDetail } from "@/hooks/useAlerts";
+import { useWatchlistRuleDetail } from "@/hooks/useAlerts";
 import { formatDateTime } from "@/lib/date";
 import type { WatchlistRadarItem, WatchlistRuleChannelSummary } from "@/lib/alertsApi";
-import { useToastStore } from "@/store/toastStore";
 
 type WatchlistDetailPanelProps = {
   item: WatchlistRadarItem | null;
@@ -38,9 +37,6 @@ export function WatchlistDetailPanel({ item, onClose }: WatchlistDetailPanelProp
     isError,
     refetch,
   } = useWatchlistRuleDetail(ruleId, { recentLimit: 10 });
-  const dispatchDigest = useDispatchWatchlistDigest();
-  const showToast = useToastStore((state) => state.show);
-  const [pendingChannel, setPendingChannel] = useState<"slack" | "email" | null>(null);
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
@@ -78,105 +74,11 @@ export function WatchlistDetailPanel({ item, onClose }: WatchlistDetailPanelProp
     }
     return rule.channels;
   }, [rule]);
-  const slackTargets = useMemo(() => {
-    const collection = new Set<string>();
-    ruleChannels
-      .filter((channel) => channel.type.toLowerCase() === "slack")
-      .forEach((channel) => {
-        if (channel.target) {
-          collection.add(channel.target);
-        }
-        (channel.targets ?? []).forEach((target) => {
-          if (target) {
-            collection.add(target);
-          }
-        });
-      });
-    return Array.from(collection);
-  }, [ruleChannels]);
-  const emailTargets = useMemo(() => {
-    const collection = new Set<string>();
-    ruleChannels
-      .filter((channel) => channel.type.toLowerCase() === "email")
-      .forEach((channel) => {
-        if (channel.target) {
-          collection.add(channel.target);
-        }
-        (channel.targets ?? []).forEach((target) => {
-          if (target) {
-            collection.add(target);
-          }
-        });
-      });
-    return Array.from(collection);
-  }, [ruleChannels]);
 
   const statusTone = (item?.deliveryStatus ?? "").toLowerCase() === "failed" ? "negative" : "positive";
 
   const StatusIcon = statusTone === "negative" ? XCircle : CheckCircle2;
   const statusLabel = STATUS_LABEL[item?.deliveryStatus ?? ""] ?? "전송 상태";
-
-  const handleResend = async (channel: "slack" | "email") => {
-    if (channel === "slack" && slackTargets.length === 0) {
-      showToast({
-        intent: "warning",
-        message: "재전송할 Slack 채널이 설정되어 있지 않습니다.",
-      });
-      return;
-    }
-    if (channel === "email" && emailTargets.length === 0) {
-      showToast({
-        intent: "warning",
-        message: "재전송할 이메일 대상이 설정되어 있지 않습니다.",
-      });
-      return;
-    }
-    if (pendingChannel) {
-      return;
-    }
-    setPendingChannel(channel);
-    try {
-      const windowMinutes = rule?.windowMinutes ?? 1440;
-      const limit = 40;
-      const result = await dispatchDigest.mutateAsync({
-        windowMinutes,
-        limit,
-        slackTargets: channel === "slack" ? slackTargets : [],
-        emailTargets: channel === "email" ? emailTargets : [],
-      });
-      const channelResult = result.results.find((entry) => entry.channel === channel);
-      const delivered = channelResult?.delivered ?? 0;
-      const failed = channelResult?.failed ?? 0;
-      showToast({
-        intent: failed > 0 ? "warning" : "success",
-        message:
-          channel === "slack"
-            ? `Slack으로 ${delivered}건 재전송을 시도했어요. 실패 ${failed}건`
-            : `이메일로 ${delivered}건 재전송을 시도했어요. 실패 ${failed}건`,
-      });
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "다이제스트 재전송에 실패했습니다.";
-      showToast({
-        intent: "error",
-        message,
-      });
-    } finally {
-      setPendingChannel(null);
-    }
-  };
-
-  const handleLogRetry = (channel: string) => {
-    const normalized = channel.toLowerCase();
-    if ((normalized === "slack" && slackTargets.length > 0) || (normalized === "email" && emailTargets.length > 0)) {
-      void handleResend(normalized as "slack" | "email");
-    } else {
-      showToast({
-        intent: "warning",
-        message: "전송 대상을 찾을 수 없어 재전송할 수 없습니다.",
-      });
-    }
-  };
 
   const conditionChips = useMemo(() => {
     if (!rule) {
@@ -304,49 +206,6 @@ export function WatchlistDetailPanel({ item, onClose }: WatchlistDetailPanelProp
             </div>
           ) : rule ? (
             <>
-              <section aria-label="빠른 액션" className="space-y-3">
-                <h3 className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">
-                  빠른 액션
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                  {slackTargets.length > 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => handleResend("slack")}
-                      disabled={pendingChannel === "slack"}
-                      className="inline-flex items-center gap-2 rounded-lg border border-primary px-3 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-70 dark:border-primary.dark dark:text-primary.dark dark:hover:bg-primary.dark/10"
-                    >
-                      {pendingChannel === "slack" ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                      ) : (
-                        <Slack className="h-3.5 w-3.5" aria-hidden />
-                      )}
-                      Slack 재전송
-                    </button>
-                  ) : null}
-                  {emailTargets.length > 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => handleResend("email")}
-                      disabled={pendingChannel === "email"}
-                      className="inline-flex items-center gap-2 rounded-lg border border-primary px-3 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-70 dark:border-primary.dark dark:text-primary.dark dark:hover:bg-primary.dark/10"
-                    >
-                      {pendingChannel === "email" ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                      ) : (
-                        <Mail className="h-3.5 w-3.5" aria-hidden />
-                      )}
-                      이메일 재전송
-                    </button>
-                  ) : null}
-                  {slackTargets.length === 0 && emailTargets.length === 0 ? (
-                    <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
-                      재전송 가능한 채널이 없습니다. 룰 채널 설정을 확인해 주세요.
-                    </p>
-                  ) : null}
-                </div>
-              </section>
-
               <section aria-label="룰 조건" className="space-y-3">
                 <h3 className="text-sm font-semibold text-text-primaryLight dark:text-text-primaryDark">
                   조건
@@ -438,9 +297,6 @@ export function WatchlistDetailPanel({ item, onClose }: WatchlistDetailPanelProp
                       const status = (log.status ?? "").toLowerCase();
                       const normalizedChannel = (log.channel ?? "").toLowerCase();
                       const LogIcon = status === "failed" ? XCircle : CheckCircle2;
-                      const canRetry =
-                        (normalizedChannel === "slack" && slackTargets.length > 0) ||
-                        (normalizedChannel === "email" && emailTargets.length > 0);
                       return (
                         <div
                           key={log.deliveryId}
@@ -461,18 +317,7 @@ export function WatchlistDetailPanel({ item, onClose }: WatchlistDetailPanelProp
                               </span>
                               <span>{STATUS_LABEL[status] ?? "상태 알 수 없음"}</span>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <span>{formatDateTime(log.deliveredAt, { includeSeconds: true })}</span>
-                              {status === "failed" && canRetry ? (
-                                <button
-                                  type="button"
-                                  onClick={() => handleLogRetry(normalizedChannel)}
-                                  className="rounded-md border border-accent-negative/50 px-2 py-0.5 text-[11px] font-semibold text-accent-negative transition hover:bg-accent-negative/15"
-                                >
-                                  다시 보내기
-                                </button>
-                              ) : null}
-                            </div>
+                            <span>{formatDateTime(log.deliveredAt, { includeSeconds: true })}</span>
                           </div>
                           {log.error ? (
                             <p className="mt-2 flex items-center gap-1 text-accent-negative">
@@ -539,4 +384,3 @@ export function WatchlistDetailPanel({ item, onClose }: WatchlistDetailPanelProp
     </>
   );
 }
-

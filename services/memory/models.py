@@ -21,14 +21,14 @@ def _now() -> datetime:
 
 @dataclass(frozen=True)
 class SessionSummaryEntry:
-    """Lightweight snapshot of a conversation or digest run.
+    """Lightweight snapshot of a conversation or watchlist run.
 
     Parameters
     ----------
     session_id:
-        Logical identifier of the session (watchlist chat, digest build id, ...).
+        Logical identifier of the session (watchlist chat, report build id, ...).
     topic:
-        High level topic used for grouping (예: "watchlist.rule", "digest.samsungSDI").
+        High level topic used for grouping (예: "watchlist.rule", "report.samsungSDI").
     highlights:
         Short bullet-style notes extracted from the conversation.
     expires_at:
@@ -109,4 +109,3 @@ def default_ttl(hours: int = 2) -> datetime:
     """Utility used by the session store to compute expiry timestamps."""
 
     return _now() + timedelta(hours=hours)
-

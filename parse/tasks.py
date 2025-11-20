@@ -36,7 +36,6 @@ from models.filing import (
     ANALYSIS_FAILED,
     ANALYSIS_PARTIAL,
 )
-from models.digest import DailyDigestLog
 from models.news import NewsObservation, NewsSignal, NewsWindowAggregate
 from models.ingest_dead_letter import IngestDeadLetter
 from services.memory.offline_pipeline import run_long_term_update
@@ -54,7 +53,6 @@ from services import (
     ocr_service,
     plan_service,
     lightmem_rate_limiter,
-    digest_snapshot_service,
     event_study_service,
     market_data_service,
     security_metadata_service,
@@ -62,12 +60,9 @@ from services import (
     table_extraction_service,
     rag_grid,
     watchlist_service,
-    watchlist_digest_schedule_service,
 )
 from services.evidence_service import save_evidence_snapshot
 from services.ingest_errors import FatalIngestError, TransientIngestError
-import services.lightmem_gate as lightmem_gate
-from services.lightmem_config import DIGEST_RATE_LIMIT_PER_MINUTE
 from services.aggregation.sector_classifier import assign_article_to_sector
 from services.aggregation.sector_metrics import compute_sector_daily_metrics, compute_sector_window_metrics
 from services.aggregation.news_metrics import compute_news_window_metrics
@@ -78,7 +73,6 @@ from services.daily_brief_service import (
     DAILY_BRIEF_CHANNEL,
     DAILY_BRIEF_OUTPUT_ROOT,
     DigestQuotaExceeded,
-    build_digest_preview,
     build_daily_brief_payload,
     cleanup_daily_brief_artifacts,
     has_brief_been_generated,
@@ -109,7 +103,7 @@ def _set_filing_fields(filing: Filing, **updates: Any) -> None:
 ALERT_FAILURE_SLACK_TARGETS = _parse_recipients(env_str("ALERTS_FAILURE_SLACK_TARGETS"))
 ALERT_FAILURE_EMAIL_TARGETS = _parse_recipients(env_str("ALERTS_FAILURE_EMAIL_TARGETS"))
 ALERT_FAILURE_EMAIL_SUBJECT = (
-    env_str("ALERTS_FAILURE_EMAIL_SUBJECT") or "[K-Finance] Alert 채널 오류 감지"
+    env_str("ALERTS_FAILURE_EMAIL_SUBJECT") or "[Nuvien] Alert 채널 오류 감지"
 )
 from services.news_text import sanitize_news_summary
 from services.news_ticker_resolver import resolve_news_ticker
@@ -287,7 +281,6 @@ SECTOR_ZONE = ZoneInfo("Asia/Seoul")
 DIGEST_TOP_LIMIT = env_int("DAILY_DIGEST_TOP_N", 3, minimum=1)
 DIGEST_BASE_URL = env_str("FILINGS_DASHBOARD_URL", "https://kofilot.com/filings")
 DIGEST_CHANNEL = "telegram"
-DIGEST_LIGHTMEM_RATE_LIMIT_PER_MINUTE = DIGEST_RATE_LIMIT_PER_MINUTE
 SUMMARY_RECENT_TURNS = env_int("CHAT_MEMORY_RECENT_TURNS", 3, minimum=1)
 SUMMARY_TRIGGER_MESSAGES = env_int("CHAT_SUMMARY_TRIGGER_MESSAGES", 20, minimum=6)
 
@@ -1003,16 +996,13 @@ def process_filing(self, filing_id: str) -> str:
                 logger.warning("Filing %s skipped: extraction yielded no chunks.", filing.id)
                 raise StageSkip("No chunks could be extracted from the available sources.")
 
-            _save_chunks(filing, extracted, db, commit=False)
-            vector_metadata = _build_vector_metadata(filing)
-            vector_service.store_chunk_vectors(str(filing.id), extracted, metadata=vector_metadata)
-            db.commit()
-
             raw_candidate = cast(Optional[str], filing.raw_md)
             raw_content = raw_candidate or raw_content
             chunk_count = len(extracted)
+            table_chunks: List[Dict[str, Any]] = []
 
         def table_extraction_stage() -> None:
+            nonlocal table_chunks
             pdf_path = resolved_pdf_path or _ensure_pdf_path(filing)
             if not pdf_path:
                 raise StageSkip("No PDF available for table extraction.")
@@ -1048,6 +1038,16 @@ def process_filing(self, filing_id: str) -> str:
                         "elapsed_ms": stats.get("elapsed_ms"),
                     },
                 )
+                table_chunks = stats.get("chunks") or []
+
+            run_stage("extract_tables", table_extraction_stage, critical=False)
+            if table_chunks:
+                extracted.extend(table_chunks)
+
+            _save_chunks(filing, extracted, db, commit=False)
+            vector_metadata = _build_vector_metadata(filing)
+            vector_service.store_chunk_vectors(str(filing.id), extracted, metadata=vector_metadata)
+            db.commit()
 
         def classification_stage() -> None:
             nonlocal raw_content
@@ -1130,7 +1130,6 @@ def process_filing(self, filing_id: str) -> str:
         ingest_success = run_stage("ingest_chunks", ingest_stage, critical=True)
 
         if ingest_success:
-            run_stage("extract_tables", table_extraction_stage, critical=False)
             run_stage("classify_category", classification_stage, critical=False)
             run_stage("extract_facts", facts_stage, critical=False)
             run_stage("summarize_and_notify", summary_stage, critical=False)
@@ -1606,467 +1605,6 @@ def aggregate_sector_windows(as_of_iso: Optional[str] = None, window_days: Seque
         raise
     finally:
         db.close()
-
-
-def _get_digest_bounds(target: date) -> Tuple[datetime, datetime]:
-    """Return UTC window (naive) covering the given local date."""
-    start_local = datetime.combine(target, dt_time.min, tzinfo=DIGEST_ZONE)
-    end_local = start_local + timedelta(days=1)
-    start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
-    end_utc = end_local.astimezone(timezone.utc).replace(tzinfo=None)
-    return start_utc, end_utc
-
-
-def _load_digest_filings(
-    db: Session,
-    bounds: Tuple[datetime, datetime],
-    limit: int,
-) -> Tuple[int, List[Filing]]:
-    """Fetch count and top filings for the digest window."""
-    start_utc, end_utc = bounds
-    total = (
-        db.query(Filing)
-        .filter(Filing.created_at >= start_utc, Filing.created_at < end_utc)
-        .count()
-    )
-    if total == 0:
-        return 0, []
-
-    top_filings = (
-        db.query(Filing)
-        .filter(Filing.created_at >= start_utc, Filing.created_at < end_utc)
-        .order_by(Filing.created_at.desc())
-        .limit(limit)
-        .all()
-    )
-    return total, top_filings
-
-
-def _check_digest_sent(db: Session, digest_date: date) -> bool:
-    """Return True if the digest was already sent for the given date."""
-    record = (
-        db.query(DailyDigestLog)
-        .filter(
-            DailyDigestLog.digest_date == digest_date,
-            DailyDigestLog.channel == DIGEST_CHANNEL,
-        )
-        .first()
-    )
-    return record is not None
-
-
-def _mark_digest_sent(db: Session, digest_date: date) -> None:
-    """Persist that the digest was delivered."""
-    entry = DailyDigestLog(digest_date=digest_date, channel=DIGEST_CHANNEL)
-    db.add(entry)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        logger.info("Digest already recorded for %s", digest_date.isoformat())
-
-
-def _build_digest_message(digest_date: date, total: int, filings: List[Filing]) -> str:
-    """Compose the Telegram digest message."""
-    date_str = digest_date.isoformat()
-    lines = [
-        f"[일일 공시 요약] {date_str}",
-        "오늘자 공시가 업데이트되었습니다.",
-        f"오늘 등록된 공시: {total}건",
-    ]
-
-    for filing in filings:
-        corp = filing.corp_name or filing.ticker or "알수없음"
-        title = filing.report_name or filing.title or "공시"
-        lines.append(f"- {corp}: {title}")
-
-    remaining = total - len(filings)
-    if remaining > 0:
-        lines.append(f"...외 {remaining}건")
-
-    if DIGEST_BASE_URL:
-        connector = "&" if "?" in DIGEST_BASE_URL else "?"
-        lines.append(f"자세히 보기: {DIGEST_BASE_URL}{connector}date={date_str}")
-
-    return "\n".join(lines)
-
-
-def _build_digest_preview_message(digest_date: date, payload: Mapping[str, Any]) -> str:
-    """Compose the richer digest message produced from the preview payload."""
-    timeframe = (payload.get("timeframe") or "daily").lower()
-    header_label = "Weekly Digest" if timeframe == "weekly" else "Daily Digest"
-    lines = [f"[{header_label}] {digest_date.isoformat()}"]
-
-    period_label = payload.get("periodLabel")
-    if period_label:
-        lines.append(period_label)
-    generated_label = payload.get("generatedAtLabel")
-    if generated_label:
-        lines.append(f"생성: {generated_label}")
-
-    news_items = payload.get("news") or []
-    if news_items:
-        lines.append("")
-        lines.append("뉴스 하이라이트")
-        for entry in news_items[:4]:
-            headline = str(entry.get("headline") or "뉴스 요약")
-            source = entry.get("source")
-            summary = entry.get("summary")
-            suffix = f" ({source})" if source else ""
-            if summary:
-                lines.append(f"- {headline}{suffix}: {summary}")
-            else:
-                lines.append(f"- {headline}{suffix}")
-
-    watchlist_items = payload.get("watchlist") or []
-    if watchlist_items:
-        lines.append("")
-        lines.append("워치리스트 업데이트")
-        for entry in watchlist_items[:4]:
-            title = str(entry.get("title") or "Watchlist")
-            change = entry.get("changeLabel")
-            description = entry.get("description")
-            prefix = f"{title} [{change}]" if change else title
-            if description and description != title:
-                lines.append(f"- {prefix} · {description}")
-            else:
-                lines.append(f"- {prefix}")
-
-    sentiment = payload.get("sentiment")
-    if isinstance(sentiment, Mapping):
-        summary_text = sentiment.get("summary")
-        if summary_text:
-            lines.append("")
-            lines.append("시장 심리지표")
-            score_label = sentiment.get("scoreLabel")
-            trend = sentiment.get("trend")
-            if score_label:
-                lines.append(f"- 점수 {score_label} · 추세 {trend or 'flat'}")
-            lines.append(f"- {summary_text}")
-
-    actions = payload.get("actions") or []
-    if actions:
-        lines.append("")
-        lines.append("추천 액션")
-        for entry in actions[:3]:
-            title = str(entry.get("title") or "Action")
-            note = entry.get("note")
-            if note:
-                lines.append(f"- {title}: {note}")
-            else:
-                lines.append(f"- {title}")
-
-    llm_overview = payload.get("llmOverview")
-    if llm_overview:
-        lines.append("")
-        lines.append("LLM Insight")
-        lines.append(str(llm_overview))
-
-    llm_personal = payload.get("llmPersonalNote")
-    if llm_personal:
-        lines.append("")
-        lines.append("Personal Note")
-        lines.append(str(llm_personal))
-
-    source_label = payload.get("sourceLabel")
-    if source_label:
-        lines.append("")
-        lines.append(f"출처: {source_label}")
-
-    return "\n".join(lines)
-
-
-@shared_task(name="m4.send_filing_digest")
-def send_filing_digest(target_date_iso: Optional[str] = None, timeframe: str = "daily") -> str:
-    """Send the daily/weekly digest summary using the preview pipeline."""
-    reference = datetime.now(DIGEST_ZONE)
-    if target_date_iso:
-        try:
-            parsed = datetime.fromisoformat(target_date_iso)
-            if parsed.tzinfo is None:
-                reference = parsed.replace(tzinfo=DIGEST_ZONE)
-            else:
-                reference = parsed.astimezone(DIGEST_ZONE)
-        except ValueError:
-            logger.warning("Invalid target_date_iso '%s'. Using current time.", target_date_iso)
-
-    normalized_timeframe = "weekly" if str(timeframe or "").lower() == "weekly" else "daily"
-    digest_date = reference.date()
-    if normalized_timeframe == "daily" and digest_date.weekday() >= 5:
-        logger.info("Skipping filing digest on weekend: %s", digest_date.isoformat())
-        return "skipped_weekend"
-
-    bounds = _get_digest_bounds(digest_date)
-    db = _open_session()
-    try:
-        if _check_digest_sent(db, digest_date):
-            logger.info("Digest already sent for %s", digest_date.isoformat())
-            return "skipped_duplicate"
-
-        plan_context = plan_service.get_active_plan_context()
-        user_id = lightmem_gate.default_user_id()
-        user_settings = lightmem_gate.load_user_settings(user_id)
-        memory_allowed = lightmem_gate.digest_enabled(plan_context, user_settings)
-        rate_identifier = str(user_id) if user_id else "global"
-        rate_limit_result = lightmem_rate_limiter.check_limit(
-            "digest.preview",
-            rate_identifier,
-            limit=DIGEST_LIGHTMEM_RATE_LIMIT_PER_MINUTE,
-            window_seconds=60,
-        )
-        if not rate_limit_result.allowed:
-            memory_allowed = False
-            logger.warning(
-                "digest.delivery.rate_limited",
-                extra={
-                    "timeframe": normalized_timeframe,
-                    "user_id": str(user_id) if user_id else None,
-                    "rate_limit_remaining": rate_limit_result.remaining,
-                },
-            )
-        logger.info(
-            "digest.delivery.memory_gate",
-            extra={
-                "plan_enabled": plan_context.memory_digest_enabled,
-                "memory_allowed": memory_allowed,
-                "user_id": str(user_id) if user_id else None,
-                "user_enabled": getattr(user_settings, "enabled", None) if user_settings else None,
-                "rate_limited": not rate_limit_result.allowed,
-                "rate_limit_remaining": rate_limit_result.remaining,
-            },
-        )
-        owner_filters: Dict[str, Any] = {}
-        if user_id:
-            owner_filters["user_id"] = user_id
-
-        preview_payload: Optional[Dict[str, Any]] = None
-        preview_failed = False
-        try:
-            preview_payload = build_digest_preview(
-                reference_date=digest_date,
-                session=db,
-                timeframe=normalized_timeframe,
-                owner_filters=owner_filters,
-                plan_memory_enabled=memory_allowed,
-                tenant_id=None,
-                user_id_hint=str(user_id) if user_id else None,
-                enforce_quota_action="watchlist.preview",
-            )
-            logger.info(
-                "digest.delivery.payload",
-                extra={
-                    "timeframe": normalized_timeframe,
-                    "news_count": len(preview_payload.get("news") or []),
-                    "watchlist_count": len(preview_payload.get("watchlist") or []),
-                    "has_llm_overview": bool(preview_payload.get("llmOverview")),
-                    "has_personal_note": bool(preview_payload.get("llmPersonalNote")),
-                    "memory_allowed": memory_allowed,
-                    "rate_limited": not rate_limit_result.allowed,
-                    "rate_limit_remaining": rate_limit_result.remaining,
-                },
-            )
-            if memory_allowed and not preview_payload.get("llmPersonalNote"):
-                logger.warning("Digest personalization allowed but personal note missing.")
-            try:
-                digest_snapshot_service.upsert_snapshot(
-                    db,
-                    digest_date=digest_date,
-                    timeframe=normalized_timeframe,
-                    payload=preview_payload,
-                    user_id=user_id,
-                    org_id=None,
-                )
-            except Exception as snapshot_exc:  # pragma: no cover - best effort
-                logger.warning("Digest snapshot upsert failed: %s", snapshot_exc, exc_info=True)
-        except DigestQuotaExceeded as quota_exc:
-            preview_failed = True
-            preview_payload = None
-            logger.info(
-                "digest.delivery.quota_blocked",
-                extra={
-                    "timeframe": normalized_timeframe,
-                    "user_id": str(user_id) if user_id else None,
-                    "reason": str(quota_exc),
-                },
-            )
-        except Exception as exc:
-            preview_failed = True
-            preview_payload = None
-            logger.warning("Digest preview build failed, falling back to filings summary: %s", exc, exc_info=True)
-
-        if preview_payload:
-            message = _build_digest_preview_message(digest_date, preview_payload)
-        else:
-            total, filings = _load_digest_filings(db, bounds, DIGEST_TOP_LIMIT)
-            message = _build_digest_message(digest_date, total, filings)
-            logger.info(
-                "digest.delivery.fallback",
-                extra={
-                    "timeframe": normalized_timeframe,
-                    "reason": "preview_failed" if preview_failed else "preview_empty",
-                    "news_count": 0,
-                    "watchlist_count": 0,
-                },
-            )
-
-        if not send_telegram_alert(message):
-            logger.error("Telegram digest send failed for %s", digest_date.isoformat())
-            return "send_failed"
-
-        _mark_digest_sent(db, digest_date)
-        logger.info(
-            "Digest sent for %s",
-            digest_date.isoformat(),
-            extra={
-                "timeframe": normalized_timeframe,
-                "used_preview": bool(preview_payload),
-                "memory_allowed": memory_allowed,
-                "rate_limited": not rate_limit_result.allowed,
-                "rate_limit_remaining": rate_limit_result.remaining,
-            },
-        )
-        return "sent"
-    except Exception as exc:
-        db.rollback()
-        logger.error("Daily digest failed for %s: %s", digest_date.isoformat(), exc, exc_info=True)
-        return "error"
-    finally:
-        db.close()
-
-
-@shared_task(name="watchlist.run_digest_schedules")
-def run_watchlist_digest_schedules(now_iso: Optional[str] = None) -> str:
-    """Dispatch due watchlist digest schedules."""
-
-    if now_iso:
-        try:
-            now = datetime.fromisoformat(now_iso)
-        except ValueError:
-            now = datetime.now(timezone.utc)
-    else:
-        now = datetime.now(timezone.utc)
-
-    job_id = "watchlist.digest.scheduler"
-    task_identifier = f"{job_id}:{uuid.uuid4().hex[:8]}"
-    run_status = "completed"
-    run_note = "no_due_schedules"
-
-    try:
-        due_schedules = watchlist_digest_schedule_service.list_due_schedules(now=now)
-        if not due_schedules:
-            run_note = "no_due_schedules"
-            return run_note
-
-        due_count = len(due_schedules)
-        if due_count >= 10:
-            logger.warning(
-                "watchlist.digest.schedule_backlog",
-                extra={"due_count": due_count},
-            )
-
-        db = SessionLocal()
-        dispatched = 0
-        plan_blocked = 0
-        try:
-            for entry in due_schedules:
-                schedule_id = uuid.UUID(entry["id"])
-                plan_context = plan_service.get_active_plan_context()
-                if not plan_context.memory_digest_enabled:
-                    plan_blocked += 1
-                    watchlist_digest_schedule_service.mark_dispatched(
-                        schedule_id,
-                        dispatched_at=now,
-                        next_run=None,
-                        status="skipped",
-                        last_error="digest_disabled",
-                    )
-                    logger.info(
-                        "watchlist.digest.schedule.skipped",
-                        extra={"scheduleId": str(schedule_id), "reason": "digest_disabled"},
-                    )
-                    continue
-                user_id_str = entry.get("user_id")
-                org_id_str = entry.get("org_id")
-                owner_filters: Dict[str, Optional[uuid.UUID]] = {}
-                if org_id_str:
-                    try:
-                        owner_filters["org_id"] = uuid.UUID(org_id_str)
-                    except ValueError:
-                        owner_filters["org_id"] = None
-                if user_id_str:
-                    try:
-                        owner_filters["user_id"] = uuid.UUID(user_id_str)
-                    except ValueError:
-                        owner_filters["user_id"] = None
-
-                try:
-                    watchlist_service.dispatch_watchlist_digest(
-                        db,
-                        window_minutes=int(entry.get("window_minutes") or 1440),
-                        limit=int(entry.get("limit") or 20),
-                        slack_targets=entry.get("slack_targets") or [],
-                        email_targets=entry.get("email_targets") or [],
-                        owner_filters={key: value for key, value in owner_filters.items() if value},
-                        plan_memory_enabled=plan_context.memory_digest_enabled,
-                        session_id=f"watchlist:schedule:{schedule_id}",
-                        tenant_id=org_id_str,
-                        user_id_hint=user_id_str,
-                    )
-                except Exception as exc:  # pragma: no cover - schedule resilience
-                    logger.warning(
-                        "watchlist.digest.schedule_failed",
-                        extra={"scheduleId": str(schedule_id), "error": str(exc)},
-                        exc_info=True,
-                    )
-                    watchlist_digest_schedule_service.mark_dispatched(
-                        schedule_id,
-                        dispatched_at=now,
-                        next_run=None,
-                        status="failed",
-                        last_error=str(exc),
-                    )
-                else:
-                    dispatched += 1
-                    watchlist_digest_schedule_service.mark_dispatched(
-                        schedule_id,
-                        dispatched_at=now,
-                        next_run=None,
-                        status="success",
-                        last_error=None,
-                    )
-        finally:
-            db.close()
-
-        logger.info(
-            "watchlist.digest.schedule_run",
-            extra={"count": dispatched, "plan_blocked": plan_blocked},
-        )
-        if dispatched == 0 and plan_blocked == due_count:
-            run_note = "digest_disabled"
-        else:
-            run_note = f"dispatched:{dispatched}"
-            if plan_blocked:
-                run_note += f"|plan_blocked:{plan_blocked}"
-        return run_note
-    except Exception as exc:
-        run_status = "failed"
-        run_note = f"error:{exc}"
-        raise
-    finally:
-        try:
-            admin_ops_service.append_run_history(
-                task_id=task_identifier,
-                job_id=job_id,
-                task="watchlist.run_digest_schedules",
-                status=run_status,
-                actor="system",
-                note=run_note,
-                started_at=now.isoformat(),
-                finished_at=datetime.now(timezone.utc).isoformat(),
-            )
-        except Exception:  # pragma: no cover
-            logger.debug("Failed to append digest schedule run history", exc_info=True)
-
 
 
 def _parse_reference_date(target_date_iso: Optional[str]) -> date:

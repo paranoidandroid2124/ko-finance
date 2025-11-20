@@ -6,7 +6,7 @@ import json
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -15,6 +15,7 @@ from core.logging import get_logger
 from models.filing import Filing
 from models.table_extraction import TableCell, TableMeta
 from parse.table_extraction import TableExtractionResult, TableExtractor, TableExtractorError
+from parse.chunk_utils import build_chunk
 from services.table_metrics import record_table_cell_accuracy, record_table_extract_success_ratio
 
 logger = get_logger(__name__)
@@ -75,6 +76,87 @@ def _filter_results(results: Sequence[TableExtractionResult]) -> List[TableExtra
     if not _DEFAULT_TYPES:
         return [result for result in results if result.table_type != "unknown"]
     return [result for result in results if result.table_type in _DEFAULT_TYPES]
+
+
+def _normalize_markdown_cell(value: str) -> str:
+    if not value:
+        return ""
+    sanitized = value.replace("\n", " ").strip()
+    return sanitized.replace("|", "\\|")
+
+
+def _build_markdown_table(result: TableExtractionResult) -> Optional[str]:
+    header_paths = result.header_paths or []
+    headers: List[str] = []
+    if header_paths:
+        for idx, path in enumerate(header_paths):
+            label = " / ".join([entry for entry in path if entry]) or f"Column {idx + 1}"
+            headers.append(_normalize_markdown_cell(label))
+    elif result.json_payload.get("headerRows"):
+        headers = [
+            _normalize_markdown_cell(cell)
+            for cell in result.json_payload["headerRows"][0]
+        ]
+
+    column_count = result.stats.get("columnCount") or len(headers)
+    if column_count <= 0:
+        body_width = len(result.json_payload.get("bodyRows", [[]])[0]) if result.json_payload.get("bodyRows") else 0
+        column_count = max(body_width, 1)
+    if not headers:
+        headers = [f"Column {idx + 1}" for idx in range(column_count)]
+
+    table_lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join(["---"] * len(headers)) + " |",
+    ]
+
+    body_rows = result.json_payload.get("bodyRows") or []
+    if not body_rows:
+        body_rows = result.body_rows
+
+    for row in body_rows:
+        normalized_row = [_normalize_markdown_cell(cell) for cell in row]
+        if len(normalized_row) < len(headers):
+            normalized_row.extend([""] * (len(headers) - len(normalized_row)))
+        elif len(normalized_row) > len(headers):
+            normalized_row = normalized_row[: len(headers)]
+        table_lines.append("| " + " | ".join(normalized_row) + " |")
+
+    return "\n".join(table_lines) if len(table_lines) > 2 else None
+
+
+def _build_table_chunk(
+    filing: Filing,
+    meta: TableMeta,
+    result: TableExtractionResult,
+    markdown_table: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    if not markdown_table:
+        return None
+    header = result.title or result.table_type or "Extracted Table"
+    table_text = (
+        f"{header} (Page {result.page_number}, Index {result.table_index})\n\n{markdown_table}"
+    )
+    chunk_id = f"table:{filing.id}:{result.page_number}:{result.table_index}"
+    metadata = {
+        "table_type": result.table_type,
+        "page_number": result.page_number,
+        "table_index": result.table_index,
+        "table_id": str(meta.id),
+        "receipt_no": filing.receipt_no,
+        "corp_code": filing.corp_code,
+        "ticker": filing.ticker,
+        "source": "table_extraction",
+    }
+    return build_chunk(
+        chunk_id,
+        chunk_type="table",
+        content=table_text,
+        section="tables",
+        source="table_extraction",
+        page_number=result.page_number,
+        metadata=metadata,
+    )
 
 
 def _persist_table(
@@ -186,10 +268,15 @@ def extract_tables_for_filing(
     db.flush()
 
     stored = 0
+    chunk_payloads: List[Dict[str, Any]] = []
     for result in filtered_results:
         artifacts = _write_artifacts(filing.receipt_no, result) if _WRITE_ARTIFACTS else None
-        _persist_table(db, filing, pdf_path, result, artifacts=artifacts)
+        table_meta = _persist_table(db, filing, pdf_path, result, artifacts=artifacts)
         stored += 1
+        markdown_table = _build_markdown_table(result)
+        chunk_entry = _build_table_chunk(filing, table_meta, result, markdown_table)
+        if chunk_entry:
+            chunk_payloads.append(chunk_entry)
         try:
             accuracy = float(result.stats.get("nonEmptyRatio", 0.0))
         except (TypeError, ValueError):
@@ -210,6 +297,7 @@ def extract_tables_for_filing(
         "discarded": len(raw_results) - stored,
         "deleted": deleted,
         "elapsed_ms": round(elapsed_ms, 2),
+        "chunks": chunk_payloads,
     }
 
 

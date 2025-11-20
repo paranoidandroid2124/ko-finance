@@ -104,29 +104,6 @@ def test_watchlist_radar_endpoint(watchlist_api_client):
     assert payload["summary"]["totalDeliveries"] == sample["summary"]["totalDeliveries"]
     assert payload["items"][0]["ticker"] == "0001"
 
-def test_watchlist_dispatch_endpoint(watchlist_api_client, monkeypatch: pytest.MonkeyPatch):
-    client, sample = watchlist_api_client
-
-    def fake_dispatch(db, window_minutes, limit, slack_targets, email_targets, owner_filters=None, **kwargs):
-        return {
-            "payload": sample,
-            "results": [
-                {"channel": "slack", "status": "delivered", "delivered": len(slack_targets or []), "failed": 0, "error": None}
-            ],
-        }
-
-    monkeypatch.setattr(watchlist_service, "dispatch_watchlist_digest", fake_dispatch)
-
-    response = client.post(
-        "/api/v1/alerts/watchlist/dispatch",
-        json={"slackTargets": ["https://hooks.slack.com/services/demo"], "windowMinutes": 120},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["results"][0]["channel"] == "slack"
-    assert data["results"][0]["status"] == "delivered"
-
-
 def test_watchlist_rule_detail_endpoint(watchlist_api_client, monkeypatch: pytest.MonkeyPatch):
     client, _ = watchlist_api_client
 

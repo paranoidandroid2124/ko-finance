@@ -28,7 +28,6 @@ const defaultPlanPayload: PlanContextPayload = {
   },
   memoryFlags: {
     watchlist: false,
-    digest: false,
     chat: false,
   },
   trial: {
@@ -72,7 +71,6 @@ describe("planStore", () => {
       featureFlags: mergedFlags,
       memoryFlags: {
         watchlist: true,
-        digest: true,
         chat: false,
       },
       quota: {

@@ -24,7 +24,7 @@ def test_enforce_quota_raises_when_exceeded(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(quota_guard, "evaluate_quota", lambda *_, **__: decision)
 
     with pytest.raises(HTTPException) as exc:
-        quota_guard.enforce_quota("watchlist.digest", plan=_plan("starter"), user_id=uuid.uuid4(), org_id=None)
+        quota_guard.enforce_quota("watchlist.preview", plan=_plan("starter"), user_id=uuid.uuid4(), org_id=None)
 
     assert exc.value.status_code == 429
     assert exc.value.detail["code"] == "plan.quota_exceeded"

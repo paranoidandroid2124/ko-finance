@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Bootstrap core GCP services (APIs, service accounts, secrets) for K-Finance.
+# Bootstrap core GCP services (APIs, service accounts, secrets) for Nuvien.
 # Usage:
 #   PROJECT=kfinance-dev REGION=asia-northeast3 ./scripts/iac/bootstrap.sh
 
@@ -23,7 +23,7 @@ gcloud services enable \
 
 echo ">> Creating service account ${SERVICE_ACCOUNT}"
 gcloud iam service-accounts create "${SERVICE_ACCOUNT_NAME}" \
-  --display-name "K-Finance API" \
+  --display-name "Nuvien API" \
   --project "${PROJECT}" || true
 
 echo ">> Granting Cloud Run + Secret Manager roles"

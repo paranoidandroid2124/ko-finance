@@ -19,15 +19,6 @@ export const ChatInputDisclaimer = createLegalText("chat", "inputDisclaimer", { 
 export const ChatAnswerBadge = createLegalText("chat", "answerBadge", { defaultAs: "div", defaultClassName: TERTIARY_TEXT });
 export const ChatEvidencePanelNotice = createLegalText("chat", "evidencePanel", { defaultAs: "div", defaultClassName: TERTIARY_TEXT });
 
-export const DigestPdfFooter = createLegalText("digest", "pdfFooter", { defaultAs: "div", defaultClassName: SECONDARY_TEXT });
-export const DigestExportHelper = createLegalText("digest", "exportHelper", { defaultAs: "div", defaultClassName: TERTIARY_TEXT });
-
-export const EventStudyBoardHeader = createLegalText("eventStudy", "boardHeader", { defaultAs: "div", defaultClassName: SECONDARY_TEXT });
-export const RestatementRadarFooter = createLegalText("eventStudy", "radarFooter", { defaultAs: "div", defaultClassName: TERTIARY_TEXT });
-
-export const BoardHeaderNotice = createLegalText("board", "header", { defaultAs: "div", defaultClassName: SECONDARY_TEXT });
-export const BoardShareModalNotice = createLegalText("board", "shareModal", { defaultAs: "div", defaultClassName: TERTIARY_TEXT });
-
 export const NewsCardFooter = createLegalText("news", "cardFooter", { defaultAs: "div", defaultClassName: TERTIARY_TEXT });
 export const NewsPageHeader = createLegalText("news", "pageHeader", { defaultAs: "div", defaultClassName: SECONDARY_TEXT });
 export const NewsAlertFooter = createLegalText("news", "alertFooter", { defaultAs: "div", defaultClassName: TERTIARY_TEXT });

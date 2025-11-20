@@ -1,4 +1,4 @@
-# K-Finance Help Center Kickoff
+# Nuvien Help Center Kickoff
 
 프런트엔드 우상단 프로필 메뉴와 설정 패널에 노출된 **도움말** 버튼(`web/dashboard/src/components/layout/UserMenu.tsx:132`, `web/dashboard/src/components/settings/SettingsOverlay.tsx:104-131`)이 사용자를 안내할 수 있도록, 전사 기능을 망라한 문서 설계 초안을 정의합니다. 이 문서는 `docs/help` 아래에서 실제 가이드를 작성하기 위한 기준이자 백로그로 사용합니다.
 

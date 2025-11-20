@@ -40,7 +40,6 @@ const defaultPayload: PlanContextPayload = {
   },
     memoryFlags: {
       watchlist: true,
-      digest: true,
       chat: true,
     },
     quota: {
@@ -73,7 +72,6 @@ const defaultPayload: PlanContextPayload = {
         },
         memoryFlags: {
           watchlist: false,
-          digest: false,
           chat: false,
         },
         quota: {

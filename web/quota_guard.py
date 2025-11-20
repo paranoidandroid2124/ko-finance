@@ -25,12 +25,11 @@ _ACTION_LABELS = {
     "alerts.rules.create": "알림 생성",
     "watchlist.radar": "워치리스트 레이더",
     "watchlist.preview": "다이제스트 미리보기",
-    "watchlist.digest": "다이제스트 생성",
     "rag.chat": "AI 분석",
     "api.chat": "Chat API",
 }
 
-_PROBLEM_TYPE = "https://kofinance.ai/docs/errors/plan-quota"
+_PROBLEM_TYPE = "https://nuvien.com/docs/errors/plan-quota"
 
 
 def enforce_quota(

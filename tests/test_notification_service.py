@@ -110,7 +110,7 @@ def test_email_dispatch_nhn_rest(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(notification_service, "NHN_SECRET_KEY", "secret")
     monkeypatch.setattr(notification_service, "NHN_EMAIL_BASE_URL", "https://email.api.nhncloudservice.com")
     monkeypatch.setattr(notification_service, "NHN_SENDER_ADDRESS", "alerts@kfinance.ai")
-    monkeypatch.setattr(notification_service, "NHN_SENDER_NAME", "K-Finance QA")
+    monkeypatch.setattr(notification_service, "NHN_SENDER_NAME", "Nuvien QA")
 
     captured: Dict[str, Any] = {}
 
@@ -135,7 +135,7 @@ def test_email_dispatch_nhn_rest(monkeypatch: pytest.MonkeyPatch) -> None:
     assert captured["url"].endswith("/email/v2.1/appKeys/app-key/sender/mail")
     payload = captured["payload"]
     assert payload["senderAddress"] == "alerts@kfinance.ai"
-    assert payload["senderName"] == "K-Finance QA"
+    assert payload["senderName"] == "Nuvien QA"
     assert payload["receiverList"][0]["receiveMailAddr"] == "hello@kfinance.ai"
     headers = captured["kwargs"]["headers"]
     assert headers["X-Secret-Key"] == "secret"

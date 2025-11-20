@@ -12,7 +12,6 @@ import { usePlanStore } from "@/store/planStore";
 const DEFAULT_SETTINGS: LightMemSettingsPayload = {
   enabled: false,
   watchlist: true,
-  digest: true,
   chat: true,
 };
 
@@ -20,7 +19,6 @@ type LightMemSurfaceKey = Exclude<keyof LightMemSettingsPayload, "enabled">;
 
 const SECONDARY_OPTIONS: Array<{ key: LightMemSurfaceKey; label: string }> = [
   { key: "watchlist", label: "워치리스트" },
-  { key: "digest", label: "다이제스트" },
   { key: "chat", label: "Chat" },
 ];
 
@@ -83,7 +81,7 @@ export function UserLightMemSettingsCard() {
   }, [data?.updatedAt]);
 
   const isBusy = isPending || isLoading;
-  const planAllowsAny = Boolean(memoryFlags.watchlist || memoryFlags.digest || memoryFlags.chat);
+  const planAllowsAny = Boolean(memoryFlags.watchlist || memoryFlags.chat);
   const planLocked = !planAllowsAny;
   const secondaryBaseDisabled = !form.enabled || isBusy || planLocked;
   const lockedOptions = SECONDARY_OPTIONS.filter((option) => !memoryFlags[option.key]);

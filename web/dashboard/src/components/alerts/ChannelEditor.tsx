@@ -20,7 +20,6 @@ const CHANNEL_UI: Record<
     helper: "예: user@example.com, finance@example.com",
     templateOptions: [
       { value: "default", label: "표준 본문" },
-      { value: "digest", label: "요약 + 하이라이트" },
     ],
   },
   telegram: {

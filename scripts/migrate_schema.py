@@ -302,7 +302,7 @@ def _add_columns() -> None:
 
 
 def migrate_schema() -> None:
-    logger.info("Starting schema migration for K-Finance data tables.")
+    logger.info("Starting schema migration for Nuvien data tables.")
     _add_columns()
     logger.info("Schema migration completed successfully.")
 

@@ -1,4 +1,4 @@
-﻿"""Persistence layer for admin-managed UI & UX settings."""
+"""Persistence layer for admin-managed UI & UX settings."""
 
 from __future__ import annotations
 
@@ -31,9 +31,9 @@ _DEFAULT_UI_SETTINGS: Dict[str, Any] = {
         "landingView": "overview",
     },
     "copy": {
-        "welcomeHeadline": "따뜻한 금융 연구를 돕는 K-Finance입니다.",
-        "welcomeSubcopy": "데이터와 근거를 잇고, 안전한 의사결정을 곁에서 지원해요.",
-        "quickCta": "증빙 자료 불러오기",
+        "welcomeHeadline": "??? ?? ??? ?? Nuvien???.",
+        "welcomeSubcopy": "???? ??? ??, ??? ????? ??? ????.",
+        "quickCta": "?? ?? ????",
     },
     "banner": {
         "enabled": False,
@@ -89,7 +89,7 @@ def _sanitize_optional_url(value: Any) -> str:
         raise ValueError("linkUrl must be a string.")
     text = value.strip()
     if text and not text.startswith(("http://", "https://")):
-        raise ValueError("linkUrl must start with http:// 또는 https://")
+        raise ValueError("linkUrl must start with http:// ?? https://")
     return text
 
 
@@ -162,7 +162,7 @@ def update_ui_settings(*, settings: Dict[str, Any], actor: str, note: Optional[s
         "linkUrl": _sanitize_optional_url(banner.get("linkUrl")),
     }
     if sanitized_banner["enabled"] and not sanitized_banner["message"]:
-        raise ValueError("활성화된 배너에는 안내 문구가 필요해요.")
+        raise ValueError("???? ???? ?? ??? ????.")
 
     sanitized_note = _sanitize_text(note, field="note", max_length=300) if note else None
 

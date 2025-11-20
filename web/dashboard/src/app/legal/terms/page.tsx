@@ -6,8 +6,8 @@ import { LEGAL_COMPANY, buildCompanyContactSection } from "@/app/legal/constants
 const { name: companyName, address: companyAddress, contact: companyContact, updatedAt } = LEGAL_COMPANY;
 
 export const metadata: Metadata = {
-  title: "서비스 이용약관 | K-Finance",
-  description: "ko-finance AI Copilot 서비스 이용 조건과 사용자 책임 범위를 안내합니다.",
+  title: "서비스 이용약관 | Nuvien",
+  description: "Nuvien AI Copilot 서비스 이용 조건과 사용자 책임 범위를 안내합니다.",
 };
 
 const sections: LegalSection[] = [
@@ -17,7 +17,7 @@ const sections: LegalSection[] = [
     contents: [
       {
         type: "paragraph",
-        text: `${companyName}가 운영하는 K-Finance Copilot, Event Board, Alert, Digest, Workspace(이하 “서비스”)는 한국 공시·뉴스·시장 데이터를 분석하고 AI 기반 검색·요약·협업 기능을 제공하는 SaaS입니다.`,
+        text: `${companyName}가 운영하는 Nuvien Copilot, Event Board, Alert, Digest, Workspace(이하 “서비스”)는 한국 공시·뉴스·시장 데이터를 분석하고 AI 기반 검색·요약·협업 기능을 제공하는 SaaS입니다.`,
       },
       {
         type: "paragraph",
@@ -66,7 +66,7 @@ const sections: LegalSection[] = [
     contents: [
       {
         type: "paragraph",
-        text: "OpenDART, KRX 시세·벤치마크, KISVALUE, ko-finance가 자체 구축한 이벤트·요약 등 모든 데이터는 각 출처 또는 ko-finance의 저작권과 라이선스 정책을 따릅니다.",
+        text: "OpenDART, KRX 시세·벤치마크, KISVALUE, Nuvien이 자체 구축한 이벤트·요약 등 모든 데이터는 각 출처 또는 Nuvien의 저작권과 라이선스 정책을 따릅니다.",
       },
       {
         type: "paragraph",
@@ -137,7 +137,7 @@ export default function TermsPage() {
   return (
     <LegalDocumentPage
       title="서비스 이용약관"
-      subtitle="K-Finance Copilot을 안전하게 이용하기 위한 권리와 의무, 제한 사항을 안내합니다."
+      subtitle="Nuvien Copilot을 안전하게 이용하기 위한 권리와 의무, 제한 사항을 안내합니다."
       updatedAtLabel={updatedAt}
       sections={sections}
     />

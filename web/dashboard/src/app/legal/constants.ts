@@ -4,9 +4,9 @@ const DEFAULT_UPDATED_AT = "2025-11-18";
 
 export const LEGAL_COMPANY = {
   updatedAt: process.env.NEXT_PUBLIC_LEGAL_UPDATED_AT ?? DEFAULT_UPDATED_AT,
-  name: process.env.NEXT_PUBLIC_COMPANY_NAME ?? "ko-finance 주식회사",
+  name: process.env.NEXT_PUBLIC_COMPANY_NAME ?? "Nuvien",
   address: process.env.NEXT_PUBLIC_COMPANY_ADDRESS ?? "서울특별시 (업데이트 예정)",
-  contact: process.env.NEXT_PUBLIC_COMPANY_CONTACT ?? "support@ko.finance",
+  contact: process.env.NEXT_PUBLIC_COMPANY_CONTACT ?? "support@nuvien.com",
   dpoName: process.env.NEXT_PUBLIC_DPO_NAME ?? "개인정보 보호책임자",
 } as const;
 

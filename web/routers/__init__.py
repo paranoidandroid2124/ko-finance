@@ -15,14 +15,12 @@ _ROUTER_MODULES = [
     "auth",
     "alerts",
     "account",
-    "boards",
     "chat",
     "campaign",
     "analytics",
     "company",
     "dashboard",
     "evidence",
-    "event_study",
     "health",
     "public",
     "reports",
@@ -33,7 +31,6 @@ _ROUTER_MODULES = [
     "report",
     "orgs",
     "table_explorer",
-    "notebooks",
     "rag",
     "tools",
     "tools_text",
@@ -42,7 +39,6 @@ _ROUTER_MODULES = [
     "sectors",
     "scim",
     "user_settings",
-    "workspaces",
 ]
 
 __all__ = list(_ROUTER_MODULES)

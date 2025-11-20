@@ -15,7 +15,6 @@ export type PlanFeatureFlags = {
 
 export type PlanMemoryFlags = {
   watchlist: boolean;
-  digest: boolean;
   chat: boolean;
 };
 

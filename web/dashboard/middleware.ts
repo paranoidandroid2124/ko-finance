@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 
-const PUBLIC_PATH_PREFIXES = ["/auth", "/public", "/pricing", "/api/auth", "/labs/notebook/share"];
+const PUBLIC_PATH_PREFIXES = ["/auth", "/public", "/pricing", "/api/auth"];
 
 const isPublicPath = (pathname: string) =>
   PUBLIC_PATH_PREFIXES.some(

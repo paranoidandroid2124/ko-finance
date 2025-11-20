@@ -36,7 +36,6 @@ def _feature_flags_from_plan(plan: PlanContext) -> PlanFeatureFlagsSchema:
 def _memory_flags_from_plan(plan: PlanContext) -> PlanMemoryFlagsSchema:
     return PlanMemoryFlagsSchema(
         watchlist=plan.memory_watchlist_enabled,
-        digest=plan.memory_digest_enabled,
         chat=plan.memory_chat_enabled,
     )
 

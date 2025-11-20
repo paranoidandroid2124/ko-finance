@@ -71,9 +71,9 @@ export const 편집모드: Story = {
       channels: [
         {
           type: "email",
-          targets: ["alerts@ko-finance.org"],
+          targets: ["alerts@nuvien.com"],
           metadata: { subject_template: "따끈따끈한 소식이에요" },
-          template: "digest",
+          template: "default",
         },
         {
           type: "slack",
@@ -113,7 +113,7 @@ export const 채널제한: Story = {
         },
         {
           type: "webhook",
-          target: "https://alerts.ko-finance.org/webhook",
+          target: "https://alerts.nuvien.com/webhook",
           template: "default",
         },
       ],

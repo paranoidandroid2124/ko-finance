@@ -15,7 +15,7 @@ provider "google" {
 
 resource "google_service_account" "run" {
   account_id   = "${var.project_prefix}-api"
-  display_name = "K-Finance Cloud Run"
+  display_name = "Nuvien Cloud Run"
 }
 
 resource "google_secret_manager_secret" "database_url" {
