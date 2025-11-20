@@ -8,20 +8,15 @@ from typing import Dict, Optional
 
 _ROUTER_MODULES = [
     "admin",
-    "admin_llm",
-    "admin_ui",
     "auth",
     "alerts",
     "account",
     "chat",
-    "campaign",
-    "analytics",
     "company",
     "dashboard",
     "evidence",
     "health",
     "public",
-    "reports",
     "news",
     "onboarding",
     "payments",
@@ -35,7 +30,6 @@ _ROUTER_MODULES = [
     "ops",
     "search",
     "sectors",
-    "scim",
     "user_settings",
 ]
 

@@ -64,6 +64,7 @@ from models.chat import ChatMessage, ChatSession
 from services.memory.facade import MEMORY_SERVICE
 from services.plan_service import PlanContext
 import services.rag_metrics as rag_metrics
+from services.widgets.factory import generate_widgets
 from services.quota_guard import evaluate_quota
 
 def _extract_anchor(chunk: Dict[str, Any]) -> Optional[EvidenceAnchor]:
@@ -1563,6 +1564,28 @@ def _build_event_study_chunk(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _build_widget_attachments(question: str, answer_text: str, context: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Run widget generators and normalize payloads for chat meta."""
+
+    try:
+        attachments = generate_widgets(question, answer_text, context=context)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Widget generation failed: %s", exc, exc_info=True)
+        return []
+
+    normalized: List[Dict[str, Any]] = []
+    for attachment in attachments:
+        try:
+            if hasattr(attachment, "model_dump"):
+                normalized.append(attachment.model_dump(mode="json", exclude_none=True))
+            else:
+                normalized.append(dict(attachment))  # type: ignore[arg-type]
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Skipping widget attachment due to serialization error: %s", exc)
+            continue
+    return normalized
+
+
 def _maybe_run_event_study_tool(
     ctx: "RagSessionStage",
     route_decision: RouteDecision,
@@ -1788,6 +1811,9 @@ def _render_rag_response(
     meta_payload["evidence_version"] = "v2"
     meta_payload["evidence_diff"] = llm_stage.diff_meta
     meta_payload["sources"] = _build_sources_payload(llm_stage.context)
+    widget_payload = _build_widget_attachments(ctx.question, llm_stage.answer_text, llm_stage.context)
+    if widget_payload:
+        meta_payload["toolAttachments"] = widget_payload
 
     summary_captured = rag_audit.store_lightmem_summary(
         question=ctx.question,

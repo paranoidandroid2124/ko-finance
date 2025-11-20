@@ -7,6 +7,9 @@ import type { ToolAttachment } from "@/store/chatStore";
 import { useToolStore } from "@/store/toolStore";
 import type { ValueChainData } from "@/components/tools/panels/ValueChainGraph";
 import NewsCardsWidget from "@/components/chat/widgets/NewsCardsWidget";
+import { StockLineChart } from "@/components/chat/widgets/StockLineChart";
+import { FinancialTable } from "@/components/chat/widgets/FinancialTable";
+import { StatCard } from "@/components/chat/widgets/StatCard";
 
 const ValueChainGraph = dynamic(() => import("@/components/tools/panels/ValueChainGraph").then((module) => module.ValueChainGraph), {
   ssr: false,
@@ -49,6 +52,30 @@ export default function ToolWidgetRenderer({ attachment }: ToolWidgetRendererPro
             {attachment.description ? <p className="mt-2 text-xs text-slate-400">{attachment.description}</p> : null}
           </div>
         );
+      }
+      case "line": {
+        return (
+          <StockLineChart
+            title={attachment.title ?? attachment.label}
+            description={attachment.description}
+            label={attachment.label}
+            unit={attachment.unit ?? undefined}
+            data={attachment.data}
+          />
+        );
+      }
+      case "financials": {
+        return (
+          <FinancialTable
+            title={attachment.title}
+            description={attachment.description}
+            headers={attachment.headers}
+            rows={attachment.rows}
+          />
+        );
+      }
+      case "summary": {
+        return <StatCard title={attachment.title} value={attachment.value} description={attachment.description} />;
       }
       default:
         return (

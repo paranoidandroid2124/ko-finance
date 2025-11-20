@@ -48,12 +48,34 @@ export type CitationObject = {
 export type CitationEntry = string | CitationObject;
 export type CitationMap = Record<string, CitationEntry[]>;
 
-export type ToolAttachment = {
-  type: "news_cards" | "value_chain" | "event_study";
-  title?: string;
-  description?: string;
-  data?: Record<string, unknown>;
-};
+export type ToolAttachment =
+  | {
+      type: "news_cards" | "value_chain" | "event_study";
+      title?: string;
+      description?: string;
+      data?: Record<string, unknown>;
+    }
+  | {
+      type: "line";
+      label: string;
+      unit?: string | null;
+      data: Array<{ date: string; price: number }>;
+      title?: string;
+      description?: string;
+    }
+  | {
+      type: "financials";
+      headers: string[];
+      rows: string[][];
+      title?: string;
+      description?: string;
+    }
+  | {
+      type: "summary";
+      title: string;
+      value: string;
+      description?: string;
+    };
 
 export type RagSourceReference = {
   id?: string;
