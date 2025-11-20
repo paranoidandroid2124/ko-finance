@@ -4,7 +4,8 @@ import classNames from "classnames";
 import { useCallback, useMemo } from "react";
 import { ChatAnswerBadge } from "@/components/legal";
 import ToolWidgetRenderer from "@/components/chat/ToolWidgetRenderer";
-import type { ChatMessageMeta, ChatRole, CitationEntry, CitationMap } from "@/store/chatStore";
+import RagSourcesWidget from "@/components/chat/widgets/RagSourcesWidget";
+import type { ChatMessageMeta, ChatRole, CitationEntry, CitationMap, RagSourceReference } from "@/store/chatStore";
 import { useToastStore } from "@/store/toastStore";
 import { logEvent } from "@/lib/telemetry";
 import { renderChatContent } from "@/lib/renderChatContent";
@@ -149,6 +150,14 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
   const canRetry = Boolean(meta?.retryable && onRetry);
   const showToast = useToastStore((state) => state.show);
   const normalizedCitations = useMemo(() => normalizeCitations(meta?.citations), [meta?.citations]);
+  const ragSources = useMemo(() => {
+    if (!meta?.sources || !Array.isArray(meta.sources)) {
+      return [] as RagSourceReference[];
+    }
+    return meta.sources.filter(
+      (source): source is RagSourceReference => Boolean(source && typeof source === "object")
+    );
+  }, [meta?.sources]);
   const memoryMeta = (meta?.memory ?? null) as
     | {
         enabled?: boolean;
@@ -280,6 +289,11 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
             </span>
           )}
         </div>
+        {!isUser && ragSources.length ? (
+          <div className="mt-3">
+            <RagSourcesWidget sources={ragSources} />
+          </div>
+        ) : null}
         {!isUser && normalizedCitations.length ? (
           <div className="mt-3 rounded-lg border border-border-light/80 bg-white/70 p-3 text-xs text-text-secondaryLight dark:border-border-dark/70 dark:bg-background-cardDark/70 dark:text-text-secondaryDark">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-primary">출처</p>

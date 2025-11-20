@@ -34,6 +34,17 @@ export function ChatStreamPane({
   onSend,
   inputDisabled,
 }: ChatStreamPaneProps) {
+  const starterPrompts = [
+    "하이브 주가 분석 (주요 리스크와 CAR 영향까지 정리해줘)",
+    "삼성전자 최근 분기 실적 요약해줘 (매출/영업이익/YoY)",
+    "2차전지 섹터 리스크 재점검 (IRA 변수 포함)",
+  ];
+
+  const handleStarterSend = async (prompt: string) => {
+    if (!prompt || inputDisabled) return;
+    await onSend(prompt);
+  };
+
   return (
     <section className="relative flex min-h-[75vh] flex-1 flex-col overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-[0_35px_120px_rgba(3,7,18,0.55)] backdrop-blur-xl">
       <div className="flex items-center justify-between border-b border-white/10 px-6 py-5">
@@ -72,13 +83,30 @@ export function ChatStreamPane({
           {disclaimer}
         </div>
       </div>
-      <div className="flex-1 space-y-4 overflow-y-auto px-6 pb-44 pt-2">
+      <div className="flex-1 space-y-4 overflow-y-auto px-6 pb-28 pt-2">
         {showEmptyState ? (
-          <EmptyState
-            title="메시지가 없습니다"
-            description="새 세션을 시작하거나 궁금한 점을 바로 질문해보세요."
-            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-6 text-xs text-slate-300"
-          />
+          <>
+            <div className="flex flex-wrap gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-slate-200">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">추천 질문</p>
+              <div className="flex flex-wrap gap-2">
+                {starterPrompts.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => handleStarterSend(prompt)}
+                    className="rounded-full border border-white/15 bg-[#0f1c2f]/80 px-3 py-1 text-left text-[12px] font-semibold text-white shadow-[0_10px_30px_rgba(3,7,18,0.45)] transition hover:border-white/40 hover:scale-[1.01]"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <EmptyState
+              title="메시지가 없습니다"
+              description="새 세션을 시작하거나 궁금한 점을 바로 질문해보세요."
+              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-6 text-xs text-slate-300"
+            />
+          </>
         ) : (
           messages.map((message) => (
             <ChatMessageBubble
@@ -93,7 +121,7 @@ export function ChatStreamPane({
           ))
         )}
       </div>
-      <div className="pointer-events-none absolute inset-x-0 bottom-32 h-32 bg-gradient-to-t from-[#050a1c] via-[#050a1c]/70 to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-24 h-24 bg-gradient-to-t from-[#050a1c] via-[#050a1c]/70 to-transparent" />
       <div className="relative z-10 px-6 pb-6">
         <ChatInput onSubmit={onSend} disabled={inputDisabled} />
       </div>

@@ -26,6 +26,7 @@ from services.plan_service import PlanContext
 from services.web_utils import parse_uuid
 from web.deps import get_plan_context
 from web.quota_guard import enforce_quota
+from services.credit_service import charge_credits
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -211,6 +212,10 @@ def create_message(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
     _guard_session_owner(session, user_id, org_id)
     enforce_quota("api.chat", plan=plan, user_id=user_id, org_id=org_id)
+    # 크레딧 사전 체크 (사용자 메시지에만 적용)
+    if payload.role == "user":
+        charge_credits(db, user_id=user_id, cost=1)
+
     idempotency_key = payload.idempotency_key or idempotency_key_header
     turn_id = _coerce_uuid(payload.turn_id)
     try:

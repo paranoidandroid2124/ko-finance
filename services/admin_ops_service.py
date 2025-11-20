@@ -71,28 +71,28 @@ _DEFAULT_API_KEYS: Dict[str, object] = {
 _ALERT_TEMPLATE_GALLERY: List[Dict[str, object]] = [
     {
         "key": "slack-morning-brief",
-        "label": "?? · ?? ?? ???",
+        "label": "Morning Brief (sample)",
         "channelType": "slack",
         "template": "markdown",
-        "messageTemplate": "[{company}] ?? ?? ??? ??? ??? ?????! {message}",
+        "messageTemplate": "[{company}] Morning brief is ready! {message}",
         "metadata": {
-            "headline": "ESG ???? ??? ?????",
-            "summary": "?? ??? ? ?? ???????. ??? ??? ?? ???? ???? ? ???.",
-            "url": "https://Nuvien.example.com/evidence/esg-weekly",
-            "volume": "12,345?",
+            "headline": "ESG weekly highlights",
+            "summary": "Key ESG movements for your portfolio. See details in the attached report.",
+            "url": "https://nuvien.example.com/evidence/esg-weekly",
+            "volume": "12,345",
             "markdown": (
                 "*{headline}*\n"
                 "{summary}\n"
                 "- ???: {volume}\n"
                 "- ????: {url}"
             ),
-            "subject": "[Nuvien] ??? ??? ?? ???",
+            "subject": "[Nuvien] Morning brief sample",
         },
         "description": "?? ??? ??? ??? ??? ?? ??? ??? ? ????.",
     },
     {
         "key": "email-weekly-digest",
-        "label": "??? · ?? ????",
+        "label": "??? ï¿½ ?? ????",
         "channelType": "email",
         "template": None,
         "messageTemplate": None,
@@ -112,7 +112,7 @@ _ALERT_TEMPLATE_GALLERY: List[Dict[str, object]] = [
     },
     {
         "key": "telegram-alert",
-        "label": "???? · ?? ??",
+        "label": "???? ï¿½ ?? ??",
         "channelType": "telegram",
         "template": None,
         "messageTemplate": "[??] {company} ?? ? ??? ?????! {message}",
@@ -989,18 +989,18 @@ def build_sample_metadata(
     metadata: Dict[str, Any] = dict(template_metadata)
     generated_ts = now_iso()
     if channel_key == "slack":
-        metadata.setdefault("headline", "ESG ???? ??? ?????")
+        metadata.setdefault("headline", "ESG weekly highlights")
         metadata.setdefault(
             "summary",
-            "?? ??? ? ?? ???????. ??? ??? ?? ???? ???? ? ???.",
+            "Key ESG movements for your portfolio. See details in the attached report.",
         )
-        metadata.setdefault("url", "https://Nuvien.example.com/evidence/esg-weekly")
-        metadata.setdefault("volume", "12,345?")
+        metadata.setdefault("url", "https://nuvien.example.com/evidence/esg-weekly")
+        metadata.setdefault("volume", "12,345")
         metadata.setdefault(
             "markdown",
             "*{headline}*\n{summary}\n- ???: {volume}\n- ????: {url}",
         )
-        metadata.setdefault("subject", "[Nuvien] ??? ??? ?? ???")
+        metadata.setdefault("subject", "[Nuvien] Morning brief sample")
     elif channel_key == "email":
         metadata.setdefault("company", "????")
         metadata.setdefault("headline", "?? ??? ESG ??? ?? ?????")

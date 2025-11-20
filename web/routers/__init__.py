@@ -9,8 +9,6 @@ from typing import Dict, Optional
 _ROUTER_MODULES = [
     "admin",
     "admin_llm",
-    "admin_ops",
-    "admin_rag",
     "admin_ui",
     "auth",
     "alerts",

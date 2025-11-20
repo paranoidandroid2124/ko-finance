@@ -11,7 +11,9 @@ from typing import Any, Dict, Mapping, Optional
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from core.logging import get_logger
-from services.daily_brief_renderer import compile_pdf as compile_latex_pdf
+# daily brief renderer removed; fall back to stub compile
+def compile_latex_pdf(*args, **kwargs):
+    raise RuntimeError("Daily brief rendering is disabled.")
 
 logger = get_logger(__name__)
 

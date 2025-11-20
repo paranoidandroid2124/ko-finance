@@ -45,7 +45,6 @@ from parse.pdf_parser import extract_chunks
 from parse.xml_parser import extract_chunks_from_xml
 from schemas.news import NewsArticleCreate
 from services import (
-    admin_ops_service,
     alert_service,
     chat_service,
     storage_service,
@@ -69,16 +68,8 @@ from services.aggregation.news_metrics import compute_news_window_metrics
 from services.notification_service import dispatch_notification, send_telegram_alert
 from services.reliability.source_reliability import score_article as score_source_reliability
 from services.aggregation.news_statistics import summarize_news_signals, build_top_topics
-from services.daily_brief_service import (
-    DAILY_BRIEF_CHANNEL,
-    DAILY_BRIEF_OUTPUT_ROOT,
-    DigestQuotaExceeded,
-    build_daily_brief_payload,
-    cleanup_daily_brief_artifacts,
-    has_brief_been_generated,
-    record_brief_generation,
-    render_daily_brief_document,
-)
+DAILY_BRIEF_CHANNEL = "daily_brief_disabled"
+DAILY_BRIEF_OUTPUT_ROOT = Path("build/daily_brief_disabled")
 from services.maintenance.data_retention import apply_retention_policies
 from services.compliance import dsar_service
 
@@ -1002,7 +993,6 @@ def process_filing(self, filing_id: str) -> str:
             table_chunks: List[Dict[str, Any]] = []
 
         def table_extraction_stage() -> None:
-            nonlocal table_chunks
             pdf_path = resolved_pdf_path or _ensure_pdf_path(filing)
             if not pdf_path:
                 raise StageSkip("No PDF available for table extraction.")
@@ -1038,7 +1028,8 @@ def process_filing(self, filing_id: str) -> str:
                         "elapsed_ms": stats.get("elapsed_ms"),
                     },
                 )
-                table_chunks = stats.get("chunks") or []
+                table_chunks.clear()
+                table_chunks.extend(stats.get("chunks") or [])
 
             run_stage("extract_tables", table_extraction_stage, critical=False)
             if table_chunks:
@@ -1625,13 +1616,8 @@ def _parse_reference_date(target_date_iso: Optional[str]) -> date:
 def cleanup_daily_briefs(retention_days: int = 30) -> Dict[str, int]:
     """Cleanup stale daily brief artifacts (local + storage)."""
 
-    db = SessionLocal()
-    try:
-        result = cleanup_daily_brief_artifacts(retention_days=retention_days, session=db)
-        logger.info("Cleaned up daily briefs older than %d days: %s", retention_days, result)
-        return result
-    finally:
-        db.close()
+    logger.info("Daily brief cleanup disabled.")
+    return {"deleted_runs": 0, "deleted_files": 0, "status": "disabled"}
 
 
 @shared_task(name="m4.generate_daily_brief")
@@ -1642,39 +1628,8 @@ def generate_daily_brief(
 ) -> str:
     """Render the daily LaTeX brief and persist generation audit logs."""
 
-    reference_date = _parse_reference_date(target_date_iso)
-    db = SessionLocal()
-    try:
-        if not force and has_brief_been_generated(db, reference_date=reference_date, channel=DAILY_BRIEF_CHANNEL):
-            logger.info("Daily brief already generated for %s.", reference_date.isoformat())
-            return "already_generated"
-
-        payload = build_daily_brief_payload(reference_date=reference_date, session=db)
-        output_dir = DAILY_BRIEF_OUTPUT_ROOT / reference_date.isoformat()
-        tex_name = f"daily_brief_{reference_date.isoformat()}.tex"
-        render_result = render_daily_brief_document(
-            payload=payload,
-            reference_date=reference_date,
-            output_dir=output_dir,
-            tex_name=tex_name,
-            compile_pdf=compile_pdf,
-            session=db,
-        )
-        record_brief_generation(db, reference_date=reference_date, channel=DAILY_BRIEF_CHANNEL)
-
-        outputs = render_result["outputs"]
-        pdf_path = outputs.get("pdf")
-        final_path = pdf_path or outputs.get("tex")
-        if final_path is None:
-            final_path = output_dir / tex_name
-        logger.info("Daily brief generated for %s (output=%s).", reference_date.isoformat(), final_path)
-        return str(final_path)
-    except Exception as exc:
-        db.rollback()
-        logger.error("Daily brief generation failed for %s: %s", reference_date.isoformat(), exc, exc_info=True)
-        raise
-    finally:
-        db.close()
+    logger.info("Daily brief generation disabled.")
+    return "disabled"
 
 
 def _flatten_citation_entries(meta: Mapping[str, Any]) -> List[str]:

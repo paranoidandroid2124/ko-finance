@@ -243,6 +243,31 @@ def _build_evidence_payload(chunks: Iterable[Dict[str, Any]]) -> List[Dict[str, 
     return evidence
 
 
+def _build_sources_payload(context: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    sources: List[Dict[str, Any]] = []
+    for item in context or []:
+        if not isinstance(item, dict):
+            continue
+        title = item.get("document_title") or item.get("title") or item.get("source") or "출처"
+        page_number = safe_int(item.get("page_number") or item.get("page"))
+        page_label = f"p.{page_number}" if page_number is not None else None
+        snippet = item.get("quote") or item.get("content") or item.get("summary")
+        source_url = item.get("viewer_url") or item.get("download_url") or item.get("document_url")
+        sources.append(
+            {
+                "id": item.get("urn_id") or item.get("chunk_id"),
+                "title": title,
+                "page": page_number,
+                "pageLabel": page_label,
+                "snippet": snippet,
+                "sourceUrl": source_url,
+                "type": item.get("source_type") or item.get("sourceType"),
+                "score": safe_float(item.get("score")),
+            }
+        )
+    return sources
+
+
 def _plan_memory_enabled(
     plan: PlanContext,
     *,
@@ -1762,6 +1787,7 @@ def _render_rag_response(
         meta_payload["prompt"] = ctx.prompt_metadata
     meta_payload["evidence_version"] = "v2"
     meta_payload["evidence_diff"] = llm_stage.diff_meta
+    meta_payload["sources"] = _build_sources_payload(llm_stage.context)
 
     summary_captured = rag_audit.store_lightmem_summary(
         question=ctx.question,

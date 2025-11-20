@@ -8,7 +8,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from core.env import env_int
 from services import bigquery_service
-from services.admin_rag_service import REINDEX_SLA_MINUTES
+REINDEX_SLA_MINUTES = env_int("ADMIN_RAG_REINDEX_SLA_MINUTES", default=30, minimum=1)
 from services.log_sync_service import AUDIT_DATASET, REINDEX_TABLE
 
 try:  # pragma: no cover - optional dependency

@@ -19,7 +19,6 @@ from llm import guardrails
 from llm.prompts import (
     analyze_news,
     chat_summary,
-    daily_brief_trend,
     classify_filing,
     extract_info,
     judge_guard,
@@ -547,24 +546,9 @@ def summarize_filing_content(raw_md: str) -> Dict[str, Any]:
 
 
 def generate_daily_brief_trend(context: Mapping[str, Any]) -> Dict[str, Any]:
-    """Create the headline and summary sentence for the daily brief."""
-    context_json = json.dumps(context, ensure_ascii=False, indent=2)
-    default_headline = str(context.get("date") or "일일 브리프")
-    default_payload = {"headline": default_headline, "summary": ""}
-    result = _run_json_prompt(
-        label="Daily brief trend",
-        model=SUMMARY_MODEL,
-        messages=daily_brief_trend.get_prompt(context_json),
-        fallback_model=QUALITY_FALLBACK_MODEL,
-        default_on_error=default_payload,
-        log_level="warning",
-    )
-    headline = str(result.get("headline") or default_headline).strip()
-    summary = str(result.get("summary") or result.get("overview") or "").strip()
-    normalized = dict(result)
-    normalized["headline"] = headline
-    normalized["summary"] = summary
-    return normalized
+    """Daily brief generation is disabled."""
+    default_headline = str(context.get("date") or "Daily brief disabled")
+    return {"headline": default_headline, "summary": "", "status": "disabled"}
 
 
 def _categorize_context(context_chunks: List[Dict[str, Any]]) -> Dict[str, bool]:
@@ -1170,7 +1154,7 @@ async def write_investment_memo(ticker: str, context: str) -> str:
         "# 3. Key Risks (주요 리스크)\n"
         "# 4. Market Sentiment (시장 반응 및 뉴스 요약)\n"
     )
-    user_prompt = f\"다음 데이터를 바탕으로 '{ticker}'에 대한 투자 메모를 작성해:\\n\\n{normalized_context}\"
+    user_prompt = f"다음 데이터를 바탕으로 '{ticker}'에 대한 투자 메모를 작성해:\\n\\n{normalized_context}"
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -1199,7 +1183,6 @@ __all__ = [
     "route_chat_query",
     "extract_structured_info",
     "summarize_filing_content",
-    "generate_daily_brief_trend",
     "self_check_extracted_info",
     "analyze_news_article",
     "validate_news_analysis_result",

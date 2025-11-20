@@ -51,9 +51,9 @@ export function AppShell({ children }: AppShellProps) {
           <ToastContainer />
           <ToolOverlay />
           <OnboardingModal />
-          <main className="flex flex-1 flex-col gap-6">
+          <main className="flex flex-1 min-h-0 flex-col gap-6">
             {FEATURE_STARTER_ENABLED ? <StarterPromoBanner /> : null}
-            <div className="flex-1 space-y-6">{children}</div>
+            <div className="flex-1 min-h-0">{children}</div>
           </main>
         </div>
       </div>

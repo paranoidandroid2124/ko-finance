@@ -23,3 +23,4 @@ from .dsar import DSARRequest  # noqa: F401
 from .value_chain import ValueChainEdge  # noqa: F401
 from .report import Report  # noqa: F401
 from .report_feedback import ReportFeedback  # noqa: F401
+from .user import User  # noqa: F401

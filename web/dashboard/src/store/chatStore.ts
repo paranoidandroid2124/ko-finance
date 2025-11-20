@@ -55,6 +55,20 @@ export type ToolAttachment = {
   data?: Record<string, unknown>;
 };
 
+export type RagSourceReference = {
+  id?: string;
+  title?: string;
+  label?: string;
+  snippet?: string;
+  source?: string;
+  sourceUrl?: string;
+  page?: number | string;
+  pageLabel?: string;
+  documentId?: string;
+  score?: number;
+  [key: string]: unknown;
+};
+
 export type ChatMessageMeta = {
   status?: ChatMessageStatus;
   errorMessage?: string;
@@ -80,6 +94,7 @@ export type ChatMessageMeta = {
     [key: string]: unknown;
   };
   toolAttachments?: ToolAttachment[];
+  sources?: RagSourceReference[];
   [key: string]: unknown;
 };
 

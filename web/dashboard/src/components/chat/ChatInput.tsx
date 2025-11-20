@@ -17,11 +17,22 @@ export function ChatInput({ onSubmit, disabled }: ChatInputProps) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!value.trim()) return;
+  const sendMessage = () => {
+    if (disabled || !value.trim()) return;
     onSubmit?.(value.trim());
     setValue("");
+  };
+
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    sendMessage();
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      sendMessage();
+    }
   };
 
   const handleCommandInsert = (command: string) => {
@@ -67,6 +78,7 @@ export function ChatInput({ onSubmit, disabled }: ChatInputProps) {
         <textarea
           value={value}
           onChange={(event) => setValue(event.target.value)}
+          onKeyDown={handleKeyDown}
           ref={textareaRef}
           placeholder="질문을 입력하면 공시 기반 분석을 바로 제공합니다..."
           className="min-h-[48px] flex-1 resize-none bg-transparent text-sm text-white outline-none placeholder:text-slate-500"

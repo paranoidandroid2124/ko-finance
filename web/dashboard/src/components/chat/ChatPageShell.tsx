@@ -2,7 +2,6 @@
 
 import { AppShell } from "@/components/layout/AppShell";
 import { ChatHistoryList } from "@/components/chat/ChatHistoryList";
-import { ChatContextPane } from "@/components/chat/ChatContextPane";
 import { ChatStreamPane } from "@/components/chat/ChatStreamPane";
 import { PlanTrialBanner } from "@/components/plan/PlanTrialBanner";
 import type { ChatController } from "@/hooks/useChatController";
@@ -73,7 +72,6 @@ export function ChatPageShell({ controller }: ChatPageShellProps) {
           onSend={stream.onSend}
           inputDisabled={stream.inputDisabled}
         />
-        <ChatContextPane />
       </div>
     </AppShell>
   );
