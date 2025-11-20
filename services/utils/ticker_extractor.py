@@ -50,7 +50,11 @@ def _load_master_map_from_db() -> list[dict]:
         return []
     try:
         rows = session.query(
-            SecurityMetadata.ticker, SecurityMetadata.corp_name, SecurityMetadata.corp_code, SecurityMetadata.market
+            SecurityMetadata.ticker,
+            SecurityMetadata.corp_name,
+            SecurityMetadata.corp_code,
+            SecurityMetadata.market,
+            SecurityMetadata.extra,
         ).all()
     except Exception:
         return []
@@ -58,9 +62,16 @@ def _load_master_map_from_db() -> list[dict]:
         session.close()
 
     result = []
-    for ticker, name, crno, market in rows:
+    for ticker, name, corp_code, market, extra in rows:
         if not ticker:
             continue
+        crno = None
+        if isinstance(extra, dict):
+            crno_candidate = extra.get("crno")
+            if isinstance(crno_candidate, str) and crno_candidate.isdigit() and len(crno_candidate) == 13:
+                crno = crno_candidate
+        if not crno and corp_code and isinstance(corp_code, str) and corp_code.isdigit() and len(corp_code) == 13:
+            crno = corp_code
         result.append({"ticker": ticker, "name": name or ticker, "crno": crno, "market": market})
     return result
 
