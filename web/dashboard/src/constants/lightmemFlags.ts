@@ -1,4 +1,4 @@
-import type { PlanMemoryFlags } from "@/store/planStore";
+﻿import type { PlanMemoryFlags } from "@/store/planStore";
 
 export type LightMemFlagKey = keyof PlanMemoryFlags;
 

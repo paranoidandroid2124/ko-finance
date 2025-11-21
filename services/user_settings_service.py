@@ -15,9 +15,11 @@ from services.json_store import read_json_document, write_json_document
 logger = get_logger(__name__)
 
 _LIGHTMEM_PATH = Path("uploads") / "user_settings" / "lightmem_preferences.json"
+_PROACTIVE_PATH = Path("uploads") / "user_settings" / "proactive_preferences.json"
 
 _STORE_LOCK = RLock()
 _STORE_CACHE: Optional[Dict[str, Dict[str, object]]] = None
+_PROACTIVE_STORE_CACHE: Optional[Dict[str, Dict[str, object]]] = None
 
 
 def _load_store() -> Dict[str, Dict[str, object]]:
@@ -38,6 +40,26 @@ def _save_store(store: Dict[str, Dict[str, object]]) -> None:
     global _STORE_CACHE  # pylint: disable=global-statement
     write_json_document(_LIGHTMEM_PATH, store)
     _STORE_CACHE = dict(store)
+
+
+def _load_proactive_store() -> Dict[str, Dict[str, object]]:
+    global _PROACTIVE_STORE_CACHE  # pylint: disable=global-statement
+    if _PROACTIVE_STORE_CACHE is not None:
+        return _PROACTIVE_STORE_CACHE
+
+    payload = read_json_document(_PROACTIVE_PATH, default=dict)
+    if isinstance(payload, dict):
+        _PROACTIVE_STORE_CACHE = payload
+    else:
+        logger.warning("Proactive settings file is malformed; resetting cache.")
+        _PROACTIVE_STORE_CACHE = {}
+    return _PROACTIVE_STORE_CACHE
+
+
+def _save_proactive_store(store: Dict[str, Dict[str, object]]) -> None:
+    global _PROACTIVE_STORE_CACHE  # pylint: disable=global-statement
+    write_json_document(_PROACTIVE_PATH, store)
+    _PROACTIVE_STORE_CACHE = dict(store)
 
 
 def _parse_timestamp(value: Optional[str]) -> Optional[datetime]:
@@ -139,10 +161,96 @@ def delete_user_lightmem_settings(user_id: uuid.UUID) -> bool:
         return True
 
 
+@dataclass
+class UserProactiveSettings:
+    """Per-user proactive insight preferences."""
+
+    enabled: bool = False
+    widget: bool = True
+    email_enabled: bool = False
+    email_schedule: str = "morning"
+    slack_enabled: bool = False
+
+    @classmethod
+    def from_dict(cls, payload: Optional[Dict[str, object]]) -> "UserProactiveSettings":
+        data = payload or {}
+        return cls(
+            enabled=bool(data.get("enabled", False)),
+            widget=bool(data.get("widget", True)),
+            email_enabled=bool(data.get("email_enabled", False)),
+            email_schedule=str(data.get("email_schedule") or "morning"),
+            slack_enabled=bool(data.get("slack_enabled", False)),
+        )
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "enabled": bool(self.enabled),
+            "widget": bool(self.widget),
+            "email_enabled": bool(self.email_enabled),
+            "email_schedule": self.email_schedule or "morning",
+            "slack_enabled": bool(self.slack_enabled),
+        }
+
+
+@dataclass
+class UserProactiveSettingsRecord:
+    user_id: uuid.UUID
+    updated_at: Optional[datetime]
+    updated_by: Optional[str]
+    settings: UserProactiveSettings
+
+
+def read_user_proactive_settings(user_id: uuid.UUID) -> UserProactiveSettingsRecord:
+    """Return stored proactive notification preferences for ``user_id`` (defaults if missing)."""
+    with _STORE_LOCK:
+        store = _load_proactive_store()
+        entry = store.get(str(user_id)) or {}
+
+    settings = UserProactiveSettings.from_dict(entry.get("proactive"))
+    updated_at = _parse_timestamp(entry.get("updatedAt"))
+    updated_by = entry.get("updatedBy")
+    return UserProactiveSettingsRecord(
+        user_id=user_id,
+        updated_at=updated_at,
+        updated_by=str(updated_by) if updated_by else None,
+        settings=settings,
+    )
+
+
+def write_user_proactive_settings(
+    user_id: uuid.UUID,
+    *,
+    settings: UserProactiveSettings,
+    actor: Optional[str] = None,
+) -> UserProactiveSettingsRecord:
+    """Persist proactive settings for ``user_id``."""
+    now = datetime.now(timezone.utc)
+    entry = {
+        "proactive": settings.to_dict(),
+        "updatedAt": now.isoformat(),
+        "updatedBy": actor or None,
+    }
+    with _STORE_LOCK:
+        store = dict(_load_proactive_store())
+        store[str(user_id)] = entry
+        _save_proactive_store(store)
+
+    return UserProactiveSettingsRecord(
+        user_id=user_id,
+        updated_at=now,
+        updated_by=entry["updatedBy"],
+        settings=settings,
+    )
+
+
 __all__ = [
     "UserLightMemSettings",
     "UserLightMemSettingsRecord",
     "read_user_lightmem_settings",
     "write_user_lightmem_settings",
     "delete_user_lightmem_settings",
+    "UserProactiveSettings",
+    "UserProactiveSettingsRecord",
+    "read_user_proactive_settings",
+    "write_user_proactive_settings",
 ]

@@ -24,7 +24,6 @@ const Background = dynamic(() => import("reactflow").then((module) => module.Bac
 const Controls = dynamic(() => import("reactflow").then((module) => module.Controls), { ssr: false });
 
 const NODE_WIDTH = 150;
-const NODE_HEIGHT = 60;
 
 const nodeStyle = {
   background: "rgba(15,23,42,0.9)",

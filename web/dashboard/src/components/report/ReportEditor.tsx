@@ -49,9 +49,15 @@ export function ReportEditor() {
     }
   }, [content, editor]);
 
-  const chartSeries = (charts as {
-    series?: Array<{ label?: string; ticker?: string; data?: { date: string; value: number }[] }>;
-  })?.series ?? [];
+  const chartSeries = useMemo(
+    () =>
+      (
+        charts as {
+          series?: Array<{ label?: string; ticker?: string; data?: { date: string; value: number }[] }>;
+        }
+      )?.series ?? [],
+    [charts]
+  );
 
   const chartData = useMemo(() => {
     if (!chartSeries.length) {

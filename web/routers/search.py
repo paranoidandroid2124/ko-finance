@@ -14,7 +14,6 @@ from database import get_db
 from models.company import CorpMetric
 from models.filing import Filing
 from models.news import NewsSignal, NewsWindowAggregate
-from services import watchlist_service
 from schemas.api.search import (
     SearchEvidenceCounts,
     SearchResponse,
@@ -72,7 +71,6 @@ def aggregated_search(
     date_from: str | None = Query(None, description="ISO8601 시작일"),
     date_to: str | None = Query(None, description="ISO8601 종료일"),
     sector: list[str] | None = Query(None, description="섹터 슬러그 목록"),
-    watchlist_only: bool = Query(False, description="내 워치리스트 내에서만 검색"),
     db: Session = Depends(get_db),
     plan: PlanContext = Depends(get_plan_context),
     state: RbacState = Depends(get_rbac_state),
@@ -89,16 +87,6 @@ def aggregated_search(
         )
 
     normalized_sectors = _normalize_list(sector)
-    watchlist_tickers: Optional[Set[str]] = None
-    if watchlist_only:
-        watchlist_tickers = _resolve_watchlist_tickers(db, state)
-        if not watchlist_tickers:
-            return SearchResponse(
-                query=keyword,
-                total=0,
-                totals=SearchTotals(filing=0, news=0, table=0, chart=0),
-                results=[],
-            )
 
     filings, filing_total = _fetch_filings(
         db,
@@ -131,7 +119,6 @@ def aggregated_search(
         context,
         plan=plan,
         sectors=normalized_sectors,
-        watchlist_tickers=watchlist_tickers,
     )
 
     totals = SearchTotals(
@@ -182,38 +169,6 @@ def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
-
-
-def _resolve_watchlist_tickers(db: Session, state: RbacState) -> Set[str]:
-    if state.user_id is None and state.org_id is None:
-        return set()
-    filters: Dict[str, Optional[Any]] = {}
-    if state.user_id:
-        filters["user_id"] = state.user_id
-    if state.org_id:
-        filters["org_id"] = state.org_id
-    try:
-        payload = watchlist_service.collect_watchlist_alerts(
-            db,
-            window_minutes=1440,
-            limit=200,
-            owner_filters=filters,
-        )
-    except Exception:
-        return set()
-    items = payload.get("items") or []
-    tickers: Set[str] = set()
-    for item in items:
-        ticker = str(item.get("ticker") or "").strip().upper()
-        if ticker:
-            tickers.add(ticker)
-        rule_tickers = item.get("ruleTickers") or []
-        if isinstance(rule_tickers, list):
-            for value in rule_tickers:
-                normalized = str(value or "").strip().upper()
-                if normalized:
-                    tickers.add(normalized)
-    return tickers
 
 
 def _fetch_filings(
@@ -519,17 +474,11 @@ def _build_results(
     *,
     plan: PlanContext,
     sectors: Optional[Set[str]] = None,
-    watchlist_tickers: Optional[Set[str]] = None,
 ) -> list[SearchResult]:
     ranked: list[tuple[datetime, SearchResult]] = []
     normalized_sectors = sectors or set()
-    watchlist_lookup = {ticker.upper() for ticker in (watchlist_tickers or set()) if ticker}
 
     def _passes_filters(ticker: Optional[str], category: Optional[str]) -> bool:
-        if watchlist_lookup:
-            normalized_ticker = (ticker or "").upper()
-            if not normalized_ticker or normalized_ticker not in watchlist_lookup:
-                return False
         if normalized_sectors:
             normalized_category = (category or "").lower()
             if not any(sector in normalized_category for sector in normalized_sectors):
@@ -650,19 +599,18 @@ def _build_evidence_counts(**values: int | None) -> SearchEvidenceCounts | None:
 
 def _plan_actions(result_type: str, plan: PlanContext) -> SearchResultActions:
     compare_allowed = plan.allows("search.compare")
-    alert_allowed = plan.allows("search.alerts")
     export_allowed = plan.allows("search.export")
 
     if result_type == "filing":
         return SearchResultActions(
             compareLocked=not compare_allowed,
-            alertLocked=not alert_allowed,
+            alertLocked=True,
             exportLocked=not export_allowed,
         )
     if result_type == "news":
         return SearchResultActions(
             compareLocked=not compare_allowed,
-            alertLocked=not alert_allowed,
+            alertLocked=True,
             exportLocked=not export_allowed,
         )
     if result_type == "table":
@@ -674,7 +622,7 @@ def _plan_actions(result_type: str, plan: PlanContext) -> SearchResultActions:
     if result_type == "chart":
         return SearchResultActions(
             compareLocked=True,
-            alertLocked=not alert_allowed,
+            alertLocked=True,
             exportLocked=True,
         )
     return SearchResultActions(compareLocked=True, alertLocked=True, exportLocked=True)

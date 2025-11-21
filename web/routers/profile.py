@@ -9,7 +9,9 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from schemas.api.user_profile import InterestTagRequest, InterestTagsRequest, InterestTagsResponse
+from schemas.api.proactive import ProactiveSettingsRequest, ProactiveSettingsResponse
 from services import user_profile_service
+from services import user_settings_service
 from services.web_utils import parse_uuid
 
 router = APIRouter(prefix="/profile", tags=["User Profile"])
@@ -82,6 +84,67 @@ def upsert_interest_tags(
     user_id = _resolve_user_id(x_user_id)
     tags = user_profile_service.upsert_interests(user_id, payload.tags)
     return InterestTagsResponse(tags=tags)
+
+
+@router.get(
+    "/proactive",
+    response_model=ProactiveSettingsResponse,
+    summary="프로액티브 알림 설정을 조회합니다.",
+)
+def get_proactive_settings(
+    x_user_id: Optional[str] = Header(default=None),
+    _db: Session = Depends(get_db),
+) -> ProactiveSettingsResponse:
+    user_id = _resolve_user_id(x_user_id)
+    record = user_settings_service.read_user_proactive_settings(user_id)
+    channels = record.settings
+    return ProactiveSettingsResponse(
+        enabled=channels.enabled,
+        channels={
+            "widget": channels.widget,
+            "email": {"enabled": channels.email_enabled, "schedule": channels.email_schedule},
+            "slack": channels.slack_enabled,
+        },
+    )
+
+
+@router.patch(
+    "/proactive",
+    response_model=ProactiveSettingsResponse,
+    summary="프로액티브 알림 설정을 업데이트합니다.",
+)
+def update_proactive_settings(
+    payload: ProactiveSettingsRequest,
+    x_user_id: Optional[str] = Header(default=None),
+    _db: Session = Depends(get_db),
+) -> ProactiveSettingsResponse:
+    user_id = _resolve_user_id(x_user_id)
+    record = user_settings_service.read_user_proactive_settings(user_id)
+    current = record.settings
+
+    enabled = payload.enabled if payload.enabled is not None else current.enabled
+    channels = payload.channels
+    widget = channels.widget if channels else current.widget
+    email_enabled = channels.email.enabled if channels else current.email_enabled
+    email_schedule = channels.email.schedule if channels else current.email_schedule
+    slack_enabled = channels.slack if channels else current.slack_enabled
+
+    next_settings = user_settings_service.UserProactiveSettings(
+        enabled=enabled,
+        widget=widget,
+        email_enabled=email_enabled,
+        email_schedule=email_schedule,
+        slack_enabled=slack_enabled,
+    )
+    updated = user_settings_service.write_user_proactive_settings(user_id, settings=next_settings)
+    return ProactiveSettingsResponse(
+        enabled=updated.settings.enabled,
+        channels={
+            "widget": updated.settings.widget,
+            "email": {"enabled": updated.settings.email_enabled, "schedule": updated.settings.email_schedule},
+            "slack": updated.settings.slack_enabled,
+        },
+    )
 
 
 __all__ = ["router"]

@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 
 from core.logging import get_logger
 from database import SessionLocal
-from models.alert import AlertRule
 from models.chat import ChatMessage, ChatMessageArchive, ChatSession
 from models.dsar import DSARRequest
 from services.audit_log import record_audit_event
@@ -264,10 +263,6 @@ def _build_export_payload(session: Session, request: DSARRequest) -> Tuple[Dict[
         payload["chat"] = chat_data
         counts.update(chat_counts)
 
-        alerts = _export_alert_rules(session, user_id)
-        payload["alertRules"] = alerts
-        counts["alertRules"] = len(alerts)
-
         audit_rows = _export_audit_rows(session, user_id)
         payload["auditTrail"] = audit_rows
         counts["auditTrail"] = len(audit_rows)
@@ -347,29 +342,6 @@ def _export_chat_data(session: Session, user_id: uuid.UUID) -> Tuple[Dict[str, A
     return {"sessions": serialized_sessions}, counts
 
 
-def _export_alert_rules(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]:
-    rules = (
-        session.query(AlertRule)
-        .filter(AlertRule.user_id == user_id)
-        .order_by(AlertRule.created_at.asc())
-        .all()
-    )
-    return [
-        {
-            "id": str(rule.id),
-            "name": rule.name,
-            "status": rule.status,
-            "trigger": rule.trigger,
-            "filters": rule.filters,
-            "channels": rule.channels,
-            "frequency": rule.frequency,
-            "createdAt": _to_iso(rule.created_at),
-            "updatedAt": _to_iso(rule.updated_at),
-        }
-        for rule in rules
-    ]
-
-
 def _export_audit_rows(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]:
     rows = (
         session.execute(
@@ -410,11 +382,6 @@ def _run_deletion(session: Session, request: DSARRequest) -> Dict[str, Any]:
     deleted_rows["chat_messages"] = chat_deleted["messages"]
     deleted_rows["chat_messages_archive"] = chat_deleted["archives"]
 
-    deleted_rows["alert_rules"] = _execute_delete(
-        session,
-        "DELETE FROM alert_rules WHERE user_id = :user_id",
-        {"user_id": str(user_id)},
-    )
     lightmem_removed = user_settings_service.delete_user_lightmem_settings(user_id)
     deleted_rows["user_lightmem_settings"] = 1 if lightmem_removed else 0
 

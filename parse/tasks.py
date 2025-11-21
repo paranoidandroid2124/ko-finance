@@ -45,7 +45,6 @@ from parse.pdf_parser import extract_chunks
 from parse.xml_parser import extract_chunks_from_xml
 from schemas.news import NewsArticleCreate
 from services import (
-    alert_service,
     chat_service,
     storage_service,
     vector_service,
@@ -57,7 +56,6 @@ from services import (
     security_metadata_service,
     ingest_dlq_service,
     rag_grid,
-    watchlist_service,
     snapshot_service,
 )
 from services.evidence_service import save_evidence_snapshot
@@ -567,47 +565,8 @@ def _notify_alert_channel_failures(events: Sequence[Mapping[str, Any]]) -> None:
     retry_kwargs={"max_retries": 3},
 )
 def evaluate_alert_rules(self, limit: int = 1000, prefetch_factor: Optional[int] = None) -> Dict[str, int]:
-    """Periodic task that evaluates alert rules and dispatches notifications."""
-    db = _open_session()
-    task_id = getattr(self.request, "id", None)
-    if limit < 1:
-        logger.warning("Alert evaluation limit must be positive. Received %s. Falling back to 1.", limit)
-        limit = 1
-    try:
-        result = alert_service.evaluate_due_alerts(
-            db,
-            limit=limit,
-            prefetch_factor=prefetch_factor,
-            task_id=task_id,
-        )
-        db.commit()
-        logger.info(
-            "Alert evaluation completed (task=%s): evaluated=%s triggered=%s skipped=%s errors=%s plans=%s channelFailures=%s",
-            task_id,
-            result.get("evaluated"),
-            result.get("triggered"),
-            result.get("skipped"),
-            result.get("errors"),
-            result.get("by_plan"),
-            len(result.get("channelFailures") or []),
-        )
-        channel_failures = result.get("channelFailures") or []
-        if channel_failures:
-            _notify_alert_channel_failures(channel_failures)
-        return result
-    except Exception as exc:  # pragma: no cover - Celery runtime guard
-        db.rollback()
-        logger.error(
-            "Alert evaluation failed (task=%s, retry=%s/%s): %s",
-            task_id,
-            getattr(self.request, "retries", 0),
-            getattr(self, "max_retries", 0),
-            exc,
-            exc_info=True,
-        )
-        raise
-    finally:
-        db.close()
+    """Alerts pipeline disabled."""
+    return {"evaluated": 0, "triggered": 0, "skipped": 0, "errors": 0}
 
 
 def _ensure_pdf_path(filing: Filing) -> Optional[str]:
@@ -2078,3 +2037,10 @@ def cleanup_profile_cache() -> Dict[str, int]:
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("Profile cache cleanup skipped: %s", exc)
     return {"cleaned": cleaned}
+
+
+@shared_task(name="proactive.scan", bind=True, max_retries=1)
+def scan_proactive_notifications(self, window_minutes: int = 15) -> Dict[str, int]:
+    """Placeholder proactive scanner. TODO: implement keyword-based matching."""
+    logger.info("proactive.scan skipped (not implemented). window_minutes=%s", window_minutes)
+    return {"created": 0, "matched": 0, "window_minutes": window_minutes}

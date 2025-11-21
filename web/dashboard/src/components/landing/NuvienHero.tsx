@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -74,7 +75,7 @@ export function NuvienHero() {
       return;
     }
     const params = new URLSearchParams({ prefill: query, guest: "1" });
-    router.push(`/chat?${params.toString()}`);
+    router.push(`/dashboard?${params.toString()}`);
   };
 
   return (
@@ -113,6 +114,20 @@ export function NuvienHero() {
           <p className="mx-auto max-w-3xl text-base text-slate-400 md:text-lg">
             공시·뉴스·차트를 한 번에 묶어 질문하세요. Nuvien은 딥데이터와 자동 이벤트 스터디를 연결해, 다음 의사결정을 위한 길을 그려줍니다.
           </p>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <Link
+              href="/chat"
+              className="inline-flex items-center rounded-full bg-white px-6 py-3 text-sm font-semibold text-slate-900 shadow-lg shadow-white/30 transition hover:-translate-y-[1px]"
+            >
+              채팅 시작하기
+            </Link>
+            <Link
+              href="/dashboard?guest=1"
+              className="inline-flex items-center rounded-full border border-white/30 px-6 py-3 text-sm font-semibold text-white transition hover:border-white/70 hover:-translate-y-[1px]"
+            >
+              게스트 체험
+            </Link>
+          </div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-3">

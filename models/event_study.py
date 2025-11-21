@@ -126,45 +126,6 @@ class EventSummary(Base):
     dist = Column(JSONB, nullable=True)
 
 
-class EventWatchlist(Base):
-    """Configured list of symbols included in the event study pipeline."""
-
-    __tablename__ = "event_watchlist"
-    __table_args__ = (
-        UniqueConstraint("ticker", "symbol_type", name="uq_event_watchlist_symbol"),
-    )
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    corp_code = Column(String, nullable=True)
-    corp_name = Column(String, nullable=True)
-    ticker = Column(String, nullable=True, index=True)
-    market = Column(String, nullable=True)
-    symbol_type = Column(String, nullable=False, default="stock")
-    enabled = Column(Boolean, nullable=False, default=True, server_default="true")
-    extra_metadata = Column(JSONB, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at = Column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-
-class EventAlertMatch(Base):
-    """Alert rule associations created when an event triggers a watchlist rule."""
-
-    __tablename__ = "event_alert_matches"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    event_id = Column(String, ForeignKey("events.rcept_no", ondelete="CASCADE"), nullable=False, index=True)
-    alert_id = Column(UUID(as_uuid=True), ForeignKey("alert_rules.id", ondelete="CASCADE"), nullable=False, index=True)
-    match_score = Column(Numeric, nullable=True)
-    metadata_json = Column("metadata", JSONB, nullable=False, default=dict)
-    metadata = JSONMetadataProxy("metadata_json")  # type: ignore[assignment]
-    matched_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-
-
 class EventIngestJob(Base):
     """Book-keeps batch ingestion windows so we can resume or monitor progress."""
 
@@ -189,7 +150,5 @@ __all__ = [
     "EventStudyResult",
     "EventWindow",
     "EventSummary",
-    "EventWatchlist",
-    "EventAlertMatch",
     "EventIngestJob",
 ]

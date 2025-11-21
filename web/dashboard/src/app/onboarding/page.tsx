@@ -103,7 +103,7 @@ export default function OnboardingWizardPage() {
       return;
     }
     try {
-      const org = await wizard.updateOrg({ name: orgName.trim(), slug: orgSlug || undefined });
+      await wizard.updateOrg({ name: orgName.trim(), slug: orgSlug || undefined });
       toast({ id: "onboarding/org/saved", title: "조직 정보가 저장되었습니다.", intent: "success" });
     } catch (error) {
       toast({

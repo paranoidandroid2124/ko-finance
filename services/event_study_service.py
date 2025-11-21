@@ -16,9 +16,7 @@ from sqlalchemy.orm import Session
 
 from core.env import env_str
 from database import SessionLocal
-from models.alert import AlertRule
 from models.event_study import (
-    EventAlertMatch,
     EventIngestJob,
     EventRecord,
     EventStudyResult,
@@ -172,7 +170,6 @@ def ingest_events_from_filings(
                 metadata=metadata_payload,
             )
             db.add(event)
-            _record_event_alert_matches(db, event, attributes)
             created += 1
 
         db.commit()
@@ -1325,65 +1322,14 @@ def _update_ingest_job(
 
 
 def _record_event_alert_matches(db: Session, event: EventRecord, attributes: EventAttributes) -> None:
-    matches = _match_alert_rules_for_event(db, event, attributes)
-    if not matches:
-        return
-    now = datetime.now(timezone.utc)
-    for rule, score, metadata in matches:
-        existing = (
-            db.query(EventAlertMatch)
-            .filter(EventAlertMatch.event_id == event.rcept_no, EventAlertMatch.alert_id == rule.id)
-            .first()
-        )
-        if existing:
-            existing.match_score = score
-            existing.metadata = metadata
-            existing.matched_at = now
-        else:
-            db.add(
-                EventAlertMatch(
-                    event_id=event.rcept_no,
-                    alert_id=rule.id,
-                    match_score=score,
-                    metadata=metadata,
-                    matched_at=now,
-                )
-            )
+    """Alert/watchlist matching removed."""
+    return
 
 
 def _match_alert_rules_for_event(
     db: Session,
     event: EventRecord,
     attributes: EventAttributes,
-) -> List[Tuple[AlertRule, float, Dict[str, Any]]]:
-    ticker = (event.ticker or "").upper()
-    if not ticker:
-        return []
-    candidates = (
-        db.query(AlertRule)
-        .filter(AlertRule.status == "active")
-        .all()
-    )
-    matches: List[Tuple[AlertRule, float, Dict[str, Any]]] = []
-    for rule in candidates:
-        trigger = rule.trigger or {}
-        trigger_type = str(trigger.get("type") or "filing").lower()
-        if trigger_type != "filing":
-            continue
-        tickers = {
-            str(value).strip().upper()
-            for value in (trigger.get("tickers") or [])
-            if isinstance(value, str) and value.strip()
-        }
-        if not tickers or ticker not in tickers:
-            continue
-        score = 1.0
-        metadata = {
-            "ticker": ticker,
-            "eventType": event.event_type,
-            "ruleName": rule.name,
-            "matchSource": "event_ingest",
-            "subtype": attributes.subtype,
-        }
-        matches.append((rule, score, metadata))
-    return matches
+) -> List[Tuple[Any, float, Dict[str, Any]]]:
+    """Alert/watchlist matching removed; returns empty."""
+    return []

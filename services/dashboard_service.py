@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from sqlalchemy import func
@@ -20,15 +20,8 @@ from schemas.api.dashboard import (
     DashboardNewsItem,
     DashboardOverviewResponse,
     DashboardQuickLink,
-    DashboardWatchlistSummary,
     FilingTrendPoint,
     FilingTrendResponse,
-)
-from services.watchlist_aggregator import (
-    build_quick_link_payload,
-    collect_watchlist_items,
-    convert_items_to_alert_payload,
-    summarise_watchlist_rules,
 )
 
 logger = get_logger(__name__)
@@ -199,51 +192,9 @@ def build_watchlist_summary(
     db: Session,
     *,
     context: DashboardRequestContext,
-) -> Tuple[List[DashboardWatchlistSummary], List[DashboardAlert], List[DashboardQuickLink]]:
-    items, summary_payload = collect_watchlist_items(
-        db,
-        user_id=context.user_id,
-        org_id=context.org_id,
-        limit=80,
-    )
-    if not items:
-        return [], [], [DEFAULT_QUICK_LINK]
-
-    summaries = summarise_watchlist_rules(items)[:3]
-    watchlists = [
-        DashboardWatchlistSummary(
-            ruleId=summary.rule_id,
-            name=summary.name,
-            eventCount=summary.event_count,
-            tickers=sorted(summary.tickers),
-            channels=sorted(summary.channels),
-            lastTriggeredAt=summary.last_triggered_at.isoformat() if summary.last_triggered_at else None,
-            lastHeadline=summary.last_headline,
-            detailUrl=f"/watchlist?ruleId={summary.rule_id}",
-        )
-        for summary in summaries
-    ]
-
-    alert_payloads = convert_items_to_alert_payload(items[:8])
-    alerts = [
-        DashboardAlert(
-            id=payload["id"],
-            title=payload["title"],
-            body=payload["body"],
-            timestamp=format_timespan(payload["timestamp"]),
-            tone=map_sentiment(payload.get("sentiment")),
-            targetUrl=payload.get("targetUrl") or (f"/company/{payload['ticker']}" if payload.get("ticker") else None),
-        )
-        for payload in alert_payloads
-    ]
-
-    quick_links_payload = build_quick_link_payload(summary_payload, items)
-    quick_links = [
-        DashboardQuickLink(label=entry["label"], href=entry["href"], type=entry["type"])
-        for entry in quick_links_payload
-    ]
-
-    return watchlists, alerts, quick_links
+) -> Tuple[List[Any], List[DashboardAlert], List[DashboardQuickLink]]:
+    # Watchlist/alert features have been removed; return empty payloads to keep dashboard stable.
+    return [], [], [DEFAULT_QUICK_LINK]
 
 
 def build_today_events(db: Session) -> List[DashboardEventItem]:

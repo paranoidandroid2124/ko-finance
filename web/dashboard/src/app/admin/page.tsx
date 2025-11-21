@@ -70,7 +70,7 @@ export default function AdminPage() {
     const listener = (event: Event) => {
       const detail = (event as CustomEvent<{ value: string }>).detail;
       if (detail?.value) {
-        window.location.href = `/chat?prefill=${encodeURIComponent(detail.value)}`;
+        window.location.href = `/dashboard?prefill=${encodeURIComponent(detail.value)}`;
       }
     };
     window.addEventListener("onboarding:prefill", listener as EventListener);

@@ -8,7 +8,6 @@ import { ChatMessageBubble } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
 import type { ChatMessage } from "@/store/chatStore";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
-import resolveApiBase from "@/lib/apiBase";
 
 type ChatStreamPaneProps = {
   sessionTitle: string;
@@ -57,8 +56,6 @@ export function ChatStreamPane({
   );
   const [starterPrompts, setStarterPrompts] = useState(fallbackPrompts);
   const [loadingStarters, setLoadingStarters] = useState(false);
-  const [profileTags, setProfileTags] = useState<string[]>([]);
-  const [profileError, setProfileError] = useState<string | null>(null);
   const [inputFocused, setInputFocused] = useState(false);
   const handleFocusChange = (focused: boolean) => {
     setInputFocused(focused);
@@ -75,13 +72,15 @@ export function ChatStreamPane({
           throw new Error(`failed ${res.status}`);
         }
         const data = await res.json();
-        const items = Array.isArray(data?.items) ? data.items : [];
+        type RecoItem = { question?: string; source?: string };
+        const items: RecoItem[] = Array.isArray(data?.items) ? data.items : [];
         const mapped =
           items
-            .map((item: any) => ({
-              question: String(item?.question || "").trim(),
-              source: String(item?.source || "default"),
-            }))
+            .map((item) => {
+              const question = typeof item?.question === "string" ? item.question.trim() : "";
+              const source = typeof item?.source === "string" ? item.source : "default";
+              return { question, source };
+            })
             .filter((item) => item.question) || [];
         if (!cancelled && mapped.length) {
           setStarterPrompts(mapped);
@@ -99,32 +98,6 @@ export function ChatStreamPane({
       cancelled = true;
     };
   }, [fallbackPrompts]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadProfile = async () => {
-      try {
-        const res = await fetchWithAuth(`${resolveApiBase()}/api/v1/profile/interest`);
-        if (!res.ok) {
-          throw new Error(`profile ${res.status}`);
-        }
-        const data = await res.json();
-        const tags = Array.isArray(data?.tags) ? data.tags : [];
-        if (!cancelled) {
-          setProfileTags(tags);
-          setProfileError(null);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setProfileError("프로필을 불러오지 못했습니다.");
-        }
-      }
-    };
-    void loadProfile();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const handleStarterSend = async (prompt: string) => {
     if (!prompt || inputDisabled) return;
@@ -174,95 +147,76 @@ export function ChatStreamPane({
       </div>
 
       <div className="relative z-10 flex-1">
-        <div className="mx-auto flex w-full max-w-[820px] flex-col space-y-5 px-5 py-6">
-        {hasContextBanner && showEmptyState ? (
-          <div className="rounded-2xl border border-[#30363D] bg-[#0D1117]/60 px-4 py-3 text-sm text-slate-200 shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur-xl">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-300">Context Highlights</p>
-                {isFilingContext && filingReferenceId ? (
-                  <p className="text-[11px] text-slate-400">참조 ID: {filingReferenceId}</p>
+        <div className="mx-auto flex w-full max-w-[820px] flex-col space-y-4 px-5 py-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-semibold text-white">새 분석을 시작해보세요</p>
+              <p className="text-[12px] text-slate-400">종목이나 이슈를 입력하면 공시·뉴스·시세 기반 분석을 바로 제공합니다.</p>
+            </div>
+          </div>
+          {hasContextBanner && showEmptyState ? (
+            <div className="rounded-2xl border border-[#30363D] bg-[#0D1117]/60 px-4 py-3 text-sm text-slate-200 shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur-xl">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-300">Context Highlights</p>
+                  {isFilingContext && filingReferenceId ? (
+                    <p className="text-[11px] text-slate-400">참조 ID: {filingReferenceId}</p>
+                  ) : null}
+                </div>
+                {isFilingContext ? (
+                  <button
+                    type="button"
+                    onClick={onOpenFiling}
+                    className="rounded-full border border-white/20 bg-white/5 px-4 py-1 text-xs font-semibold text-slate-200 transition hover:border-white/40 hover:text-white"
+                  >
+                    원문 열기
+                  </button>
                 ) : null}
               </div>
-              {isFilingContext ? (
-                <button
-                  type="button"
-                  onClick={onOpenFiling}
-                  className="rounded-full border border-white/20 bg-white/5 px-4 py-1 text-xs font-semibold text-slate-200 transition hover:border-white/40 hover:text-white"
-                >
-                  원문 열기
-                </button>
-              ) : null}
+              <p className="mt-3 leading-relaxed text-slate-300">{contextSummary}</p>
             </div>
-            <p className="mt-3 leading-relaxed text-slate-300">{contextSummary}</p>
-          </div>
-        ) : null}
-        {showEmptyState ? (
-          <p className="text-[11px] leading-relaxed text-slate-400">{disclaimer}</p>
-        ) : null}
+          ) : null}
+          {showEmptyState ? <p className="text-[11px] leading-relaxed text-slate-500">{disclaimer}</p> : null}
+        </div>
       </div>
-    </div>
 
       <div className="relative z-10 flex-1">
-        <div className="mx-auto flex w-full max-w-[820px] flex-col space-y-4 overflow-y-auto px-5 pb-16 pt-3">
-        {showEmptyState ? (
-          <>
-            <div className="flex flex-wrap gap-3 rounded-2xl border border-[#30363D] bg-[#0D1117]/70 px-4 py-3 text-xs text-slate-200 shadow-[0_10px_30px_rgba(0,0,0,0.45)] backdrop-blur">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">추천 질문</p>
-              <div className="flex flex-wrap items-center gap-2">
-                {loadingStarters ? <span className="text-[11px] text-slate-400">불러오는 중...</span> : null}
-                {starterPrompts.map((item) => (
+        <div className="mx-auto flex w-full max-w-[820px] flex-col space-y-4 overflow-y-auto px-5 pb-8 pt-2">
+          {showEmptyState ? (
+            <>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {(loadingStarters ? fallbackPrompts : starterPrompts).slice(0, 3).map((item) => (
                   <button
                     key={`${item.source}:${item.question}`}
                     type="button"
                     onClick={() => handleStarterSend(item.question)}
-                    className="flex items-center gap-2 rounded-full border border-[#30363D] bg-[#161B22] px-3 py-1 text-left text-[12px] font-semibold text-white shadow-[0_8px_24px_rgba(0,0,0,0.45)] transition hover:border-[#58A6FF]/70 hover:scale-[1.01]"
+                    className="flex h-full flex-col items-start gap-2 rounded-2xl border border-[#30363D] bg-[#0D1117]/70 px-4 py-3 text-left text-sm font-semibold text-white shadow-[0_10px_30px_rgba(0,0,0,0.35)] transition hover:border-[#58A6FF]/70 hover:translate-y-[-1px]"
                   >
-                    <span className="rounded-full bg-white/10 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wide text-blue-200">
-                      {item.source === "filing" ? "오늘 공시" : item.source === "profile" ? "관심기반" : "추천"}
-                    </span>
-                    <span className="whitespace-normal">{item.question}</span>
+                    <span className="text-lg">📈</span>
+                    <span className="text-[12px] font-medium text-slate-200">{item.question}</span>
                   </button>
                 ))}
               </div>
-            </div>
-            <div className="flex flex-wrap gap-3 rounded-2xl border border-[#2d333b] bg-[#0d1117]/60 px-4 py-3 text-xs text-slate-200 shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">나의 관심 태그</p>
-              <div className="flex flex-wrap items-center gap-2">
-                {profileError ? <span className="text-[11px] text-rose-300">{profileError}</span> : null}
-                {!profileError && profileTags.length === 0 ? (
-                  <span className="text-[11px] text-slate-500">아직 저장된 관심 태그가 없습니다.</span>
-                ) : null}
-                {profileTags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="rounded-full border border-[#30363D] bg-[#161b22] px-3 py-1 text-[12px] font-semibold text-white"
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <EmptyState
-              title="메시지가 없습니다"
-              description="새 세션을 시작하거나 궁금한 점을 바로 질문해보세요."
-              className="rounded-2xl border border-[#30363D] bg-[#0D1117]/70 px-4 py-6 text-xs text-slate-300"
-            />
-          </>
-        ) : (
-          messages.map((message) => (
-            <ChatMessageBubble
-              key={message.id}
-              {...message}
-              onRetry={
-                message.role === "assistant" && message.meta?.retryable && message.meta.status !== "ready"
-                  ? () => onRetry(message.id)
-                  : undefined
-              }
-            />
-          ))
-        )}
-      </div>
+              <EmptyState
+                title="메시지가 없습니다"
+                description="새 세션을 시작하거나 궁금한 점을 바로 질문해보세요."
+                className="rounded-2xl border border-[#30363D] bg-[#0D1117]/70 px-4 py-6 text-xs text-slate-300"
+              />
+            </>
+          ) : (
+            messages.map((message) => (
+              <ChatMessageBubble
+                key={message.id}
+                {...message}
+                onRetry={
+                  message.role === "assistant" && message.meta?.retryable && message.meta.status !== "ready"
+                    ? () => onRetry(message.id)
+                    : undefined
+                }
+              />
+            ))
+          )}
+        </div>
       </div>
 
       <div

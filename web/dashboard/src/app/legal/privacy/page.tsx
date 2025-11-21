@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { LegalDocumentPage, type LegalSection } from "@/app/legal/_components/LegalDocumentPage";
 import { LEGAL_COMPANY, buildDpoContactSection } from "@/app/legal/constants";
 
-const { updatedAt, name: companyName, contact: companyContact } = LEGAL_COMPANY;
+const { updatedAt, name: companyName } = LEGAL_COMPANY;
 
 export const metadata: Metadata = {
   title: "개인정보 처리방침 | Nuvien",

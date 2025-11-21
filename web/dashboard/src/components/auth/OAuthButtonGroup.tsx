@@ -2,7 +2,9 @@
 
 import supabase from "@/lib/supabase";
 
-const PROVIDERS = [
+type OAuthProvider = "google" | "kakao" | "naver";
+
+const PROVIDERS: Array<{ id: OAuthProvider; label: string }> = [
   { id: "google", label: "Google" },
   { id: "kakao", label: "Kakao" },
   { id: "naver", label: "Naver" },
@@ -21,7 +23,12 @@ export function OAuthButtonGroup({ callbackUrl, disabled }: Props) {
           key={provider.id}
           type="button"
           disabled={disabled}
-          onClick={() => supabase.auth.signInWithOAuth({ provider: provider.id as any, options: { redirectTo: callbackUrl ?? `${window.location.origin}/auth/callback` } })}
+          onClick={() =>
+            supabase.auth.signInWithOAuth({
+              provider: provider.id,
+              options: { redirectTo: callbackUrl ?? `${window.location.origin}/auth/callback` },
+            })
+          }
           className="flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 py-2 text-sm font-medium text-white transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {provider.label} 계정으로 계속하기

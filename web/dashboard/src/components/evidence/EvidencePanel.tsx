@@ -6,7 +6,7 @@ import { EvidenceDiffTabs } from "./EvidenceDiffTabs";
 import { EvidencePanelStoreProvider } from "./EvidencePanelStore";
 import { EvidenceList } from "./EvidenceList";
 import { EvidencePdfPanel } from "./EvidencePdfPanel";
-import type { EvidencePanelProps, EvidenceItem, PlanTier } from "./types";
+import type { EvidencePanelProps, EvidenceItem } from "./types";
 import { useEvidencePanelController } from "./useEvidencePanelController";
 
 export function EvidencePanel(props: EvidencePanelProps) {

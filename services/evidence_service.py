@@ -8,13 +8,12 @@ import hashlib
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 from pydantic import ValidationError
-from sqlalchemy import select, tuple_
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from core.logging import get_logger
 from models.evidence import EvidenceSnapshot
 from models.filing import Filing
-from models.table_extraction import TableCell, TableMeta
 from schemas.api.rag import EvidenceAnchor, SelfCheckResult
 
 DiffMeta = Dict[str, Any]
@@ -219,87 +218,8 @@ def _collect_table_keys(
 
 
 def _attach_table_metadata(db: Session, evidence_items: List[Dict[str, Any]]) -> None:
-    table_keys, hints = _collect_table_keys(evidence_items)
-    if not table_keys:
-        for item in evidence_items:
-            item.pop("table_hint", None)
-        return
-    unique_keys = list(dict.fromkeys(table_keys))
-    rows = (
-        db.query(TableMeta)
-        .filter(
-            tuple_(TableMeta.filing_id, TableMeta.page_number, TableMeta.table_index).in_(unique_keys)
-        )
-        .all()
-    )
-    table_map: Dict[Tuple[str, int, int], TableMeta] = {
-        (str(row.filing_id), row.page_number or 0, row.table_index or 0): row for row in rows
-    }
-    row_filters: List[Tuple[uuid.UUID, int]] = []
-    for hint in hints.values():
-        table_meta = table_map.get(
-            (str(hint["filing_id"]), hint.get("page_number") or 0, hint.get("table_index") or 0)
-        )
-        if not table_meta:
-            continue
-        row_index = hint.get("row_index")
-        if row_index is None:
-            continue
-        row_filters.append((table_meta.id, row_index))
-    unique_row_filters = list(dict.fromkeys(row_filters))
-    cell_map: Dict[Tuple[uuid.UUID, int], List[TableCell]] = {}
-    if unique_row_filters:
-        cell_rows = (
-            db.query(TableCell)
-            .filter(tuple_(TableCell.table_id, TableCell.row_index).in_(unique_row_filters))
-            .order_by(TableCell.table_id.asc(), TableCell.column_index.asc())
-            .all()
-        )
-        for cell in cell_rows:
-            cell_map.setdefault((cell.table_id, cell.row_index), []).append(cell)
+    # Table extraction pipeline removed; strip hints safely.
     for item in evidence_items:
-        hint_key = item.get("urn_id") or item.get("urnId") or str(id(item))
-        hint = hints.get(hint_key)
-        if not hint:
-            item.pop("table_hint", None)
-            continue
-        table_meta = table_map.get(
-            (str(hint["filing_id"]), hint.get("page_number") or 0, hint.get("table_index") or 0)
-        )
-        if not table_meta:
-            item.pop("table_hint", None)
-            continue
-        row_index = hint.get("row_index")
-        cells = cell_map.get((table_meta.id, row_index)) if row_index is not None else None
-        focus_cells: List[Dict[str, Any]] = []
-        if cells:
-            for cell in cells:
-                numeric_value = float(cell.numeric_value) if cell.numeric_value is not None else None
-                focus_cells.append(
-                    {
-                        "column_index": cell.column_index,
-                        "header_path": cell.header_path or [],
-                        "value": cell.raw_value,
-                        "normalized_value": cell.normalized_value,
-                        "numeric_value": numeric_value,
-                        "value_type": cell.value_type,
-                        "confidence": cell.confidence,
-                    }
-                )
-        item["table_reference"] = {
-            "table_id": str(table_meta.id),
-            "page_number": table_meta.page_number,
-            "table_index": table_meta.table_index,
-            "title": table_meta.table_title,
-            "row_count": table_meta.row_count,
-            "column_count": table_meta.column_count,
-            "header_rows": table_meta.header_rows,
-            "confidence": table_meta.confidence,
-            "column_headers": table_meta.column_headers or [],
-            "focus_row_index": row_index,
-            "focus_row_cells": focus_cells,
-            "explorer_url": f"/table-explorer/tables/{table_meta.id}",
-        }
         item.pop("table_hint", None)
 
 

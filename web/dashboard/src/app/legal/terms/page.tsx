@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { LegalDocumentPage, type LegalSection } from "@/app/legal/_components/LegalDocumentPage";
 import { LEGAL_COMPANY, buildCompanyContactSection } from "@/app/legal/constants";
 
-const { name: companyName, address: companyAddress, contact: companyContact, updatedAt } = LEGAL_COMPANY;
+const { name: companyName, updatedAt } = LEGAL_COMPANY;
 
 export const metadata: Metadata = {
   title: "서비스 이용약관 | Nuvien",

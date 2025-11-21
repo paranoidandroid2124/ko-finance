@@ -12,8 +12,6 @@ MIGRATIONS=(
   "create_ingest_dlq.sql"
   "add_ingest_viewer_flags.sql"
   "add_light_rbac.sql"
-  "create_table_extraction.sql"
-  "update_alert_rule_schema.sql"
 )
 
 log() {

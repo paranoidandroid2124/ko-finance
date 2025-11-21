@@ -41,13 +41,6 @@ _DEFAULT_ONBOARDING_CONTENT: Dict[str, Any] = {
     },
     "checklist": [
         {
-            "id": "watchlist-rule",
-            "title": "워치리스트 규칙 확인",
-            "description": "자동으로 감지된 공시/뉴스 룰과 Slack 연동 예시를 살펴보세요.",
-            "tips": ["샘플 룰을 복사해 나만의 룰을 만들 수 있어요."],
-            "cta": {"label": "워치리스트 둘러보기", "href": "/alerts/watchlist"},
-        },
-        {
             "id": "chat-rag",
             "title": "AI 애널리스트에게 질문",
             "description": "Evidence-first 답변과 Diff 뷰어를 체험해 보세요.",
@@ -74,7 +67,7 @@ _DEFAULT_ONBOARDING_CONTENT: Dict[str, Any] = {
                         "badge": "공시",
                         "headline": "삼성전자, 1.5조 규모 파운드리 투자",
                         "summary": "시설투자 확대와 더불어 파운드리 라인 전환 계획을 공시했습니다.",
-                        "link": "/alerts/watchlist?sample=1",
+                        "link": "/chat",
                         "meta": {"ticker": "005930.KS", "publishedAt": "오늘 09:10"},
                     },
                     {
@@ -82,7 +75,7 @@ _DEFAULT_ONBOARDING_CONTENT: Dict[str, Any] = {
                         "badge": "뉴스",
                         "headline": "배터리 3사, IRA 세액공제 확대 수혜",
                         "summary": "미 에너지부 가이드라인 변경으로 국내 셀 업체들의 수혜 폭이 커질 전망입니다.",
-                        "link": "/alerts/watchlist?sample=2",
+                        "link": "/chat",
                         "meta": {"ticker": "373220.KS", "publishedAt": "오늘 08:45"},
                     },
                 ],

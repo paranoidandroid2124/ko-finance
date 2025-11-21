@@ -2,7 +2,6 @@
 
 import classNames from "classnames";
 import { useCallback, useMemo } from "react";
-import { ChatAnswerBadge } from "@/components/legal";
 import ToolWidgetRenderer from "@/components/chat/ToolWidgetRenderer";
 import RagSourcesWidget from "@/components/chat/widgets/RagSourcesWidget";
 import type { ChatMessageMeta, ChatRole, CitationEntry, CitationMap, RagSourceReference } from "@/store/chatStore";
@@ -17,7 +16,6 @@ export type ChatMessageProps = {
   content: string;
   timestamp: string;
   meta?: ChatMessageMeta;
-  isGuardrail?: boolean;
   onRetry?: () => void;
 };
 
@@ -328,7 +326,6 @@ export function ChatMessageBubble({ id, role, content, timestamp, meta, isGuardr
       >
         {!isUser ? (
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-medium text-text-secondaryLight dark:text-text-secondaryDark">
-            <ChatAnswerBadge />
             {isToolCall ? (
               <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
                 Tool Call

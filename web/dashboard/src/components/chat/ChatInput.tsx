@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChatInputDisclaimer } from "@/components/legal";
 
 export type ChatInputProps = {
   onSubmit?: (message: string) => void;
@@ -9,10 +8,7 @@ export type ChatInputProps = {
   onFocusChange?: (focused: boolean) => void;
 };
 
-const QUICK_COMMANDS = [
-  { label: "최근 분석 비교", value: "/compare recent analysis" },
-  { label: "LightMem 상태", value: "/memory status" },
-];
+const QUICK_COMMANDS: Array<{ label: string; value: string }> = [];
 
 export function ChatInput({ onSubmit, disabled, onFocusChange }: ChatInputProps) {
   const [value, setValue] = useState("");
@@ -63,7 +59,7 @@ export function ChatInput({ onSubmit, disabled, onFocusChange }: ChatInputProps)
 
   return (
     <div className="space-y-3" data-onboarding-id="chat-input">
-      {!disabled && (
+      {Boolean(QUICK_COMMANDS.length) && !disabled ? (
         <div className="flex flex-wrap gap-2 text-[11px]">
           {QUICK_COMMANDS.map((command) => (
             <button
@@ -85,7 +81,7 @@ export function ChatInput({ onSubmit, disabled, onFocusChange }: ChatInputProps)
             </button>
           ))}
         </div>
-      )}
+      ) : null}
       <div className="relative">
         <div
           aria-hidden
@@ -112,13 +108,13 @@ export function ChatInput({ onSubmit, disabled, onFocusChange }: ChatInputProps)
             onChange={(event) => setValue(event.target.value)}
             onKeyDown={handleKeyDown}
             ref={textareaRef}
-            placeholder="질문을 입력하면 공시 기반 분석을 바로 제공합니다..."
-            className="min-h-[56px] flex-1 resize-none bg-transparent text-sm leading-relaxed text-white outline-none placeholder:text-slate-500"
+            placeholder="종목·이슈를 입력하면 공시·뉴스·시세 기반 분석을 바로 제공합니다. 예) “카카오 2023년 정정공시 이슈 정리해줘”"
+            className="min-h-[64px] flex-1 resize-none bg-transparent text-base leading-relaxed text-white outline-none placeholder:text-slate-500"
           />
           <button
             type="submit"
             disabled={disabled}
-            className="group relative inline-flex items-center gap-2 overflow-hidden rounded-full bg-gradient-to-r from-[#58A6FF] to-[#58A6FF] px-4 py-2 text-sm font-semibold text-white shadow-[0_8px_28px_rgba(88,166,255,0.35)] transition duration-200 hover:-translate-y-[1px] hover:shadow-[0_12px_42px_rgba(88,166,255,0.55)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#58A6FF]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#161B22] disabled:cursor-not-allowed disabled:opacity-60"
+            className="group relative inline-flex items-center gap-2 overflow-hidden rounded-full bg-gradient-to-r from-[#58A6FF] to-[#58A6FF] px-6 py-3 text-base font-semibold text-white shadow-[0_12px_42px_rgba(88,166,255,0.45)] transition duration-200 hover:-translate-y-[1px] hover:shadow-[0_16px_60px_rgba(88,166,255,0.65)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#58A6FF]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#161B22] disabled:cursor-not-allowed disabled:opacity-60"
           >
             <span
               className="absolute inset-0 opacity-0 blur-2xl transition duration-200 group-hover:opacity-70"
@@ -131,7 +127,10 @@ export function ChatInput({ onSubmit, disabled, onFocusChange }: ChatInputProps)
           </button>
         </form>
       </div>
-      <ChatInputDisclaimer className="text-center text-[10px] text-slate-500" />
+      <p className="text-center text-[10px] text-slate-500">
+        Nuvien AI Copilot의 답변은 참고용 일반 정보이며, 투자·법률·세무 자문이 아닙니다. 중요한 의사결정 전에는 반드시 원문과
+        공시 자료를 확인해 주세요.
+      </p>
     </div>
   );
 }

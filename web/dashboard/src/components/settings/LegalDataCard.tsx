@@ -6,7 +6,7 @@ import { ShieldCheck } from "lucide-react";
 
 import { SettingsDataRetentionList } from "@/components/legal";
 import { useDsarRequests, useCreateDsarRequest } from "@/hooks/useDsarRequests";
-import type { DsarRequest, DsarRequestType } from "@/lib/accountApi";
+import type { DsarRequestType } from "@/lib/accountApi";
 import { DSAR_STATUS_META, DSAR_REQUEST_TYPE_META } from "@/lib/dsarMeta";
 import { useToastStore } from "@/store/toastStore";
 

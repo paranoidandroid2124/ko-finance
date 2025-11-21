@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { BarChart2, Brain, Zap, FileSpreadsheet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 import { HeroDemo } from "@/components/landing/HeroDemo";
 import { NuvienHero } from "@/components/landing/NuvienHero";
 import { TermDefinition } from "@/components/ui/TermDefinition";
+import { useAuth } from "@/lib/authContext";
 
 type FeaturePreviewType = "extract" | "chart" | "export";
 
@@ -160,6 +162,15 @@ function FeaturePreview({ type, active }: { type: FeaturePreviewType; active: bo
 }
 
 export default function LandingPage() {
+  const { user, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && user) {
+      router.replace("/dashboard");
+    }
+  }, [loading, router, user]);
+
   return (
     <div className="min-h-screen bg-slate-950 text-white">
       <NuvienHero />
@@ -212,7 +223,7 @@ export default function LandingPage() {
           <p className="text-slate-200">생성된 리포트는 참고용 자료이며, 모든 투자 판단과 책임은 이용자에게 있습니다.</p>
           <div className="flex flex-wrap items-center justify-center gap-4">
             <Link
-              href="/chat?guest=1"
+              href="/dashboard?guest=1"
               className="inline-flex items-center rounded-full bg-white px-6 py-3 text-sm font-semibold text-slate-900 shadow-lg shadow-white/30"
             >
               무료 체험 시작

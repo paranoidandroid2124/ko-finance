@@ -6,10 +6,6 @@ from kombu import Queue
 from core.env import env_int, env_str
 from services.schedule_loader import as_celery_schedule, load_schedule_config
 
-ALERT_EVALUATION_INTERVAL_SECONDS = env_int("ALERT_EVALUATION_INTERVAL_SECONDS", 60, minimum=15)
-ALERT_EVALUATION_TASK_TIMEOUT = env_int("ALERT_EVALUATION_TASK_TIMEOUT", 55, minimum=15)
-ALERT_EVALUATION_LIMIT = env_int("ALERT_EVALUATION_LIMIT", 200, minimum=1)
-ALERT_EVALUATION_PREFETCH_FACTOR = env_int("ALERT_EVALUATION_PREFETCH_FACTOR", 4, minimum=1)
 CELERY_TIMEZONE = env_str("CELERY_TIMEZONE", "Asia/Seoul") or "UTC"
 CELERY_DEFAULT_QUEUE = env_str("CELERY_DEFAULT_QUEUE", "default") or "default"
 
@@ -31,29 +27,6 @@ app.conf.update(
 
 yaml_timezone, yaml_entries, _ = load_schedule_config()
 schedule_from_yaml = as_celery_schedule(yaml_entries) if yaml_entries else {}
-alerts_entry = schedule_from_yaml.get("alerts-evaluate-rules")
-if alerts_entry is None:
-    schedule_from_yaml["alerts-evaluate-rules"] = {
-        "task": "alerts.evaluate_rules",
-        "schedule": timedelta(seconds=ALERT_EVALUATION_INTERVAL_SECONDS),
-        "args": [],
-        "kwargs": {
-            "limit": ALERT_EVALUATION_LIMIT,
-            "prefetch_factor": ALERT_EVALUATION_PREFETCH_FACTOR,
-        },
-        "options": {
-            "time_limit": ALERT_EVALUATION_TASK_TIMEOUT,
-            "expires": ALERT_EVALUATION_TASK_TIMEOUT,
-        },
-    }
-else:
-    kwargs = alerts_entry.setdefault("kwargs", {})
-    kwargs.setdefault("limit", ALERT_EVALUATION_LIMIT)
-    kwargs.setdefault("prefetch_factor", ALERT_EVALUATION_PREFETCH_FACTOR)
-    options = alerts_entry.setdefault("options", {})
-    options.setdefault("time_limit", ALERT_EVALUATION_TASK_TIMEOUT)
-    options.setdefault("expires", ALERT_EVALUATION_TASK_TIMEOUT)
-
 if schedule_from_yaml:
     app.conf.beat_schedule.update(schedule_from_yaml)
 if yaml_timezone:

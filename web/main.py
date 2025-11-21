@@ -91,7 +91,6 @@ def prometheus_metrics():
 
 app.include_router(routers.dashboard.router, prefix="/api/v1")
 app.include_router(routers.public.router, prefix="/api/v1")
-app.include_router(routers.alerts.router, prefix="/api/v1")
 app.include_router(routers.chat.router, prefix="/api/v1")
 app.include_router(routers.rag.router, prefix="/api/v1")
 app.include_router(routers.search.router, prefix="/api/v1")

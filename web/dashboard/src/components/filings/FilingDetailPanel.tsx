@@ -33,7 +33,7 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
         downloadUrl: filing.pdfDownloadUrl
       });
 
-      router.push(`/chat?session=${sessionId}`);
+      router.push(`/dashboard?session=${sessionId}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : '세션을 생성하지 못했습니다.';
       window.alert(message);

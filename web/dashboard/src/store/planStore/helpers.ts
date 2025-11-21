@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import type { PlanTier } from "./types";
 import { FEATURE_STARTER_ENABLED } from "@/config/features";

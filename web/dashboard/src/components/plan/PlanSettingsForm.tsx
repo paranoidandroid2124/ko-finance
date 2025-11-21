@@ -45,11 +45,6 @@ const ENTITLEMENT_OPTIONS: Array<{ value: string; label: string; helper: string 
     helper: "공시와 뉴스를 나란히 비교할 수 있게 열어줘요.",
   },
   {
-    value: "search.alerts",
-    label: "알림 검색",
-    helper: "관심 키워드와 조건으로 자동 알림을 만들 수 있어요.",
-  },
-  {
     value: "search.export",
     label: "데이터 내보내기",
     helper: "CSV로 데이터를 내려받고 팀과 공유할 수 있어요.",

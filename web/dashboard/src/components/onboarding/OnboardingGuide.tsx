@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import clsx from "clsx";
 
 const STORAGE_KEY = "nuvien_onboarding_seen";
 

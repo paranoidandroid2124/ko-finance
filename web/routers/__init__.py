@@ -9,7 +9,6 @@ from typing import Dict, Optional
 _ROUTER_MODULES = [
     "admin",
     "auth",
-    "alerts",
     "account",
     "chat",
     "company",
@@ -25,6 +24,7 @@ _ROUTER_MODULES = [
     "tools",
     "tools_text",
     "recommendations",
+    "feed",
     "profile",
     "ops",
     "search",

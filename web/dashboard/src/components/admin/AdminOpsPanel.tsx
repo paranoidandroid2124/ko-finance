@@ -6,19 +6,17 @@ import { useAdminSession } from "@/hooks/useAdminSession";
 import { resolveApiBase } from "@/lib/apiBase";
 import { useToastStore } from "@/store/toastStore";
 
-import { AdminAlertChannelsPanel } from "./AdminOpsAlertChannelsPanel";
 import { AdminNewsPipelinePanel } from "./AdminOpsNewsPanel";
 import { AdminOpsIntegrationsPanel } from "./AdminOpsIntegrationsPanel";
 import { AdminOpsSchedulesPanel } from "./AdminOpsSchedulesPanel";
-import { AdminOpsWatchlistPanel } from "./AdminOpsWatchlistPanel";
 
-type OpsSection = "schedules" | "news" | "integrations" | "watchlist" | "alerts";
+type OpsSection = "schedules" | "news" | "integrations";
 
 export interface AdminOpsPanelProps {
   sections?: OpsSection[];
 }
 
-const DEFAULT_SECTIONS: OpsSection[] = ["schedules", "news", "integrations", "watchlist", "alerts"];
+const DEFAULT_SECTIONS: OpsSection[] = ["schedules", "news", "integrations"];
 
 const SECTION_COPY: Record<OpsSection, { title: string; description: string }> = {
   schedules: {
@@ -32,14 +30,6 @@ const SECTION_COPY: Record<OpsSection, { title: string; description: string }> =
   integrations: {
     title: "운영 & 접근 제어",
     description: "Langfuse 토큰과 외부 API 키를 최신 상태로 유지해요.",
-  },
-  watchlist: {
-    title: "워치리스트 모니터링",
-    description: "워치리스트 알림 전송 성공률과 실패 기록을 집중적으로 살펴봐요.",
-  },
-  alerts: {
-    title: "알림 채널",
-    description: "텔레그램, 이메일, 웹훅 채널을 살펴보고 업데이트해요.",
   },
 };
 
@@ -132,12 +122,6 @@ export function AdminOpsPanel({ sections }: AdminOpsPanelProps) {
         ) : null}
         {normalizedSections.includes("integrations") ? (
           <AdminOpsIntegrationsPanel adminActor={adminSession.actor} toast={toast} />
-        ) : null}
-        {normalizedSections.includes("watchlist") ? (
-          <AdminOpsWatchlistPanel adminActor={adminSession.actor} toast={toast} />
-        ) : null}
-        {normalizedSections.includes("alerts") ? (
-          <AdminAlertChannelsPanel adminActor={adminSession.actor} toast={toast} />
         ) : null}
       </div>
     </section>

@@ -36,7 +36,6 @@ import type { PlanTier } from "@/store/planStore/types";
 import { useToastStore } from '@/store/toastStore';
 import { useToolStore } from '@/store/toolStore';
 import { PLAN_TIER_CONFIG } from "@/config/planConfig";
-import { LEGAL_COPY } from "@/components/legal/LegalCopy";
 
 const isPlanTier = (value: string | undefined): value is PlanTier =>
   value === 'free' || value === 'starter' || value === 'pro' || value === 'enterprise';
@@ -1030,6 +1029,7 @@ export function useChatController(): ChatController {
     [
       focusEvidence,
       handleChatQuotaExceeded,
+      activeSessionId,
       setSessionEvidence,
       setSessionTelemetry,
       showToast,
@@ -1224,7 +1224,11 @@ export function useChatController(): ChatController {
   const sessionTitle = activeSession?.title ?? '새 세션';
   const showEmptyState = messages.length === 0;
   const hasContextBanner = useMemo(() => Boolean(contextSummary), [contextSummary]);
-  const disclaimer = useMemo(() => LEGAL_COPY.chat.sessionDisclaimer, []);
+  const disclaimer = useMemo(
+    () =>
+      "Nuvien AI Copilot의 답변은 참고용 일반 정보이며, 투자·법률·세무 자문이 아닙니다. 중요한 의사결정 전에는 반드시 원문과 공시 자료를 확인해 주세요.",
+    []
+  );
 
   return {
     plan: {

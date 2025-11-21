@@ -13,6 +13,8 @@ import { useOnboardingStore } from "@/store/onboardingStore";
 import { ToolOverlay } from "../tools/ToolOverlay";
 import { AppFooter } from "./AppFooter";
 import { useAuth } from "@/lib/authContext";
+import { useSettingsModalStore } from "@/store/settingsModalStore";
+import { SettingsModal } from "@/components/settings/SettingsModal";
 
 type AppShellProps = {
   children: React.ReactNode;
@@ -23,6 +25,7 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const setNeedsOnboarding = useOnboardingStore((state) => state.setNeedsOnboarding);
+  const openSettings = useSettingsModalStore((state) => state.openModal);
   const displayName =
     user?.email ??
     (typeof user?.user_metadata?.full_name === "string" ? user.user_metadata.full_name : undefined) ??
@@ -60,7 +63,11 @@ export function AppShell({ children }: AppShellProps) {
               <span className="hidden text-[11px] uppercase tracking-[0.3em] text-slate-400 sm:inline">Dashboard</span>
             </Link>
             <Link
-              href="/settings"
+              href="#"
+              onClick={(event) => {
+                event.preventDefault();
+                openSettings();
+              }}
               className="inline-flex items-center gap-1.5 rounded-full border border-[#30363D] bg-[#161B22] px-3 py-1 text-[12px] font-semibold text-slate-200 shadow-[0_8px_24px_rgba(0,0,0,0.35)] transition hover:border-[#58A6FF]/70 hover:text-white"
             >
               <Settings className="h-4 w-4 text-[#58A6FF]" />
@@ -80,6 +87,7 @@ export function AppShell({ children }: AppShellProps) {
           <Suspense fallback={null}>
             <OnboardingModal />
           </Suspense>
+          <SettingsModal />
           <main className="flex flex-1 min-h-0 flex-col gap-4">
             <div className="flex-1 min-h-0">{children}</div>
             <AppFooter />

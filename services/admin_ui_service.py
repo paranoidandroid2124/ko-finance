@@ -47,7 +47,7 @@ _DEFAULT_UI_SETTINGS: Dict[str, Any] = {
 }
 
 _DATE_RANGE_CHOICES = {"1D", "1W", "1M", "3M", "6M", "1Y"}
-_LANDING_VIEW_CHOICES = {"overview", "alerts", "evidence", "operations"}
+_LANDING_VIEW_CHOICES = {"overview", "evidence", "operations"}
 _COLOR_PATTERN = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 def _load_raw() -> Dict[str, Any]:
     if _UI_SETTINGS_PATH.exists():

@@ -57,7 +57,7 @@ export function ChatPageShell({ controller, reportAction, guestBadge }: ChatPage
           dimmed={focusMode}
         />
       ) : null}
-      <div className="flex flex-1 min-h-0 flex-col gap-5 xl:flex-row">
+      <div className="flex flex-col gap-5 xl:flex-row">
         <ChatHistoryList
           sessions={history.sessions}
           selectedId={history.selectedId ?? undefined}

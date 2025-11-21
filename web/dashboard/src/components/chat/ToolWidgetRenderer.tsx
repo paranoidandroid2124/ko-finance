@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 
 import type { ToolAttachment } from "@/store/chatStore";
 import { useToolStore } from "@/store/toolStore";
@@ -22,12 +22,15 @@ type ToolWidgetRendererProps = {
 export default function ToolWidgetRenderer({ attachment }: ToolWidgetRendererProps) {
   const openTool = useToolStore((state) => state.openTool);
 
-  const handleDrillDown = (ticker: string) => {
-    if (!ticker || !ticker.trim()) {
-      return;
-    }
-    openTool("peer_compare", { ticker: ticker.trim() });
-  };
+  const handleDrillDown = useCallback(
+    (ticker: string) => {
+      if (!ticker || !ticker.trim()) {
+        return;
+      }
+      openTool("peer_compare", { ticker: ticker.trim() });
+    },
+    [openTool]
+  );
 
   const content = useMemo(() => {
     switch (attachment.type) {
@@ -84,7 +87,7 @@ export default function ToolWidgetRenderer({ attachment }: ToolWidgetRendererPro
           </pre>
         );
     }
-  }, [attachment, openTool]);
+  }, [attachment, handleDrillDown]);
 
   return <div className="rounded-2xl border border-white/10 bg-white/5 p-3">{content}</div>;
 }
