@@ -52,6 +52,12 @@ a {
   @apply text-xs font-semibold uppercase tracking-[0.35em] text-text-secondaryDark;
 }
 
+.focused-mode {
+  opacity: 0.5;
+  filter: blur(2px);
+  transition: opacity 0.3s ease, filter 0.3s ease;
+}
+
 @media print {
   aside,
   header,

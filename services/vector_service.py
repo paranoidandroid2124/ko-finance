@@ -13,6 +13,7 @@ import litellm
 from litellm.exceptions import ContextWindowExceededError
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient, models
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 from services.rag_shared import build_anchor_payload, normalize_reliability
 
@@ -111,12 +112,22 @@ def init_collection() -> None:
     try:
         client.get_collection(collection_name=COLLECTION_NAME)
         logger.debug("Qdrant collection '%s' already exists.", COLLECTION_NAME)
-    except Exception:
+        return
+    except UnexpectedResponse as exc:
+        if getattr(exc, "status_code", None) != 404:
+            raise
         logger.info("Creating Qdrant collection '%s'.", COLLECTION_NAME)
+    # Create collection and tolerate 'already exists' races
+    try:
         client.create_collection(
             collection_name=COLLECTION_NAME,
             vectors_config=models.VectorParams(size=VECTOR_DIMENSION, distance=models.Distance.COSINE),
         )
+    except UnexpectedResponse as exc:
+        if getattr(exc, "status_code", None) == 409:
+            logger.debug("Qdrant collection '%s' already exists (409).", COLLECTION_NAME)
+            return
+        raise
 
 
 def store_chunk_vectors(

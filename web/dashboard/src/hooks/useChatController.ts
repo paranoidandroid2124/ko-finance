@@ -1123,6 +1123,17 @@ export function useChatController(): ChatController {
           turnId
         });
       } catch (error) {
+        if (error instanceof ApiError && error.code === 'guest.limit_reached') {
+          const message =
+            (typeof error.message === 'string' && error.message) ||
+            '게스트 체험은 한 번만 제공됩니다. 가입 후 계속 이용해 주세요.';
+          showToast({
+            intent: 'warning',
+            title: '가입이 필요해요',
+            message
+          });
+          return;
+        }
         const message = error instanceof Error ? error.message : '메시지를 전송하지 못했습니다.';
         showToast({
           intent: 'error',

@@ -56,9 +56,9 @@ from services import (
     market_data_service,
     security_metadata_service,
     ingest_dlq_service,
-    table_extraction_service,
     rag_grid,
     watchlist_service,
+    snapshot_service,
 )
 from services.evidence_service import save_evidence_snapshot
 from services.ingest_errors import FatalIngestError, TransientIngestError
@@ -990,50 +990,6 @@ def process_filing(self, filing_id: str) -> str:
             raw_candidate = cast(Optional[str], filing.raw_md)
             raw_content = raw_candidate or raw_content
             chunk_count = len(extracted)
-            table_chunks: List[Dict[str, Any]] = []
-
-        def table_extraction_stage() -> None:
-            pdf_path = resolved_pdf_path or _ensure_pdf_path(filing)
-            if not pdf_path:
-                raise StageSkip("No PDF available for table extraction.")
-            try:
-                stats = table_extraction_service.extract_tables_for_filing(
-                    db,
-                    filing=filing,
-                    pdf_path=pdf_path,
-                )
-            except table_extraction_service.TableExtractionServiceError as exc:
-                receipt_no = cast(Optional[str], filing.receipt_no)
-                corp_code = cast(Optional[str], filing.corp_code)
-                ticker = cast(Optional[str], filing.ticker)
-                ingest_dlq_service.record_dead_letter(
-                    db,
-                    task_name="table_extraction",
-                    payload={"filing_id": str(filing.id), "pdf_path": pdf_path},
-                    error=str(exc),
-                    retries=getattr(self.request, "retries", 0),
-                    receipt_no=receipt_no,
-                    corp_code=corp_code,
-                    ticker=ticker,
-                )
-                raise
-            else:
-                logger.info(
-                    "table_extraction.persisted",
-                    extra={
-                        "filing_id": str(filing.id),
-                        "receipt_no": filing.receipt_no,
-                        "stored": stats.get("stored"),
-                        "deleted": stats.get("deleted"),
-                        "elapsed_ms": stats.get("elapsed_ms"),
-                    },
-                )
-                table_chunks.clear()
-                table_chunks.extend(stats.get("chunks") or [])
-
-            run_stage("extract_tables", table_extraction_stage, critical=False)
-            if table_chunks:
-                extracted.extend(table_chunks)
 
             _save_chunks(filing, extracted, db, commit=False)
             vector_metadata = _build_vector_metadata(filing)
@@ -2026,30 +1982,8 @@ def aggregate_event_study_summary() -> Dict[str, int]:
 
 @shared_task(name="tables.extract_receipt", bind=True, max_retries=INGEST_TASK_MAX_RETRIES)
 def extract_tables_for_receipt(self, receipt_no: str) -> Dict[str, Any]:
-    """Backfill normalized tables for a specific DART receipt number."""
-
-    db = _open_session()
-    try:
-        result = table_extraction_service.run_table_extraction_for_receipt(db, receipt_no)
-        logger.info(
-            "tables.extract.completed",
-            extra={"receipt_no": receipt_no, "stored": result.get("stored"), "elapsed_ms": result.get("elapsed_ms")},
-        )
-        return {"receipt_no": receipt_no, **result}
-    except table_extraction_service.TableExtractionServiceError as exc:
-        db.rollback()
-        ingest_dlq_service.record_dead_letter(
-            db,
-            task_name="tables.extract",
-            payload={"receipt_no": receipt_no},
-            error=str(exc),
-            retries=getattr(self.request, "retries", 0),
-            receipt_no=receipt_no,
-        )
-        logger.error("tables.extract.failed receipt=%s error=%s", receipt_no, exc)
-        return {"receipt_no": receipt_no, "error": str(exc)}
-    finally:
-        db.close()
+    """Table extraction pipeline has been disabled."""
+    return {"receipt_no": receipt_no, "status": "disabled"}
 
 
 @shared_task(name="rag.grid.run_job")
@@ -2062,6 +1996,42 @@ def run_rag_grid_job(job_id: str) -> None:
 def process_rag_grid_cell(cell_id: str) -> None:
     """Execute a single QA grid cell."""
     rag_grid.process_grid_cell(cell_id)
+
+
+@shared_task(name="rag.snapshot.company")
+def run_snapshot_company_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute company snapshot tool asynchronously and persist the tool_output."""
+
+    session_id = _safe_uuid(payload.get("session_id"))
+    turn_id = _safe_uuid(payload.get("turn_id"))
+    assistant_message_id = _safe_uuid(payload.get("assistant_message_id"))
+    ticker = (payload.get("ticker") or "").strip()
+    idempotency_key = payload.get("idempotency_key")
+
+    if not session_id or not turn_id or not assistant_message_id or not ticker:
+        return {"status": "error", "message": "invalid_payload"}
+
+    with SessionLocal() as db:
+        try:
+            result = snapshot_service.run_snapshot_flow(
+                db,
+                session_id=session_id,
+                turn_id=turn_id,
+                assistant_message_id=assistant_message_id,
+                ticker=ticker,
+                idempotency_key=idempotency_key,
+            )
+            return result
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "Snapshot task failed (session=%s, turn=%s, ticker=%s): %s",
+                session_id,
+                turn_id,
+                ticker,
+                exc,
+                exc_info=True,
+            )
+            return {"status": "error", "message": "snapshot_failed"}
 
 
 @shared_task(name="compliance.cleanup_data_retention")
@@ -2078,3 +2048,33 @@ def process_dsar_queue(limit: int = 5) -> Dict[str, int]:
     stats = dsar_service.process_pending_requests(limit=limit)
     logger.info("compliance.process_dsar_queue processed: %s", stats)
     return stats
+
+
+@shared_task(name="reco.refresh_filings")
+def refresh_recommendations_cache() -> Dict[str, int]:
+    """Warm the recommendation cache by scanning recent filings."""
+
+    with SessionLocal() as db:
+        try:
+            count = recommendation_service.refresh_cache(db)
+            logger.info("Refreshed recommendation filings cache: %d items", count)
+            return {"count": count}
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Failed to refresh recommendation cache: %s", exc, exc_info=True)
+            return {"count": 0, "error": str(exc)}
+
+
+@shared_task(name="lightmem.cleanup_profile_cache")
+def cleanup_profile_cache() -> Dict[str, int]:
+    """Placeholder for periodic cleanup of expired profile summaries (in-memory mode)."""
+    # In Redis mode, TTL is handled automatically. For in-memory fallback, purge expired keys.
+    cleaned = 0
+    try:
+        from services.memory.session_store import build_default_store
+
+        store = build_default_store()
+        store.purge_expired()
+        cleaned = len(list(store.iter_session_ids()))
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Profile cache cleanup skipped: %s", exc)
+    return {"cleaned": cleaned}

@@ -9,6 +9,7 @@ from typing import Optional, Tuple, Union
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from core.env import env_int
 from database import get_db
 from models.chat import ChatMessage, ChatSession
 from schemas.api.chat import (
@@ -21,12 +22,13 @@ from schemas.api.chat import (
     ChatSessionRenameRequest,
     ChatSessionResponse,
 )
+from services.credit_service import charge_credits
 from services import chat_service
 from services.plan_service import PlanContext
+from services.lightmem_rate_limiter import RateLimitResult, check_limit as rate_limit
 from services.web_utils import parse_uuid
 from web.deps import get_plan_context
 from web.quota_guard import enforce_quota
-from services.credit_service import charge_credits
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -68,6 +70,67 @@ def _resolve_actor_headers(
     user_id = parse_uuid(x_user_id, detail="Invalid UUID format.")
     org_id = parse_uuid(x_org_id, detail="Invalid UUID format.")
     return user_id, org_id
+
+
+_GUEST_MESSAGE_LIMIT = env_int("GUEST_CHAT_MESSAGE_LIMIT", 1, minimum=0)
+_GUEST_MESSAGE_WINDOW_SECONDS = env_int("GUEST_CHAT_MESSAGE_WINDOW_SECONDS", 86400, minimum=60)
+_GUEST_FALLBACK_COUNTS: dict[str, int] = {}
+
+
+def _normalize_guest_token(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _enforce_guest_message_limit(
+    *,
+    user_id: Optional[uuid.UUID],
+    org_id: Optional[uuid.UUID],
+    guest_token: Optional[str],
+) -> None:
+    """Allow exactly one user-message when no authenticated user exists."""
+
+    if user_id or org_id or _GUEST_MESSAGE_LIMIT <= 0:
+        return
+
+    token = _normalize_guest_token(guest_token) or "anonymous"
+    result: RateLimitResult = rate_limit(
+        "guest.chat.message",
+        token,
+        limit=_GUEST_MESSAGE_LIMIT,
+        window_seconds=_GUEST_MESSAGE_WINDOW_SECONDS,
+    )
+
+    if getattr(result, "backend_error", False):
+        count = _GUEST_FALLBACK_COUNTS.get(token, 0) + 1
+        _GUEST_FALLBACK_COUNTS[token] = count
+        if count > _GUEST_MESSAGE_LIMIT:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "guest.limit_reached",
+                    "message": "게스트 모드는 한 번의 질문만 제공합니다. Google로 간단히 가입해 주세요.",
+                    "limit": _GUEST_MESSAGE_LIMIT,
+                    "remaining": max(_GUEST_MESSAGE_LIMIT - count, 0),
+                },
+            )
+        return
+
+    if not getattr(result, "allowed", True):
+        reset_at = getattr(result, "reset_at", None)
+        remaining = getattr(result, "remaining", 0)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "guest.limit_reached",
+                "message": "게스트 모드는 한 번의 질문만 제공합니다. Google로 간단히 가입해 주세요.",
+                "limit": _GUEST_MESSAGE_LIMIT,
+                "remaining": remaining,
+                "resetAt": reset_at.isoformat() if reset_at else None,
+            },
+        )
 
 
 @router.get("/sessions", response_model=ChatSessionListResponse)
@@ -202,6 +265,7 @@ def create_message(
     payload: ChatMessageCreateRequest,
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
+    x_guest_token: Optional[str] = Header(default=None, alias="X-Guest-Token"),
     idempotency_key_header: Optional[str] = Header(default=None, convert_underscores=False, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
     plan: PlanContext = Depends(get_plan_context),
@@ -211,6 +275,8 @@ def create_message(
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
     _guard_session_owner(session, user_id, org_id)
+    if payload.role == "user":
+        _enforce_guest_message_limit(user_id=user_id, org_id=org_id, guest_token=x_guest_token)
     enforce_quota("api.chat", plan=plan, user_id=user_id, org_id=org_id)
     # 크레딧 사전 체크 (사용자 메시지에만 적용)
     if payload.role == "user":

@@ -6,6 +6,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from copy import deepcopy
+import os
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Mapping
 
@@ -39,7 +40,7 @@ from schemas.api.rag_v2 import (
     RagQueryResponse as RagQueryV2Response,
     RagWarningSchema,
 )
-from schemas.router import RouteDecision, RouteAction
+from schemas.router import RouteDecision, RouteAction, SafetyDecision, ToolCall, UiContainer, PaywallTier
 from services import (
     chat_service,
     date_range_parser,
@@ -51,6 +52,7 @@ from services import (
     rag_grid,
     rag_pipeline,
     vector_service,
+    snapshot_service,
 )
 from services.agent_tools.event_study_tool import (
     EventStudyNotFoundError,
@@ -66,6 +68,8 @@ from services.plan_service import PlanContext
 import services.rag_metrics as rag_metrics
 from services.widgets.factory import generate_widgets
 from services.quota_guard import evaluate_quota
+from services.tool_registry import resolve_tool_by_call_name
+from services import snapshot_service
 
 def _extract_anchor(chunk: Dict[str, Any]) -> Optional[EvidenceAnchor]:
     metadata = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
@@ -217,6 +221,9 @@ def _build_evidence_payload(chunks: Iterable[Dict[str, Any]]) -> List[Dict[str, 
         download_url = metadata.get("download_url") or chunk.get("download_url")
         document_url = metadata.get("document_url") or chunk.get("document_url") or viewer_url or download_url
         document_title = metadata.get("title") or chunk.get("title")
+        source_id = metadata.get("document_id") or metadata.get("source_id") or chunk.get("document_id")
+        published_date = metadata.get("published_at") or metadata.get("filed_at") or chunk.get("filed_at")
+        relevance_score = safe_float(chunk.get("score"))
 
         evidence_model = RAGEvidence(
             urn_id=_resolve_urn(chunk, chunk_id=chunk_id),
@@ -237,6 +244,16 @@ def _build_evidence_payload(chunks: Iterable[Dict[str, Any]]) -> List[Dict[str, 
             document_title=document_title,
         )
         entry = evidence_model.model_dump(mode="json", exclude_none=True, exclude_unset=True)
+        source_meta = {
+            "document_id": source_id,
+            "document_title": document_title,
+            "page_number": safe_int(page_number),
+            "url": viewer_url or download_url or document_url,
+            "published_date": published_date,
+        }
+        entry["source_metadata"] = {k: v for k, v in source_meta.items() if v is not None}
+        if relevance_score is not None:
+            entry["relevance_score"] = relevance_score
         table_hint = _table_hint(metadata, safe_int(page_number))
         if table_hint:
             entry["table_hint"] = table_hint
@@ -249,11 +266,27 @@ def _build_sources_payload(context: Iterable[Dict[str, Any]]) -> List[Dict[str, 
     for item in context or []:
         if not isinstance(item, dict):
             continue
-        title = item.get("document_title") or item.get("title") or item.get("source") or "출처"
-        page_number = safe_int(item.get("page_number") or item.get("page"))
+        source_meta = item.get("source_metadata") if isinstance(item.get("source_metadata"), dict) else {}
+        title = (
+            item.get("document_title")
+            or source_meta.get("document_title")
+            or item.get("title")
+            or item.get("source")
+            or "출처"
+        )
+        page_number = safe_int(item.get("page_number") or item.get("page") or source_meta.get("page_number"))
         page_label = f"p.{page_number}" if page_number is not None else None
         snippet = item.get("quote") or item.get("content") or item.get("summary")
-        source_url = item.get("viewer_url") or item.get("download_url") or item.get("document_url")
+        source_url = (
+            item.get("viewer_url")
+            or item.get("download_url")
+            or item.get("document_url")
+            or source_meta.get("url")
+        )
+        rel_score = safe_float(
+            item.get("relevance_score") or source_meta.get("relevance_score") or source_meta.get("score")
+        )
+        published_date = source_meta.get("published_date") or item.get("published_at") or item.get("created_at")
         sources.append(
             {
                 "id": item.get("urn_id") or item.get("chunk_id"),
@@ -263,7 +296,9 @@ def _build_sources_payload(context: Iterable[Dict[str, Any]]) -> List[Dict[str, 
                 "snippet": snippet,
                 "sourceUrl": source_url,
                 "type": item.get("source_type") or item.get("sourceType"),
-                "score": safe_float(item.get("score")),
+                "score": rel_score if rel_score is not None else safe_float(item.get("score")),
+                "publishedAt": published_date,
+                "documentId": source_meta.get("document_id"),
             }
         )
     return sources
@@ -298,6 +333,7 @@ logger = get_logger(__name__)
 _GRID_CELL_LIMIT = 25
 _QUOTA_PROBLEM_TYPE = "https://nuvien.com/docs/errors/plan-quota"
 _CHAT_ACTION_LABEL = "AI 분석"
+_PROFILE_SESSION_PREFIX = "user:"
 
 
 def _plan_label(plan: PlanContext) -> str:
@@ -337,10 +373,24 @@ def _enforce_chat_quota(plan: PlanContext, user_id: Optional[uuid.UUID]) -> None
     }
     raise HTTPException(status_code=status_code, detail=detail)
 
-NO_CONTEXT_ANSWER = "관련 증거를 찾지 못했습니다. 다른 키워드나 기간으로 다시 질문해 주세요."
+NO_CONTEXT_ANSWER = (
+    "문의하신 내용과 직접적으로 연결된 증거를 찾지 못했습니다. "
+    "좀 더 구체적인 기업명·티커·기간을 포함해 다시 질문해 보시겠어요? "
+    "예: “삼성전자 2023 3분기 실적 요약”, “2차전지 섹터 IRA 변수 영향 요약”."
+)
 INTENT_GENERAL_MESSAGE = "요청하신 내용은 정책상 바로 제공되지 않습니다. 보다 구체적인 배경이나 합법적 목적을 함께 알려 주세요."
 INTENT_BLOCK_MESSAGE = SAFE_MESSAGE
 INTENT_WARNING_CODE = "intent_filter"
+FRONT_DOOR_WARNING_CODE = "front_door_guard"
+FRONT_DOOR_CHITCHAT_REPLY = (
+    "안녕하세요, 저는 금융·투자 분석에 특화된 Nuvien AI Copilot입니다. "
+    "기업 실적, 시장 동향, 경제 지표 같은 질문에 집중해 답변드릴게요. 궁금한 티커나 산업이 있으신가요?"
+)
+try:
+    _MIN_RELEVANCE_RAW = float(os.getenv("RAG_MIN_RELEVANCE", "0"))
+    RAG_MIN_RELEVANCE = max(0.0, min(1.0, _MIN_RELEVANCE_RAW))
+except Exception:
+    RAG_MIN_RELEVANCE = 0.0
 
 
 def _parse_uuid(value: Optional[str]) -> Optional[uuid.UUID]:
@@ -1014,6 +1064,133 @@ def build_intent_reply(
     return response, needs_summary
 
 
+def _front_door_route_decision(category: str) -> RouteDecision:
+    reason = f"{FRONT_DOOR_WARNING_CODE}:{category}"
+    return RouteDecision(
+        intent="front_door_guard",
+        reason=reason,
+        confidence=1.0,
+        tool_call=ToolCall(name="front_door.guard", arguments={"category": category}),
+        ui_container=UiContainer.INLINE_CARD,
+        paywall=PaywallTier.FREE,
+        requires_context=[],
+        safety=SafetyDecision(block=False, reason=None, keywords=[]),
+        tickers=[],
+        metadata={"category": category, "source": "front_door_guard"},
+    )
+
+
+def _front_door_reply_text(category: str, question: str) -> str:
+    if category == "chitchat":
+        return FRONT_DOOR_CHITCHAT_REPLY
+    preview = chat_service.trim_preview(question)
+    topic_label = f"'{preview}'" if preview else "해당 질문"
+    return (
+        f"문의하신 {topic_label}은(는) 금융 및 투자 분석 범위를 벗어나는 주제입니다. "
+        "저는 기업 실적, 시장 동향, 경제 지표 등에 대한 답변을 드리도록 설계되었습니다. "
+        "분석이 필요한 기업이나 산업이 있으신가요?"
+    )
+
+
+def build_front_door_response(
+    db: Session,
+    *,
+    category: str,
+    question: str,
+    trace_id: str,
+    session: ChatSession,
+    turn_id: uuid.UUID,
+    user_message: ChatMessage,
+    assistant_message: ChatMessage,
+    conversation_memory: Optional[Dict[str, Any]],
+    classifier_result: Dict[str, Any],
+    route_decision: Optional[RouteDecision],
+    memory_info: Optional[Dict[str, Any]] = None,
+) -> Tuple[RAGQueryResponse, bool]:
+    answer_text = _front_door_reply_text(category, question)
+    warning_code = f"{FRONT_DOOR_WARNING_CODE}:{category}"
+    conversation_summary = None
+    recent_turn_count = 0
+    if conversation_memory:
+        conversation_summary = conversation_memory.get("summary")
+        recent_turn_count = len(conversation_memory.get("recent_turns") or [])
+
+    guardrail_meta = {
+        "decision": warning_code,
+        "reason": classifier_result.get("reason") or classifier_result.get("error"),
+        "rag_mode": "none",
+        "category": category,
+        "model": classifier_result.get("model_used"),
+    }
+
+    meta_payload = {
+        "model": classifier_result.get("model_used"),
+        "prompt_version": None,
+        "latency_ms": None,
+        "input_tokens": None,
+        "output_tokens": None,
+        "cost": None,
+        "retrieval": {"doc_ids": [], "hit_at_k": 0, "rag_mode": "none"},
+        "guardrail": guardrail_meta,
+        "turnId": str(turn_id),
+        "traceId": trace_id,
+        "citations": {"page": [], "table": [], "footnote": []},
+        "conversation_summary": conversation_summary,
+        "recent_turn_count": recent_turn_count,
+        "answer_preview": chat_service.trim_preview(answer_text),
+        "intent_decision": f"front_door:{category}",
+        "intent_reason": classifier_result.get("reason"),
+        "front_door": {
+            "category": category,
+            "model": classifier_result.get("model_used"),
+            "error": classifier_result.get("error"),
+        },
+    }
+    if route_decision:
+        meta_payload["router_action"] = route_decision.tool_name
+        meta_payload["router_intent"] = route_decision.intent
+        meta_payload["router_decision"] = route_decision.model_dump_route()
+        meta_payload["router_confidence"] = route_decision.confidence
+    if memory_info is not None:
+        meta_payload["memory"] = dict(memory_info)
+    meta_payload["evidence_version"] = "v2"
+    meta_payload["evidence_diff"] = {"enabled": False, "removed": []}
+
+    chat_service.update_message_state(
+        db,
+        message_id=assistant_message.id,
+        state="ready",
+        content=answer_text,
+        meta=meta_payload,
+    )
+    needs_summary = chat_service.should_trigger_summary(db, session)
+
+    response = RAGQueryResponse(
+        question=question,
+        filing_id=None,
+        session_id=session.id,
+        turn_id=turn_id,
+        user_message_id=user_message.id,
+        assistant_message_id=assistant_message.id,
+        answer=answer_text,
+        context=[],
+        citations={},
+        warnings=[warning_code],
+        highlights=[],
+        error=None,
+        original_answer=None,
+        model_used=classifier_result.get("model_used"),
+        trace_id=trace_id,
+        judge_decision=None,
+        judge_reason=classifier_result.get("reason"),
+        meta=meta_payload,
+        state="ready",
+        related_filings=[],
+        rag_mode="none",
+    )
+    return response, needs_summary
+
+
 def build_basic_reply(
     *,
     question: str,
@@ -1596,6 +1773,26 @@ def _maybe_run_event_study_tool(
     ticker, event_date, window_value, window_key = _extract_event_tool_args(ctx, route_decision)
     if not ticker:
         return []
+    tool_args = {
+        "ticker": ticker,
+        "event_date": event_date.isoformat() if isinstance(event_date, date) else event_date,
+        "window": window_value,
+        "window_key": window_key,
+    }
+    if ctx.session and ctx.turn_id:
+        try:
+            chat_service.create_tool_call_message(
+                db,
+                session_id=ctx.session.id,
+                turn_id=ctx.turn_id,
+                tool_name="event_study.query",
+                arguments=tool_args,
+                idempotency_key=ctx.idempotency_key,
+            )
+            db.flush()
+        except Exception:
+            # best effort; do not block main flow
+            logger.debug("Failed to record event study tool_call", exc_info=True)
     try:
         payload = generate_event_study_payload(
             ticker=ticker,
@@ -1609,8 +1806,37 @@ def _maybe_run_event_study_tool(
         return []
     except Exception as exc:  # pragma: no cover - analytics best-effort
         logger.warning("Event study tool failed for %s: %s", ticker, exc, exc_info=True)
+        if ctx.session and ctx.turn_id:
+            try:
+                chat_service.create_tool_output_message(
+                    db,
+                    session_id=ctx.session.id,
+                    turn_id=ctx.turn_id,
+                    tool_name="event_study.query",
+                    output={"error": "event_study_failed"},
+                    status="error",
+                    idempotency_key=ctx.idempotency_key,
+                )
+                db.flush()
+            except Exception:
+                logger.debug("Failed to record event study tool_output error", exc_info=True)
         return []
-    return [_build_event_study_chunk(payload)]
+    chunk = _build_event_study_chunk(payload)
+    if ctx.session and ctx.turn_id:
+        try:
+            chat_service.create_tool_output_message(
+                db,
+                session_id=ctx.session.id,
+                turn_id=ctx.turn_id,
+                tool_name="event_study.query",
+                output={"event_study": payload, "chunk_id": chunk.get("id")},
+                status="ok",
+                idempotency_key=ctx.idempotency_key,
+            )
+            db.flush()
+        except Exception:
+            logger.debug("Failed to record event study tool_output", exc_info=True)
+    return [chunk]
 
 
 def _compose_lightmem_context(
@@ -1668,6 +1894,17 @@ def _hydrate_lightmem_context(ctx: RagSessionStage, require_lightmem: bool) -> N
     ctx.memory_info = memory_info
 
 
+def _filter_chunks_by_relevance(chunks: List[Dict[str, Any]], *, threshold: float) -> List[Dict[str, Any]]:
+    if threshold <= 0:
+        return list(chunks)
+    filtered: List[Dict[str, Any]] = []
+    for chunk in chunks:
+        score = safe_float(chunk.get("score"))
+        if score is None or score >= threshold:
+            filtered.append(chunk)
+    return filtered
+
+
 def _run_retrieval_stage(
     ctx: RagSessionStage,
     request: RAGQueryRequest,
@@ -1692,7 +1929,7 @@ def _run_retrieval_stage(
             filters=ctx.filter_payload,
             db=db,
         )
-        context_chunks = retrieval.chunks
+        context_chunks = _filter_chunks_by_relevance(retrieval.chunks, threshold=RAG_MIN_RELEVANCE)
         related_filings = _build_related_filings(retrieval.related_filings)
         selected_filing_id = _resolve_selected_filing_id(retrieval, ctx.filing_id, related_filings)
 
@@ -1829,6 +2066,18 @@ def _render_rag_response(
     )
     if summary_captured:
         ctx.memory_info["captured"] = True
+    # Capture lightweight per-user interest/profile hints (hidden personalization).
+    if ctx.user_id:
+        captured_profile = rag_audit.capture_user_interest_profile(
+            question=ctx.question,
+            answer=llm_stage.answer_text,
+            session=ctx.session,
+            tenant_id=ctx.tenant_id_value,
+            user_id=str(ctx.user_id),
+            plan_memory_enabled=ctx.plan_memory_enabled,
+        )
+        if captured_profile:
+            ctx.memory_info["profile_captured"] = True
     meta_payload["memory"] = dict(ctx.memory_info)
 
     update_payload = {
@@ -1966,7 +2215,15 @@ def query_rag(
     user_meta = ctx.user_meta
 
     try:
-        route_decision = _resolve_route_decision(route_decision, question)
+        classifier_result = llm_service.classify_query_category(question)
+        front_category = classifier_result.get("category") or "financial_query"
+        ctx.user_meta["front_door_category"] = front_category
+        ctx.user_meta["front_door_model"] = classifier_result.get("model_used")
+
+        if front_category == "financial_query":
+            route_decision = _resolve_route_decision(route_decision, question)
+        else:
+            route_decision = _front_door_route_decision(front_category)
         ctx.user_meta["router_action"] = route_decision.tool_name
         ctx.user_meta["router_intent"] = route_decision.intent
         ctx.user_meta["router_decision"] = route_decision.model_dump_route()
@@ -1974,6 +2231,27 @@ def query_rag(
 
         route_payload = route_decision.model_dump_route()
         _hydrate_lightmem_context(ctx, _requires_lightmem(route_decision))
+        conversation_memory = ctx.conversation_memory
+        memory_info = ctx.memory_info
+        if front_category != "financial_query":
+            response, needs_summary = build_front_door_response(
+                db,
+                category=front_category,
+                question=question,
+                trace_id=trace_id,
+                session=session,
+                turn_id=turn_id,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                conversation_memory=conversation_memory,
+                classifier_result=classifier_result,
+                route_decision=route_decision,
+                memory_info=memory_info,
+            )
+            db.commit()
+            _enqueue_session_summary_if_allowed(plan_memory_enabled, needs_summary, session.id)
+            return response
+
         intent_gate = _evaluate_intent_gate(
             ctx,
             route_decision,
@@ -2082,6 +2360,105 @@ def query_rag_stream(
     db: Session,
     route_decision: Optional[RouteDecision] = None,
 ):
+    question_text = getattr(request, "question", None) or getattr(request, "query", "")
+    # Numeric-only shortcut: stream snapshot tool_call/tool_output
+    if question_text and str(question_text).strip().isdigit():
+        question = str(question_text).strip()
+        turn_id = _coerce_uuid(request.turn_id)
+        session_uuid = _parse_uuid(request.session_id)
+        user_id = _resolve_lightmem_user_id(x_user_id)
+        org_id = _parse_uuid(x_org_id)
+        session = _resolve_session(
+            db,
+            session_id=session_uuid,
+            user_id=user_id,
+            org_id=org_id,
+            filing_id=None,
+        )
+        user_message = _ensure_user_message(
+            db,
+            session=session,
+            user_message_id=request.user_message_id,
+            question=question,
+            turn_id=turn_id,
+            idempotency_key=idempotency_key_header,
+            meta=request.meta or {},
+        )
+        assistant_message = _ensure_assistant_message(
+            db,
+            session=session,
+            assistant_message_id=request.assistant_message_id,
+            turn_id=turn_id,
+            idempotency_key=None,
+            retry_of_message_id=request.retry_of_message_id,
+            initial_state="pending",
+        )
+        chat_service.create_tool_call_message(
+            db,
+            session_id=session.id,
+            turn_id=turn_id,
+            tool_name="snapshot.company",
+            arguments={"ticker": question},
+            idempotency_key=idempotency_key_header,
+        )
+        enqueue_state = snapshot_service.enqueue_company_snapshot_job(
+            session_id=session.id,
+            turn_id=turn_id,
+            assistant_message_id=assistant_message.id,
+            user_message_id=user_message.id,
+            ticker=question,
+            idempotency_key=idempotency_key_header,
+            db=db,
+        )
+        chat_service.update_message_state(
+            db,
+            message_id=assistant_message.id,
+            state="running",
+            content="기업 스냅샷을 준비 중입니다...",
+            meta={"tool_output": {"name": "snapshot.company", "status": enqueue_state}},
+        )
+        db.commit()
+
+        def stream_snapshot():
+            route_payload = {"tool_call": {"name": "snapshot.company", "arguments": {"ticker": question}}}
+            yield json.dumps(
+                {
+                    "event": "route",
+                    "id": str(assistant_message.id),
+                    "turn_id": str(turn_id),
+                    "decision": route_payload,
+                }
+            ) + "\n"
+            yield json.dumps(
+                {
+                    "event": "chunk",
+                    "id": str(assistant_message.id),
+                    "turn_id": str(turn_id),
+                    "delta": "기업 스냅샷 요청을 접수했습니다. 완료되면 결과를 보내드릴게요.",
+                }
+            ) + "\n"
+            payload_json = {
+                "answer": "기업 스냅샷을 준비 중입니다.",
+                "sessionId": str(session.id),
+                "turnId": str(turn_id),
+                "userMessageId": str(user_message.id),
+                "assistantMessageId": str(assistant_message.id),
+                "traceId": str(uuid.uuid4()),
+                "state": "running",
+                "ragMode": "none",
+                "meta": {"tool": "snapshot.company", "tool_status": enqueue_state},
+            }
+            yield json.dumps(
+                {
+                    "event": "done",
+                    "id": str(assistant_message.id),
+                    "turn_id": str(turn_id),
+                    "payload": payload_json,
+                }
+            ) + "\n"
+
+        return StreamingResponse(stream_snapshot(), media_type="text/event-stream")
+
     ctx = _prepare_rag_session(
         request,
         x_user_id,
@@ -2112,13 +2489,60 @@ def query_rag_stream(
     user_meta = ctx.user_meta
 
     try:
-        route_decision = _resolve_route_decision(route_decision, question)
+        classifier_result = llm_service.classify_query_category(question)
+        front_category = classifier_result.get("category") or "financial_query"
+        ctx.user_meta["front_door_category"] = front_category
+        ctx.user_meta["front_door_model"] = classifier_result.get("model_used")
+
+        if front_category == "financial_query":
+            route_decision = _resolve_route_decision(route_decision, question)
+        else:
+            route_decision = _front_door_route_decision(front_category)
         ctx.user_meta["router_action"] = route_decision.tool_name
         ctx.user_meta["router_intent"] = route_decision.intent
         ctx.user_meta["router_decision"] = route_decision.model_dump_route()
         ctx.user_meta["router_confidence"] = route_decision.confidence
         route_payload = route_decision.model_dump_route()
         _hydrate_lightmem_context(ctx, _requires_lightmem(route_decision))
+        conversation_memory = ctx.conversation_memory
+        memory_info = ctx.memory_info
+        if front_category != "financial_query":
+            response, needs_summary = build_front_door_response(
+                db,
+                category=front_category,
+                question=question,
+                trace_id=trace_id,
+                session=session,
+                turn_id=turn_id,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                conversation_memory=conversation_memory,
+                classifier_result=classifier_result,
+                route_decision=route_decision,
+                memory_info=memory_info,
+            )
+            db.commit()
+            _enqueue_session_summary_if_allowed(plan_memory_enabled, needs_summary, session.id)
+            payload_json = response.model_dump(mode="json")
+            def front_door_stream():
+                yield json.dumps(
+                    {
+                        "event": "route",
+                        "id": str(assistant_message.id),
+                        "turn_id": str(turn_id),
+                        "decision": route_payload,
+                    }
+                ) + "\n"
+                yield json.dumps(
+                    {
+                        "event": "done",
+                        "id": str(assistant_message.id),
+                        "turn_id": str(turn_id),
+                        "payload": payload_json,
+                    }
+                ) + "\n"
+
+            return StreamingResponse(front_door_stream(), media_type="text/event-stream")
         intent_gate = _evaluate_intent_gate(
             ctx,
             route_decision,
@@ -2170,7 +2594,7 @@ def query_rag_stream(
             filters=filters_v2,
         )
         pipeline_result = rag_pipeline.run_rag_query(db, pipeline_request)
-        context_chunks = pipeline_result.raw_chunks
+        context_chunks = _filter_chunks_by_relevance(pipeline_result.raw_chunks, threshold=RAG_MIN_RELEVANCE)
         related_filings = _build_related_filings(pipeline_result.related_documents)
         active_filing_id = pipeline_result.trace.get("selectedFilingId") or filing_id
 
@@ -2358,7 +2782,6 @@ def query_rag_stream(
 
                 payload_json = response.model_dump(mode="json")
                 payload_json["evidence"] = evidence_payload
-                payload_json["warnings"] = warnings
                 payload_json["sessionId"] = str(session.id)
                 payload_json["turnId"] = str(turn_id)
                 payload_json["userMessageId"] = str(user_message.id)
@@ -2431,7 +2854,85 @@ def query_rag_v2(
     if not question:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="question_required")
 
-    route_decision = _resolve_route_decision(route_decision, question)
+    # Shortcut: numeric-only input interpreted as ticker -> trigger snapshot tool flow
+    if question.isdigit():
+        turn_id = _coerce_uuid(payload.turnId)
+        session_uuid = _parse_uuid(payload.sessionId)
+        user_id = _resolve_lightmem_user_id(x_user_id)
+        org_id = _parse_uuid(x_org_id)
+
+        session = _resolve_session(
+            db,
+            session_id=session_uuid,
+            user_id=user_id,
+            org_id=org_id,
+            filing_id=None,
+        )
+        user_message = _ensure_user_message(
+            db,
+            session=session,
+            user_message_id=_parse_uuid(payload.userMessageId),
+            question=question,
+            turn_id=turn_id,
+            idempotency_key=payload.idempotencyKey,
+            meta=payload.meta or {},
+        )
+        assistant_message = _ensure_assistant_message(
+            db,
+            session=session,
+            assistant_message_id=_parse_uuid(payload.assistantMessageId),
+            turn_id=turn_id,
+            idempotency_key=None,
+            retry_of_message_id=_parse_uuid(payload.retryOfMessageId),
+            initial_state="pending",
+        )
+        chat_service.create_tool_call_message(
+            db,
+            session_id=session.id,
+            turn_id=turn_id,
+            tool_name="snapshot.company",
+            arguments={"ticker": question},
+            idempotency_key=payload.idempotencyKey,
+        )
+        enqueue_state = snapshot_service.enqueue_company_snapshot_job(
+            session_id=session.id,
+            turn_id=turn_id,
+            assistant_message_id=assistant_message.id,
+            user_message_id=user_message.id,
+            ticker=question,
+            idempotency_key=payload.idempotencyKey,
+            db=db,
+        )
+        chat_service.update_message_state(
+            db,
+            message_id=assistant_message.id,
+            state="running",
+            content="기업 스냅샷을 준비 중입니다...",
+            meta={"tool_output": {"name": "snapshot.company", "status": enqueue_state}},
+        )
+        db.commit()
+
+        return RagQueryV2Response(
+            answer="기업 스냅샷을 준비 중입니다.",
+            evidence=[],
+            warnings=[],
+            citations={},
+            sessionId=str(session.id),
+            turnId=str(turn_id),
+            userMessageId=str(user_message.id),
+            assistantMessageId=str(assistant_message.id),
+            traceId=str(uuid.uuid4()),
+            state="running",
+            ragMode="none",
+            meta={"tool": "snapshot.company", "tool_status": enqueue_state},
+        )
+
+    classifier_result = llm_service.classify_query_category(question)
+    front_category = classifier_result.get("category") or "financial_query"
+    if front_category == "financial_query":
+        route_decision = _resolve_route_decision(route_decision, question)
+    else:
+        route_decision = _front_door_route_decision(front_category)
     trace_id = str(uuid.uuid4())
     user_id = _resolve_lightmem_user_id(x_user_id)
     org_id = _parse_uuid(x_org_id)
@@ -2445,6 +2946,9 @@ def query_rag_v2(
     _enforce_chat_quota(plan, user_id)
 
     user_meta = dict(payload.meta or {})
+    user_meta.setdefault("front_door_category", front_category)
+    if classifier_result.get("model_used"):
+        user_meta.setdefault("front_door_model", classifier_result.get("model_used"))
     user_meta.setdefault("router_action", route_decision.tool_name)
     user_meta.setdefault("router_intent", route_decision.intent)
     user_meta.setdefault("router_decision", route_decision.model_dump_route())
@@ -2492,6 +2996,25 @@ def query_rag_v2(
             require_lightmem=_requires_lightmem(route_decision),
         )
 
+        if front_category != "financial_query":
+            response, needs_summary = build_front_door_response(
+                db,
+                category=front_category,
+                question=question,
+                trace_id=trace_id,
+                session=session,
+                turn_id=turn_id,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                conversation_memory=conversation_memory,
+                classifier_result=classifier_result,
+                route_decision=route_decision,
+                memory_info=memory_info,
+            )
+            db.commit()
+            _enqueue_session_summary_if_allowed(plan_memory_enabled, needs_summary, session.id)
+            return response
+
         judge_result = llm_service.assess_query_risk(question)
         rag_mode_hint = judge_result.get("rag_mode") if judge_result else None
 
@@ -2528,15 +3051,16 @@ def query_rag_v2(
                 detail={"code": "rag.pipeline_unavailable", "message": "RAG 파이프라인을 잠시 사용할 수 없습니다. 잠시 후 다시 시도해 주세요."},
             ) from exc
 
+        filtered_chunks = _filter_chunks_by_relevance(pipeline_result.raw_chunks, threshold=RAG_MIN_RELEVANCE)
         llm_payload = llm_service.generate_rag_answer(
             question,
-            pipeline_result.raw_chunks,
+            filtered_chunks,
             judge_result=judge_result,
             prompt_metadata=prompt_metadata,
         )
         payload_rag_mode = llm_payload.get("rag_mode") or rag_mode_hint or "vector"
 
-        context_chunks = pipeline_result.raw_chunks
+        context_chunks = filtered_chunks
         legacy_context = _build_evidence_payload(context_chunks)
         snapshot_payload = deepcopy(legacy_context)
         legacy_context, diff_meta = rag_audit.attach_evidence_diff(legacy_context, db=db, trace_id=trace_id)

@@ -128,7 +128,7 @@ const sections: LegalSection[] = [
     ],
   },
   buildCompanyContactSection({
-    note: "법무·데이터 정책·DSAR 관련 문의는 Settings → Legal & Data 또는 위 연락처로 남겨 주세요.",
+    note: "법무·데이터 정책, 개인 데이터 열람·삭제 요청은 Settings → Legal & Data 또는 위 연락처(hello@nuvien.com)로 알려 주세요.",
     title: "9. 문의처",
   }),
 ];

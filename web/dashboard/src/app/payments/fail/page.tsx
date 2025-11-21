@@ -1,13 +1,14 @@
-"use client";
+﻿"use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { Suspense, useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "next/navigation";
+
+import { PaymentResultCard } from "@/components/payments/PaymentResultCard";
 import { AppShell } from "@/components/layout/AppShell";
 import { planTierLabel } from "@/constants/planPricing";
 import { logEvent } from "@/lib/telemetry";
 import type { PlanTier } from "@/store/planStore";
 import { useToastStore } from "@/store/toastStore";
-import { PaymentResultCard } from "@/components/payments/PaymentResultCard";
 
 const isPlanTier = (value: string | null): value is PlanTier =>
   value === "free" || value === "starter" || value === "pro" || value === "enterprise";
@@ -31,6 +32,22 @@ const TOSS_ERROR_MESSAGES: Record<string, string> = {
 };
 
 export default function TossPaymentFailPage() {
+  return (
+    <Suspense fallback={<PaymentStatusFallback />}>
+      <TossPaymentFailPageInner />
+    </Suspense>
+  );
+}
+
+function PaymentStatusFallback() {
+  return (
+    <AppShell>
+      <div className="flex h-[50vh] items-center justify-center text-slate-300">결제 상태를 확인하는 중입니다…</div>
+    </AppShell>
+  );
+}
+
+function TossPaymentFailPageInner() {
   const searchParams = useSearchParams();
   const pushToast = useToastStore((state) => state.show);
   const toastShownRef = useRef(false);
@@ -43,20 +60,14 @@ export default function TossPaymentFailPage() {
   const redirectPath = safeRedirectPath(searchParams?.get("redirectPath"));
 
   const amountLabel = useMemo(() => {
-    if (!amountParam) {
-      return "확인 불가";
-    }
-    const parsed = Number.parseInt(amountParam, 10);
-    if (Number.isNaN(parsed)) {
+    const parsed = amountParam ? Number.parseInt(amountParam, 10) : NaN;
+    if (!Number.isFinite(parsed)) {
       return "확인 불가";
     }
     return `${parsed.toLocaleString("ko-KR")}원`;
   }, [amountParam]);
 
-  const tierLabel = useMemo(
-    () => (isPlanTier(tierParam) ? planTierLabel(tierParam) : "미지정"),
-    [tierParam],
-  );
+  const tierLabel = useMemo(() => (isPlanTier(tierParam) ? planTierLabel(tierParam) : "미지정"), [tierParam]);
 
   const resolvedMessage = useMemo(() => {
     const trimmed = failureMessage?.trim();

@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import { AppShell } from "@/components/layout/AppShell";
 import { ChatHistoryList } from "@/components/chat/ChatHistoryList";
 import { ChatStreamPane } from "@/components/chat/ChatStreamPane";
@@ -8,9 +10,15 @@ import type { ChatController } from "@/hooks/useChatController";
 
 type ChatPageShellProps = {
   controller: ChatController;
+  reportAction?: {
+    onOpen: () => void;
+    disabled?: boolean;
+    loading?: boolean;
+  };
+  guestBadge?: React.ReactNode;
 };
 
-export function ChatPageShell({ controller }: ChatPageShellProps) {
+export function ChatPageShell({ controller, reportAction, guestBadge }: ChatPageShellProps) {
   const {
     plan,
     quotaNotice,
@@ -18,6 +26,7 @@ export function ChatPageShell({ controller }: ChatPageShellProps) {
     stream,
     actions: { openPlanSettings },
   } = controller;
+  const [focusMode, setFocusMode] = useState(false);
 
   if (plan.initialized && !plan.ragEnabled) {
     return (
@@ -45,9 +54,10 @@ export function ChatPageShell({ controller }: ChatPageShellProps) {
           resetText={quotaNotice.resetText}
           onRedirect={openPlanSettings}
           onDismiss={quotaNotice.onDismiss}
+          dimmed={focusMode}
         />
       ) : null}
-      <div className="flex flex-col gap-5 xl:flex-row">
+      <div className="flex flex-1 min-h-0 flex-col gap-5 xl:flex-row">
         <ChatHistoryList
           sessions={history.sessions}
           selectedId={history.selectedId ?? undefined}
@@ -57,6 +67,8 @@ export function ChatPageShell({ controller }: ChatPageShellProps) {
           onClearAll={history.onClear}
           persistenceError={history.persistenceError ?? undefined}
           disabled={history.disabled}
+          dimmed={focusMode}
+          footer={guestBadge}
         />
         <ChatStreamPane
           sessionTitle={stream.title}
@@ -71,6 +83,8 @@ export function ChatPageShell({ controller }: ChatPageShellProps) {
           onRetry={stream.onRetry}
           onSend={stream.onSend}
           inputDisabled={stream.inputDisabled}
+          reportAction={reportAction}
+          onFocusChange={setFocusMode}
         />
       </div>
     </AppShell>
@@ -84,11 +98,14 @@ type QuotaNoticeProps = {
   resetText: string;
   onRedirect: () => void;
   onDismiss: () => void;
+  dimmed?: boolean;
 };
 
-function QuotaNotice({ message, planLabel, limit, resetText, onRedirect, onDismiss }: QuotaNoticeProps) {
+function QuotaNotice({ message, planLabel, limit, resetText, onRedirect, onDismiss, dimmed }: QuotaNoticeProps) {
   return (
-    <div className="mb-6 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm text-amber-50 shadow-[0_20px_80px_rgba(12,8,0,0.35)]">
+    <div
+      className={`mb-8 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm text-amber-50 shadow-[0_20px_80px_rgba(12,8,0,0.35)]${dimmed ? " focused-mode" : ""}`}
+    >
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="font-semibold text-white">{message}</p>

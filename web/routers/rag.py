@@ -26,8 +26,6 @@ from schemas.api.rag_v2 import (
     RagQueryResponse as RagQueryV2Response,
 )
 from services.plan_service import PlanContext
-from services.semantic_router import DEFAULT_ROUTER
-from schemas.router import RouteDecision
 from services.web_utils import parse_uuid
 from services import rag_service, rag_audit
 from web.deps import require_plan_feature
@@ -58,12 +56,6 @@ def _enforce_rag_chat_quota(plan: PlanContext, x_user_id: Optional[str], x_org_i
         user_id=parse_uuid(x_user_id),
         org_id=parse_uuid(x_org_id),
     )
-
-
-def _route_question(text: str) -> RouteDecision:
-    decision = DEFAULT_ROUTER.route(text.strip())
-    print(f"[semantic-router] {decision.model_dump()}")
-    return decision
 
 
 @router.get(
@@ -103,7 +95,6 @@ def query_rag(
     question_text = getattr(request, "question", None)
     if question_text is None:
         question_text = getattr(request, "query", "")
-    route_decision = _route_question(str(question_text or ""))
     return rag_service.query_rag(
         request,
         x_user_id,
@@ -111,7 +102,7 @@ def query_rag(
         idempotency_key_header,
         plan,
         db,
-        route_decision=route_decision,
+        route_decision=None,
     )
 
 
@@ -129,7 +120,6 @@ def query_rag_stream(
         question_text = getattr(request, "question", None)
         if question_text is None:
             question_text = getattr(request, "query", "")
-        route_decision = _route_question(str(question_text or ""))
         response = rag_service.query_rag_stream(
             request,
             x_user_id,
@@ -137,7 +127,7 @@ def query_rag_stream(
             idempotency_key_header,
             plan,
             session,
-            route_decision=route_decision,
+            route_decision=None,
         )
     except Exception:
         session.close()
@@ -170,14 +160,13 @@ def query_rag_v2(
     db: Session = Depends(get_db),
 ) -> RagQueryV2Response:
     _enforce_rag_chat_quota(plan, x_user_id, x_org_id)
-    route_decision = _route_question(payload.query)
     return rag_service.query_rag_v2(
         payload,
         x_user_id,
         x_org_id,
         plan,
         db,
-        route_decision=route_decision,
+        route_decision=None,
     )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 import uuid
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
@@ -15,8 +16,15 @@ from database import SessionLocal
 from services import chat_service, rag_jobs
 from services.evidence_service import attach_diff_metadata
 from services.memory.facade import MEMORY_SERVICE
+from services.memory.models import SessionSummaryEntry
 
 logger = get_logger(__name__)
+
+_KOSPI_TICKER_PATTERN = re.compile(r"\b\d{6}\b")
+_ALPHA_TICKER_PATTERN = re.compile(r"\b[a-zA-Z]{1,5}\b")
+_SECTOR_PATTERN = re.compile(r"([가-힣A-Za-z]{2,20})(?:\s*(?:섹터|산업|업종|리스크|위험))")
+_MAX_PROFILE_HIGHLIGHTS = 5
+_PROFILE_TOPIC = "profile.interest"
 
 
 def telemetry_source(event: Any) -> str:
@@ -204,6 +212,97 @@ def store_lightmem_summary(
         return True
     except Exception:
         logger.debug("LightMem session summary capture failed for %s", session_key, exc_info=True)
+        return False
+
+
+def _extract_interest_tokens(*texts: str, limit: int = _MAX_PROFILE_HIGHLIGHTS) -> List[str]:
+    tokens: List[str] = []
+    seen: set[str] = set()
+    for text in texts:
+        if not isinstance(text, str):
+            continue
+        for match in _KOSPI_TICKER_PATTERN.findall(text):
+            if match not in seen:
+                tokens.append(match)
+                seen.add(match)
+            if len(tokens) >= limit:
+                return tokens
+        for match in _ALPHA_TICKER_PATTERN.findall(text):
+            cleaned = match.upper()
+            if len(cleaned) < 2 or len(cleaned) > 5:
+                continue
+            if cleaned not in seen:
+                tokens.append(cleaned)
+                seen.add(cleaned)
+            if len(tokens) >= limit:
+                return tokens
+    return tokens[:limit]
+
+
+def _extract_sector_risk(text: str, limit: int = _MAX_PROFILE_HIGHLIGHTS) -> List[str]:
+    if not isinstance(text, str) or not text.strip():
+        return []
+    matches = []
+    seen: set[str] = set()
+    for match in _SECTOR_PATTERN.findall(text):
+        normalized = match.strip()
+        if not normalized or normalized in seen:
+            continue
+        matches.append(normalized)
+        seen.add(normalized)
+        if len(matches) >= limit:
+            break
+    return matches
+
+
+def capture_user_interest_profile(
+    *,
+    question: str,
+    answer: str,
+    session,
+    tenant_id: Optional[str],
+    user_id: Optional[str],
+    plan_memory_enabled: bool,
+) -> bool:
+    """Store a lightweight interest/profile hint for the user (hidden personalization)."""
+
+    if not MEMORY_SERVICE.is_enabled(plan_memory_enabled=plan_memory_enabled, profile_context=True):
+        return False
+    if not tenant_id or not user_id:
+        return False
+
+    tokens = _extract_interest_tokens(question, answer)
+    sectors = _extract_sector_risk(question + " " + answer)
+    highlights: List[str] = []
+    if tokens:
+        highlights.append("관심 티커: " + ", ".join(tokens))
+    if sectors:
+        highlights.append("관심 산업/리스크: " + ", ".join(sectors))
+    question_preview = chat_service.trim_preview(question)
+    if question_preview:
+        highlights.append(f"최근 질문: {question_preview}")
+    if not highlights:
+        return False
+
+    metadata = {
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "session_uuid": str(session.id),
+        "context_type": str(session.context_type or ""),
+        "context_id": str(session.context_id or ""),
+        "kind": "user_profile",
+    }
+    try:
+        MEMORY_SERVICE.save_session_summary(
+            session_id=f"user:{user_id}",
+            topic=_PROFILE_TOPIC,
+            highlights=highlights[: _MAX_PROFILE_HIGHLIGHTS],
+            metadata=metadata,
+            expires_at=MEMORY_SERVICE.profile_expiry(),
+        )
+        return True
+    except Exception:
+        logger.debug("User interest capture failed (user=%s)", user_id, exc_info=True)
         return False
 
 

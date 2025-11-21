@@ -1,24 +1,50 @@
 ﻿'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileText, Loader2 } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 
 import { ChatPageShell } from "@/components/chat/ChatPageShell";
+import { GuestUpsellModal } from "@/components/chat/GuestUpsellModal";
 import OnboardingGuide from "@/components/onboarding/OnboardingGuide";
 import { useGenerateReport } from "@/hooks/useGenerateReport";
 import { useChatController } from "@/hooks/useChatController";
+import { useGuestPass } from "@/hooks/useGuestPass";
 import { extractEventStudyKeyStats } from "@/lib/reportExport";
 import { useReportStore } from "@/stores/useReportStore";
+import { useAuth } from "@/lib/authContext";
 
 export function ChatInterface() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-full items-center justify-center gap-2 text-slate-300">
+          <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+          <span>Loading chat...</span>
+        </div>
+      }
+    >
+      <ChatInterfaceContent />
+    </Suspense>
+  );
+}
+
+function ChatInterfaceContent() {
+  const { session, loading: authLoading } = useAuth();
+  const searchParams = useSearchParams();
   const controller = useChatController();
+  const isAuthenticated = Boolean(session);
+  const guestPass = useGuestPass(isAuthenticated);
   const generateReport = useGenerateReport();
   const messages = controller.stream.messages;
   const setKeyStats = useReportStore((state) => state.setKeyStats);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [guestModalOpen, setGuestModalOpen] = useState(false);
   const [tickerInput, setTickerInput] = useState("");
   const [inputError, setInputError] = useState<string | null>(null);
   const lastStatsRef = useRef<string | null>(null);
+  const prefillHandledRef = useRef(false);
+  const isAuthReady = !authLoading;
 
   useEffect(() => {
     const stats = extractEventStudyKeyStats(messages);
@@ -34,10 +60,6 @@ export function ChatInterface() {
   }, [messages, setKeyStats]);
 
   const normalizedTicker = useMemo(() => tickerInput.trim().toUpperCase(), [tickerInput]);
-
-  const handleReportClick = useCallback(() => {
-    setDialogOpen(true);
-  }, []);
 
   const handleDialogClose = useCallback(() => {
     setDialogOpen(false);
@@ -60,19 +82,109 @@ export function ChatInterface() {
     [generateReport, normalizedTicker]
   );
 
+  useEffect(() => {
+    if (!guestPass.isGuest) {
+      setGuestModalOpen(false);
+    }
+  }, [guestPass.isGuest]);
+
+  const handleGuestSend = useCallback(
+    async (rawInput: string) => {
+      const trimmed = rawInput.trim();
+      if (!trimmed) {
+        return;
+      }
+      if (!guestPass.isGuest) {
+        await controller.stream.onSend(trimmed);
+        return;
+      }
+      if (!guestPass.ready) {
+        return;
+      }
+      if (guestPass.remaining <= 0) {
+        setGuestModalOpen(true);
+        return;
+      }
+      const allowed = guestPass.consume();
+      if (!allowed) {
+        setGuestModalOpen(true);
+        return;
+      }
+      await controller.stream.onSend(trimmed);
+    },
+    [controller.stream, guestPass]
+  );
+
+  const guestAwareController = useMemo(
+    () => ({
+      ...controller,
+      stream: {
+        ...controller.stream,
+        onSend: handleGuestSend,
+      },
+    }),
+    [controller, handleGuestSend]
+  );
+
+  useEffect(() => {
+    if (prefillHandledRef.current) {
+      return;
+    }
+    const prefillValue = searchParams?.get("prefill");
+    if (!prefillValue || !guestPass.ready || !isAuthReady) {
+      return;
+    }
+    const trimmed = prefillValue.trim();
+    if (!trimmed) {
+      return;
+    }
+    // Fill the chat input and auto-send once.
+    window.dispatchEvent(new CustomEvent("onboarding:prefill", { detail: { value: trimmed } }));
+    prefillHandledRef.current = true;
+    void handleGuestSend(trimmed);
+  }, [guestPass.ready, handleGuestSend, isAuthReady, searchParams]);
+
+  const hasUserMessage = useMemo(() => messages.some((msg) => msg.role === "user"), [messages]);
+  const hasAssistantAnswer = useMemo(
+    () =>
+      messages.some((msg) => {
+        if (msg.role !== "assistant" || msg.meta?.status !== "ready") {
+          return false;
+        }
+        const hasQuestion =
+          (typeof msg.meta?.question === "string" && msg.meta.question.trim().length > 0) ||
+          (typeof msg.meta?.userMessageId === "string" && msg.meta.userMessageId.trim().length > 0);
+        return hasQuestion;
+      }),
+    [messages],
+  );
+  const reportDisabled = !hasUserMessage || !hasAssistantAnswer || generateReport.isPending;
+
+  const handleReportClick = useCallback(() => {
+    if (reportDisabled) return;
+    setDialogOpen(true);
+  }, [reportDisabled]);
+
   return (
     <div className="relative h-full">
-      <ChatPageShell controller={controller} />
+      <ChatPageShell
+        controller={guestAwareController}
+        reportAction={{
+          onOpen: handleReportClick,
+          disabled: reportDisabled,
+          loading: generateReport.isPending,
+        }}
+        guestBadge={
+          guestPass.isGuest ? (
+            <div className="rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-semibold text-white shadow-lg backdrop-blur">
+              게스트 체험{" "}
+              {guestPass.remaining > 0 ? `남은 질문 ${Math.max(guestPass.remaining, 0)}회` : "소진 · 가입 후 계속"}
+            </div>
+          ) : null
+        }
+      />
       <OnboardingGuide />
-      <button
-        type="button"
-        className="fixed bottom-8 right-8 flex items-center gap-2 rounded-full bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-2xl transition hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
-        onClick={handleReportClick}
-        disabled={generateReport.isPending}
-      >
-        <FileText className="h-4 w-4" />
-        {generateReport.isPending ? "Generating…" : "Generate Report"}
-      </button>
+      <GuestUpsellModal open={guestModalOpen && guestPass.isGuest} onClose={() => setGuestModalOpen(false)} />
 
       {dialogOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4">

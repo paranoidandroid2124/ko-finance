@@ -37,17 +37,10 @@ def _load_trace_snapshots(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "evidence.owner_required", "message": "User or organization context is required."},
         )
-    stmt = (
-        stmt.order_by(EvidenceSnapshot.updated_at.asc())
-    )
+    stmt = stmt.order_by(EvidenceSnapshot.updated_at.asc())
     return list(db.execute(stmt).scalars().all())
 
 
-@router.get(
-    "/workspace",
-    response_model=EvidenceWorkspaceResponse,
-    summary="Evidence workspace payload for a specific trace identifier.",
-)
 def _resolve_trace_id_for_filing(
     db: Session,
     filing_id: str,

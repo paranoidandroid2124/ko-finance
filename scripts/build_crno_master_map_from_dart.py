@@ -33,7 +33,8 @@ def build_crno_map() -> int:
 
     client = httpx.Client(timeout=httpx.Timeout(5.0, connect=3.0))
     payload = []
-    updated = 0
+    ok = 0
+    fail = 0
     try:
         for ticker, name, corp_code in rows:
             params = {"crtfc_key": API_KEY, "corp_code": corp_code}
@@ -41,10 +42,14 @@ def build_crno_map() -> int:
                 resp = client.get(BASE_URL, params=params)
                 resp.raise_for_status()
                 data = resp.json()
-            except Exception:
+            except Exception as exc:
+                fail += 1
+                print(f"[fail http] ticker={ticker} corp_code={corp_code} err={exc}")
                 continue
             jurir_no = str(data.get("jurir_no") or "").strip()
             if len(jurir_no) != 13 or jurir_no == "0000000000000":
+                fail += 1
+                print(f"[skip jurir_no] ticker={ticker} corp_code={corp_code} status={data.get('status')} msg={data.get('message')} jurir_no={jurir_no}")
                 continue
             payload.append(
                 {
@@ -54,14 +59,14 @@ def build_crno_map() -> int:
                     "corp_code": corp_code,
                 }
             )
-            updated += 1
+            ok += 1
     finally:
         client.close()
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"wrote {updated} records to {OUTPUT_PATH}")
-    return updated
+    print(f"wrote {ok} records to {OUTPUT_PATH}, failures={fail}")
+    return ok
 
 
 if __name__ == "__main__":

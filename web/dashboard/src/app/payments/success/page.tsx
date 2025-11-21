@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { resolveApiBase } from "@/lib/apiBase";
@@ -24,6 +25,27 @@ const safeRedirectPath = (value?: string | null) => {
 };
 
 export default function TossPaymentSuccessPage() {
+  return (
+    <Suspense fallback={<PaymentStatusFallback />}>
+      <TossPaymentSuccessPageInner />
+    </Suspense>
+  );
+}
+
+function PaymentStatusFallback() {
+  return (
+    <AppShell>
+      <div className="flex h-[50vh] items-center justify-center">
+        <div className="flex items-center gap-2 text-slate-300">
+          <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+          <span>결제 상태를 확인하는 중입니다…</span>
+        </div>
+      </div>
+    </AppShell>
+  );
+}
+
+function TossPaymentSuccessPageInner() {
   const searchParams = useSearchParams();
   const fetchPlan = usePlanStore((state) => state.fetchPlan);
   const pushToast = useToastStore((state) => state.show);

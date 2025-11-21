@@ -1,4 +1,6 @@
-import { useEffect } from "react";
+"use client";
+
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import AuthPageShell from "@/components/auth/AuthPageShell";
@@ -7,6 +9,46 @@ import { AuthApiError, postAuth } from "@/lib/authClient";
 
 type VerifyResult = { ok: boolean; message: string };
 const AUTO_REDIRECT_SECONDS = 3;
+
+const initialResult: VerifyResult = { ok: false, message: "인증 상태를 확인하고 있습니다..." };
+
+type Props = { params: { token: string } };
+
+export default function VerifyEmailPage({ params }: Props) {
+  const router = useRouter();
+  const [result, setResult] = useState<VerifyResult>(initialResult);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      const verification = await verifyToken(params.token);
+      if (!cancelled) {
+        setResult(verification);
+      }
+      if (verification.ok) {
+        setTimeout(() => {
+          if (!cancelled) {
+            router.push("/auth/login");
+          }
+        }, AUTO_REDIRECT_SECONDS * 1000);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.token, router]);
+
+  return (
+    <AuthPageShell
+      title="이메일 인증"
+      subtitle="링크 검증 결과를 확인하세요."
+      backLink={{ href: "/auth/login", label: "로그인으로 돌아가기" }}
+    >
+      <VerifyStatusMessage result={result} />
+    </AuthPageShell>
+  );
+}
 
 async function verifyToken(token: string): Promise<VerifyResult> {
   try {
@@ -30,30 +72,8 @@ async function verifyToken(token: string): Promise<VerifyResult> {
   }
 }
 
-type Props = { params: { token: string } };
-
-export default async function VerifyEmailPage({ params }: Props) {
-  const result = await verifyToken(params.token);
-  return (
-    <AuthPageShell title="이메일 인증" subtitle="링크 검증 결과를 확인하세요." backLink={{ href: "/auth/login", label: "로그인으로 돌아가기" }}>
-      <VerifyStatusMessage result={result} />
-    </AuthPageShell>
-  );
-}
-
 function VerifyStatusMessage({ result }: { result: VerifyResult }) {
-  "use client";
   const router = useRouter();
-  useEffect(() => {
-    if (!result.ok) {
-      return undefined;
-    }
-    const timer = setTimeout(() => {
-      router.push("/auth/login");
-    }, AUTO_REDIRECT_SECONDS * 1000);
-    return () => clearTimeout(timer);
-  }, [result.ok, router]);
-
   return (
     <>
       <div

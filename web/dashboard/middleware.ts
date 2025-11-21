@@ -1,26 +1,23 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { getToken } from "next-auth/jwt";
 
-const PUBLIC_PATH_PREFIXES = ["/auth", "/public", "/pricing", "/api/auth"];
+const PUBLIC_PATH_PREFIXES = ["/auth", "/public", "/pricing", "/chat", "/dashboard"];
 
-const isPublicPath = (pathname: string) =>
-  PUBLIC_PATH_PREFIXES.some(
+const isPublicPath = (pathname: string) => {
+  if (pathname === "/" || pathname === "") {
+    return true;
+  }
+  return PUBLIC_PATH_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
+};
 
-export async function middleware(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   if (isPublicPath(pathname)) {
     return NextResponse.next();
   }
-
-  const token = await getToken({ req: request, secret: process.env.AUTH_SECRET });
-  if (!token) {
-    const loginUrl = new URL("/auth/login", request.nextUrl.origin);
-    loginUrl.searchParams.set("redirect", pathname);
-    return NextResponse.redirect(loginUrl);
-  }
+  // Supabase 세션은 클라이언트에서 관리하므로, 서버 미들웨어에서는 우선 통과시킵니다.
   return NextResponse.next();
 }
 

@@ -9,6 +9,7 @@ import type { ChatMessageMeta, ChatRole, CitationEntry, CitationMap, RagSourceRe
 import { useToastStore } from "@/store/toastStore";
 import { logEvent } from "@/lib/telemetry";
 import { renderChatContent } from "@/lib/renderChatContent";
+import { Loader2 } from "lucide-react";
 
 export type ChatMessageProps = {
   id: string;
@@ -47,6 +48,59 @@ const CITATION_BUCKET_LABELS: Record<string, string> = {
   page: "페이지",
   table: "표",
   footnote: "각주"
+};
+
+const SnapshotPreviewCard = ({ payload }: { payload: Record<string, unknown> }) => {
+  const corpName = typeof payload.corp_name === "string" ? payload.corp_name : undefined;
+  const ticker = typeof payload.ticker === "string" ? payload.ticker : undefined;
+  const latest = payload.latest_filing as Record<string, unknown> | undefined;
+  const filingLabel =
+    typeof latest?.title === "string"
+      ? latest.title
+      : typeof latest?.report_name === "string"
+        ? latest.report_name
+        : undefined;
+  const summaryBlock = payload.summary as Record<string, unknown> | undefined;
+  const summaryText =
+    typeof summaryBlock?.headline === "string"
+      ? summaryBlock.headline
+      : typeof summaryBlock?.summary === "string"
+        ? summaryBlock.summary
+        : undefined;
+  const keyMetrics = Array.isArray(payload.key_metrics) ? payload.key_metrics : [];
+  const events = Array.isArray(payload.major_events) ? payload.major_events : [];
+  const filings = Array.isArray(payload.recent_filings) ? payload.recent_filings : [];
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-white truncate">
+            {corpName || "기업 스냅샷"} {ticker ? `(${ticker})` : ""}
+          </p>
+          {filingLabel ? <p className="text-xs text-slate-400">{filingLabel}</p> : null}
+        </div>
+        <span className="rounded-full border border-white/15 px-3 py-1 text-[11px] font-semibold text-slate-200">
+          Snapshot
+        </span>
+      </div>
+      {summaryText ? <p className="mt-2 text-xs text-slate-300 line-clamp-3">{summaryText}</p> : null}
+      <div className="mt-3 grid grid-cols-3 gap-2 text-[11px] text-slate-300">
+        <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+          <p className="text-[10px] uppercase tracking-wide text-slate-400">핵심 지표</p>
+          <p className="text-sm font-semibold text-white">{keyMetrics.length}개</p>
+        </div>
+        <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+          <p className="text-[10px] uppercase tracking-wide text-slate-400">최근 이벤트</p>
+          <p className="text-sm font-semibold text-white">{events.length}건</p>
+        </div>
+        <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+          <p className="text-[10px] uppercase tracking-wide text-slate-400">최근 공시</p>
+          <p className="text-sm font-semibold text-white">{filings.length}건</p>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 const coerceNumber = (value: unknown): number | undefined => {
@@ -139,8 +193,10 @@ const normalizeCitations = (citations?: CitationMap): NormalizedCitation[] => {
   return normalized;
 };
 
-export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail, onRetry }: ChatMessageProps) {
+export function ChatMessageBubble({ id, role, content, timestamp, meta, isGuardrail, onRetry }: ChatMessageProps) {
   const isUser = role === "user";
+  const isToolCall = role === "tool_call";
+  const isToolOutput = role === "tool_output";
   const status = meta?.status;
   const showStatusBadge = !isUser && status && status !== "ready";
   const errorMessage =
@@ -158,6 +214,20 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
       (source): source is RagSourceReference => Boolean(source && typeof source === "object")
     );
   }, [meta?.sources]);
+  const toolOutputPayload = useMemo(() => {
+    if (!isToolOutput) {
+      return null;
+    }
+    if (content && typeof content === "string") {
+      try {
+        const parsed = JSON.parse(content);
+        return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }, [content, isToolOutput]);
   const memoryMeta = (meta?.memory ?? null) as
     | {
         enabled?: boolean;
@@ -245,7 +315,7 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
     <div className={classNames("group flex w-full gap-3", isUser ? "justify-end" : "justify-start")}>
       {!isUser && (
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/20 text-sm font-semibold text-primary transition-motion-fast motion-safe:group-hover:-translate-y-1">
-          AI
+          {isToolCall ? "TC" : isToolOutput ? "TO" : "AI"}
         </div>
       )}
       <div
@@ -259,6 +329,16 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
         {!isUser ? (
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-medium text-text-secondaryLight dark:text-text-secondaryDark">
             <ChatAnswerBadge />
+            {isToolCall ? (
+              <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
+                Tool Call
+              </span>
+            ) : null}
+            {isToolOutput ? (
+              <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
+                Tool Result
+              </span>
+            ) : null}
             {memoryBadge ? (
               <span
                 className={classNames(
@@ -275,14 +355,23 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
           </div>
         ) : null}
         <div className="flex items-start gap-2">
-          <p className="flex-1 whitespace-pre-wrap leading-relaxed">
-            {typeof content === "string" ? renderChatContent(content) : content}
-            {isGuardrail && (
-              <span className="mt-2 block text-xs text-accent-warning">
-                guardrail 경고가 감지되어 안전 메시지로 대체되었습니다.
-              </span>
+          <div className="flex-1 whitespace-pre-wrap leading-relaxed">
+            {isToolCall ? (
+              <div className="flex items-center gap-2 text-sm text-slate-300">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                <span>도구 실행 중입니다...</span>
+              </div>
+            ) : (
+              <>
+                {typeof content === "string" ? renderChatContent(content) : content}
+                {isGuardrail && (
+                  <span className="mt-2 block text-xs text-accent-warning">
+                    guardrail 경고가 감지되어 안전 메시지로 대체되었습니다.
+                  </span>
+                )}
+              </>
             )}
-          </p>
+          </div>
           {showStatusBadge && status && (
             <span className="shrink-0 rounded-full bg-border-light px-2 py-0.5 text-[10px] font-semibold uppercase text-text-secondaryLight dark:bg-border-dark dark:text-text-secondaryDark">
               {statusLabel[status] ?? status}
@@ -292,6 +381,11 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
         {!isUser && ragSources.length ? (
           <div className="mt-3">
             <RagSourcesWidget sources={ragSources} />
+          </div>
+        ) : null}
+        {isToolOutput && toolOutputPayload ? (
+          <div className="mt-3">
+            <SnapshotPreviewCard payload={toolOutputPayload} />
           </div>
         ) : null}
         {!isUser && normalizedCitations.length ? (
@@ -331,7 +425,7 @@ export function ChatMessageBubble({ role, content, timestamp, meta, isGuardrail,
             </div>
           </div>
         ) : null}
-        {meta?.toolAttachments && meta.toolAttachments.length > 0 ? (
+        {isToolOutput && meta?.toolAttachments && meta.toolAttachments.length > 0 ? (
           <div className="mt-3 space-y-3">
             {meta.toolAttachments.map((attachment, index) => (
               <ToolWidgetRenderer key={`${id}-attachment-${index}`} attachment={attachment} />

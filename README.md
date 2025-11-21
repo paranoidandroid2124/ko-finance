@@ -72,13 +72,6 @@ POSTGRES_DB=kfinance_db \
 ```
 스크립트는 실패 시 즉시 중단하며, 순서를 보장하므로 수동 `psql -f …` 반복을 피할 수 있습니다. 필요하다면 `DOCKER_POSTGRES_CONTAINER` 대신 `DATABASE_URL`만 지정해도 됩니다.
 
-### Table Extraction v1
-- **Schema & pipeline:** `ops/migrations/create_table_extraction.sql` + `services/table_extraction_service.py` persist HTML/CSV/JSON artefacts per receipt under `reports/table_extraction/<receipt>/`, and ingestion (`parse.tasks.process_filing`) invokes the extractor with DLQ fallback (`task_name=table_extraction`).
-- **Backfill/CLI:** `python scripts/table_extraction.py --receipt 2025XXXXXXX` (DB persist) or `--file uploads/2025...pdf --output reports/table_extraction/manual` for ad-hoc parsing. Celery 백필 잡은 `tables.extract_receipt`(receipt_no 인자)로 제출하면 됩니다.
-- **Validation:** `python scripts/table_extraction_eval.py --samples 50 --input uploads --output reports/table_extraction/quality_report.json` → 헤더 커버리지 ≥0.75, 빈 셀 비율 ≤15%, 핵심필드 정확도 ≥0.90 등을 측정해 `reports/table_extraction/quality_report.json`을 CI 아티팩트로 남기고, pass rate <0.90이면 리그레션 알림을 띄우세요.
-- **API:** `GET /api/v1/table-explorer/tables` (검색/필터 전용), `GET /api/v1/table-explorer/tables/{id}`(세부/셀 미리보기), `GET /api/v1/table-explorer/export?id=<uuid>&fmt=csv|json`이 제공됩니다. `table.explorer` 엔타이틀먼트 + Pro/Enterprise 플랜에서만 세부/다운로드가 허용됩니다.
-- **Runbook:** QA/프론트 연동/운영 플로우는 `docs/table_extraction/runbook.md` 참고.
-
 ### Guest/Public Preview
 - `GET /api/v1/public/filings` · `POST /api/v1/public/chat` 는 인증 없이 최신 공시 목록과 간단한 챗 답변 미리보기를 제공합니다. 기본 rate limit(시간당 5회)이 적용됩니다.
 - Next.js `/public` 페이지에서 위 API를 호출해 “로그인 없이 둘러보기” 경험을 제공합니다. 로그인/가입 CTA가 함께 노출되므로 체험 → 가입 전환 흐름을 구성할 수 있습니다.

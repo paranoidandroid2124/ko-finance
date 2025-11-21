@@ -57,7 +57,7 @@ export function ReportEditor() {
     if (!chartSeries.length) {
       return [];
     }
-    const dateMap = new Map<string, Record<string, number>>();
+    const dateMap = new Map<string, Record<string, string | number>>();
     chartSeries.forEach((series) => {
       const label = series.label || series.ticker || "Series";
       (series.data ?? []).forEach((point) => {
@@ -67,7 +67,7 @@ export function ReportEditor() {
         dateMap.get(point.date)![label] = point.value;
       });
     });
-    return Array.from(dateMap.values()).sort((a, b) => (a.date > b.date ? 1 : -1));
+    return Array.from(dateMap.values()).sort((a, b) => (String(a.date) > String(b.date) ? 1 : -1));
   }, [chartSeries]);
 
   const submitFeedback = useCallback(

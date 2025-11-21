@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTheme } from "next-themes";
+import Link from "next/link";
 
 import { PlanSummaryCard } from "@/components/plan/PlanSummaryCard";
 import { PlanAlertOverview } from "@/components/plan/PlanAlertOverview";
@@ -11,10 +12,12 @@ import { useAlertRules } from "@/hooks/useAlerts";
 import { UserLightMemSettingsCard } from "@/components/settings/UserLightMemSettingsCard";
 import { LegalDataCard } from "@/components/settings/LegalDataCard";
 import { SettingsSectionNav } from "@/components/settings/SettingsSectionNav";
+import { useAuth } from "@/lib/authContext";
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+   const { session, loading: authLoading } = useAuth();
 
   const {
     data: alertRulesData,
@@ -27,6 +30,8 @@ export default function SettingsPage() {
   const isDark = mounted ? theme === "dark" : false;
   const alertPlan = alertRulesData?.plan ?? null;
   const alertPlanErrorMessage = isAlertPlanError ? "알림 플랜 정보를 불러오는 중 작은 hiccup이 있었어요." : undefined;
+  const userEmail = useMemo(() => session?.user?.email ?? null, [session?.user?.email]);
+  const userId = useMemo(() => session?.user?.id ?? session?.user?.aud ?? null, [session?.user?.aud, session?.user?.id]);
 
   const handleThemeToggle = () => {
     setTheme(isDark ? "light" : "dark");
@@ -36,6 +41,38 @@ export default function SettingsPage() {
     <AppShell>
       <div className="space-y-6">
         <SettingsSectionNav />
+
+        <section className="rounded-xl border border-border-light bg-background-cardLight p-6 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
+          <header className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-text-tertiaryLight dark:text-text-tertiaryDark">
+                Account & Workspace
+              </p>
+              <h1 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">
+                프로필 · 워크스페이스 정보
+              </h1>
+              <p className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">
+                로그인 상태를 확인하고, 알림·플랜 설정 전에 계정을 점검하세요.
+              </p>
+            </div>
+            {userEmail ? (
+              <div className="rounded-lg border border-border-light bg-white/60 px-4 py-3 text-sm text-text-primaryLight shadow-sm dark:border-border-dark dark:bg-background-base dark:text-text-primaryDark">
+                <div className="font-semibold">{userEmail}</div>
+                {userId ? <div className="text-xs text-text-secondaryLight dark:text-text-secondaryDark">User ID: {userId}</div> : null}
+              </div>
+            ) : (
+              <Link
+                href="/auth/login"
+                className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow hover:bg-primary/90"
+              >
+                로그인하고 설정 계속하기
+              </Link>
+            )}
+          </header>
+          {authLoading ? (
+            <p className="mt-3 text-xs text-text-secondaryLight dark:text-text-secondaryDark">로그인 상태를 확인하는 중입니다…</p>
+          ) : null}
+        </section>
 
         <PlanSummaryCard />
 

@@ -18,7 +18,6 @@ logger = get_logger(__name__)
 _PLAN_CATALOG_STORE = JsonStore(
     path_env="PLAN_CATALOG_FILE",
     default_path=DEFAULT_PLAN_CATALOG_PATH,
-    lock_timeout_env="PLAN_CATALOG_LOCK_TIMEOUT_SECONDS",
 )
 
 

@@ -15,7 +15,7 @@ import {
   deleteSession as apiDeleteSession,
 } from '@/lib/chatApi';
 
-export type ChatRole = 'user' | 'assistant';
+export type ChatRole = "user" | "assistant" | "tool_call" | "tool_output";
 
 export type ChatMessageStatus = 'pending' | 'streaming' | 'ready' | 'error' | 'blocked';
 

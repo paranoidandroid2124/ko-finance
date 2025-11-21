@@ -28,6 +28,7 @@ from llm.prompts import (
     summarize_report,
     table_aware_rag,
     value_chain_extract,
+    query_classifier,
 )
 from services import deeplink_service
 
@@ -124,6 +125,7 @@ RAG_MODEL = os.getenv("LLM_RAG_MODEL", "baseline")
 QUALITY_FALLBACK_MODEL = os.getenv("LLM_QUALITY_FALLBACK_MODEL", "fallback_model")
 JUDGE_MODEL = os.getenv("LLM_GUARD_JUDGE_MODEL", "judge_model")
 ROUTER_MODEL = os.getenv("LLM_ROUTER_MODEL", QUALITY_FALLBACK_MODEL)
+QUERY_CLASSIFIER_MODEL = os.getenv("LLM_QUERY_CLASSIFIER_MODEL", JUDGE_MODEL)
 
 RAG_REQUIRE_SNIPPET = env_bool("RAG_REQUIRE_SNIPPET", False)
 RAG_LINK_DEEPLINK = env_bool("RAG_LINK_DEEPLINK", False)
@@ -310,6 +312,19 @@ def _format_guard_result(result: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _normalize_query_category(result: Dict[str, Any]) -> Dict[str, Any]:
+    category_raw = str(result.get("category") or "").strip().lower()
+    allowed = {"chitchat", "financial_query", "out_of_domain"}
+    category = category_raw if category_raw in allowed else "financial_query"
+    payload = {"category": category}
+    model_used = result.get("model_used")
+    if model_used:
+        payload["model_used"] = model_used
+    if result.get("error"):
+        payload["error"] = result["error"]
+    return payload
+
+
 def classify_filing_content(raw_md: str) -> Dict[str, Any]:
     snippet = raw_md[:12000]
     messages = classify_filing.get_prompt(snippet)
@@ -332,6 +347,24 @@ _ROUTER_FALLBACK = {
     "tickers": [],
     "metadata": {"fallback": True},
 }
+
+
+def classify_query_category(question: str) -> Dict[str, Any]:
+    """Lightweight classifier for chitchat/financial/out-of-domain routing."""
+
+    normalized = (question or "").strip()
+    if not normalized:
+        return {"category": "chitchat"}
+
+    messages = query_classifier.get_prompt(normalized)
+    return _run_json_prompt(
+        label="Front door query classifier",
+        model=QUERY_CLASSIFIER_MODEL,
+        messages=messages,
+        normalizer=_normalize_query_category,
+        default_on_error={"category": "financial_query"},
+        log_level="warning",
+    )
 
 
 def route_chat_query(question: str) -> Dict[str, Any]:
@@ -1188,6 +1221,7 @@ __all__ = [
     "validate_news_analysis_result",
     "generate_rag_answer",
     "stream_rag_answer",
+    "classify_query_category",
     "summarize_chat_transcript",
     "generate_watchlist_personal_note",
     "write_investment_memo",

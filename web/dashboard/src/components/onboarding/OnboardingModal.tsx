@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
 import { CheckCircle2, Sparkles, X } from "lucide-react";
 
@@ -10,6 +10,7 @@ import { useOnboardingStore } from "@/store/onboardingStore";
 export function OnboardingModal() {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const needsOnboarding = useOnboardingStore((state) => state.needsOnboarding);
   const dismissed = useOnboardingStore((state) => state.dismissed);
   const content = useOnboardingStore((state) => state.content);
@@ -28,7 +29,8 @@ export function OnboardingModal() {
     markDismissed();
   };
 
-  if (!needsOnboarding || dismissed || pathname?.startsWith("/onboarding")) {
+  const hasPrefill = Boolean(searchParams?.has("prefill"));
+  if (!needsOnboarding || dismissed || pathname?.startsWith("/onboarding") || hasPrefill) {
     return null;
   }
 

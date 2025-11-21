@@ -1,6 +1,6 @@
 "use client";
 
-import { signIn } from "next-auth/react";
+import supabase from "@/lib/supabase";
 
 const PROVIDERS = [
   { id: "google", label: "Google" },
@@ -21,7 +21,7 @@ export function OAuthButtonGroup({ callbackUrl, disabled }: Props) {
           key={provider.id}
           type="button"
           disabled={disabled}
-          onClick={() => signIn(provider.id, { callbackUrl })}
+          onClick={() => supabase.auth.signInWithOAuth({ provider: provider.id as any, options: { redirectTo: callbackUrl ?? `${window.location.origin}/auth/callback` } })}
           className="flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 py-2 text-sm font-medium text-white transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {provider.label} 계정으로 계속하기

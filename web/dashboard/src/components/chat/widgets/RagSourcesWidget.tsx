@@ -44,34 +44,36 @@ export default function RagSourcesWidget({ sources }: RagSourcesWidgetProps) {
           {sources.length}개
         </span>
       </div>
-      <div className="space-y-3">
+      <div className="grid gap-3 md:grid-cols-2">
         {sources.map((source) => {
           const title = source.title || source.label || source.source || "출처 미상";
           const snippet = source.snippet;
-          const pageLabel = source.pageLabel ?? (typeof source.page !== "undefined" ? `p.${source.page}` : null);
+          const pageLabel = source.pageLabel ?? (typeof source.page !== "undefined" ? `p.${source.page}` : undefined);
+          const url = typeof source.sourceUrl === "string" ? source.sourceUrl : undefined;
+          const score = typeof source.score === "number" ? source.score : undefined;
+          const published = typeof source.publishedAt === "string" ? source.publishedAt : undefined;
+          const badge = [pageLabel, published, score !== undefined ? `score ${score.toFixed(2)}` : null]
+            .filter(Boolean)
+            .join(" · ");
+
           return (
-            <div
+            <button
               key={source.id ?? `${title}-${pageLabel ?? ""}`}
-              className="rounded-2xl border border-white/10 bg-black/20 p-3"
+              type="button"
+              onClick={() => handleOpen(url)}
+              className="group flex flex-col items-start gap-2 rounded-2xl border border-white/10 bg-black/20 p-4 text-left transition hover:-translate-y-0.5 hover:border-primary/60 hover:bg-white/10"
             >
-              <div className="flex flex-col gap-1">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-semibold text-white">{title}</p>
-                    {pageLabel ? <p className="text-[11px] uppercase tracking-wide text-slate-400">{pageLabel}</p> : null}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleOpen(typeof source.sourceUrl === "string" ? source.sourceUrl : undefined)}
-                    className="rounded-full border border-white/15 px-3 py-1 text-[11px] font-semibold text-white transition hover:border-white/40 hover:text-primary disabled:opacity-40"
-                    disabled={!source.sourceUrl}
-                  >
-                    열기
-                  </button>
+              <div className="flex w-full items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-white">{title}</p>
+                  {badge ? <p className="text-[11px] uppercase tracking-wide text-slate-400">{badge}</p> : null}
                 </div>
-                {snippet ? <p className="text-xs text-slate-400">{snippet}</p> : null}
+                <span className="rounded-full border border-white/15 px-3 py-1 text-[11px] font-semibold text-white transition group-hover:border-primary/60 group-hover:text-primary">
+                  보기
+                </span>
               </div>
-            </div>
+              {snippet ? <p className="line-clamp-3 text-xs text-slate-300">{snippet}</p> : null}
+            </button>
           );
         })}
       </div>

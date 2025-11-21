@@ -73,7 +73,7 @@ const sections: LegalSection[] = [
       },
       {
         type: "note",
-        text: "보관 기간은 Admin Console 및 내부 설정에서 조정할 수 있으며, DSAR 처리나 기업 고객 계약에 따라 단축될 수 있습니다.",
+        text: "보관 기간은 Admin Console 및 내부 설정에서 조정할 수 있으며, 사용자의 데이터 열람·삭제 요청이나 기업 고객 계약에 따라 단축될 수 있습니다.",
       },
     ],
   },
@@ -98,7 +98,7 @@ const sections: LegalSection[] = [
       {
         type: "list",
         items: [
-          "열람·정정·삭제·처리정지: Settings → Legal & Data → “내 데이터 내보내기/삭제 요청”에서 DSAR을 제출하거나 이메일로 요청할 수 있습니다.",
+          "열람·정정·삭제·처리정지: Settings → Legal & Data → “내 데이터 내보내기/삭제 요청”에서 요청하거나 이메일로 알려 주세요.",
           "동의 철회: 마케팅 안내, LightMem 사용 등 선택 동의는 언제든지 Settings에서 변경할 수 있습니다.",
           "대리인 신청: 위임장을 제출하면 서면 또는 이메일로 처리합니다.",
         ],
@@ -115,7 +115,7 @@ const sections: LegalSection[] = [
     contents: [
       {
         type: "paragraph",
-        text: "세션 유지, 테마 설정, PlanLock 경고 등 필수 기능을 위해 쿠키와 LocalStorage를 사용합니다. 광고·추적 목적 쿠키는 기본적으로 사용하지 않으며 필요 시 별도 동의를 구합니다.",
+        text: "세션 유지, 테마 설정, PlanLock 경고 등 필수 기능을 위해 쿠키와 브라우저 저장소(로컬 저장소)를 사용합니다. 광고·추적 쿠키는 기본 비활성화이며, 필요할 때 별도 동의를 받습니다.",
       },
     ],
   },

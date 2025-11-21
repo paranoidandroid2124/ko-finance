@@ -471,16 +471,24 @@ def ensure_sector_catalog(session: Session) -> Dict[str, Sector]:
         sector.slug: sector
         for sector in session.query(Sector).order_by(Sector.id.asc()).all()
     }
-    created = False
+    missing: list[Sector] = []
     for slug, name in SECTOR_DEFINITIONS.items():
         if slug not in existing:
             sector = Sector(slug=slug, name=name)
-            session.add(sector)
+            missing.append(sector)
             existing[slug] = sector
-            created = True
 
-    if created:
-        session.flush()
+    if missing:
+        try:
+            session.bulk_save_objects(missing)
+            session.flush()
+        except Exception:
+            session.rollback()
+            # In case of race (duplicate slug), re-read existing map
+            existing = {
+                sector.slug: sector
+                for sector in session.query(Sector).order_by(Sector.id.asc()).all()
+            }
 
     return existing
 

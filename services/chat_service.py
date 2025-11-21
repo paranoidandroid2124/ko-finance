@@ -302,6 +302,63 @@ def create_chat_message(
     return message
 
 
+def create_tool_call_message(
+    db: Session,
+    *,
+    session_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    tool_name: str,
+    arguments: Optional[dict] = None,
+    idempotency_key: Optional[str] = None,
+) -> ChatMessage:
+    """Persist a tool call intent as a chat message for context continuity."""
+
+    meta_payload = {
+        "tool_call": {
+            "name": tool_name,
+            "arguments": arguments or {},
+        }
+    }
+    return create_chat_message(
+        db,
+        session_id=session_id,
+        role="tool_call",
+        content=None,
+        turn_id=turn_id,
+        idempotency_key=idempotency_key,
+        meta=meta_payload,
+        state="ready",
+    )
+
+
+def create_tool_output_message(
+    db: Session,
+    *,
+    session_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    tool_name: str,
+    output: Optional[dict] = None,
+    status: str = "ok",
+    idempotency_key: Optional[str] = None,
+) -> ChatMessage:
+    """Persist tool execution result as a chat message."""
+
+    meta_payload = {
+        "tool_name": tool_name,
+        "tool_status": status,
+    }
+    return create_chat_message(
+        db,
+        session_id=session_id,
+        role="tool_output",
+        content=json.dumps(output or {}, ensure_ascii=False),
+        turn_id=turn_id,
+        idempotency_key=idempotency_key,
+        meta=meta_payload,
+        state="ready",
+    )
+
+
 def update_message_state(
     db: Session,
     *,
@@ -311,6 +368,7 @@ def update_message_state(
     error_message: Optional[str] = None,
     content: Optional[str] = None,
     meta: Optional[dict] = None,
+    context: Optional[Any] = None,
 ) -> ChatMessage:
     message = db.query(ChatMessage).filter(ChatMessage.id == message_id).with_for_update().first()
     if message is None:
@@ -322,10 +380,13 @@ def update_message_state(
         message.error_message = error_message
     if content is not None:
         message.content = content
+    current_meta = dict(message.meta or {})
     if meta:
-        current_meta = dict(message.meta or {})
-        current_meta.update(_ensure_meta_fields(meta))
-        message.meta = current_meta
+        current_meta.update(meta)
+    if context is not None:
+        current_meta["context"] = context
+    if current_meta:
+        message.meta = _ensure_meta_fields(current_meta)
     session = (
         db.query(ChatSession)
         .filter(ChatSession.id == message.session_id)

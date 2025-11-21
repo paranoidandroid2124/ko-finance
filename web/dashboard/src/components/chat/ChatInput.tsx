@@ -6,6 +6,7 @@ import { ChatInputDisclaimer } from "@/components/legal";
 export type ChatInputProps = {
   onSubmit?: (message: string) => void;
   disabled?: boolean;
+  onFocusChange?: (focused: boolean) => void;
 };
 
 const QUICK_COMMANDS = [
@@ -13,9 +14,10 @@ const QUICK_COMMANDS = [
   { label: "LightMem 상태", value: "/memory status" },
 ];
 
-export function ChatInput({ onSubmit, disabled }: ChatInputProps) {
+export function ChatInput({ onSubmit, disabled, onFocusChange }: ChatInputProps) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [isFocused, setIsFocused] = useState(false);
 
   const sendMessage = () => {
     if (disabled || !value.trim()) return;
@@ -54,6 +56,11 @@ export function ChatInput({ onSubmit, disabled }: ChatInputProps) {
     };
   }, []);
 
+  const toggleFocus = (focused: boolean) => {
+    setIsFocused(focused);
+    onFocusChange?.(focused);
+  };
+
   return (
     <div className="space-y-3" data-onboarding-id="chat-input">
       {!disabled && (
@@ -63,34 +70,67 @@ export function ChatInput({ onSubmit, disabled }: ChatInputProps) {
               key={command.value}
               type="button"
               onClick={() => handleCommandInsert(command.value)}
-              className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-200 transition hover:border-white/40 hover:text-white"
+              className="group relative overflow-hidden rounded-full border border-[#30363D] bg-[#0D1117]/70 px-3 py-1 text-[12px] font-semibold text-slate-200 transition duration-200 hover:-translate-y-[1px] hover:border-[#58A6FF]/70 hover:text-white"
             >
+              <span
+                className="pointer-events-none absolute inset-0 opacity-0 transition duration-200 group-hover:opacity-100"
+                aria-hidden
+                style={{
+                  background:
+                    "radial-gradient(circle at 20% 40%, rgba(88,166,255,0.22), transparent 52%)",
+                }}
+              />
               {command.label}
-              <span className="ml-2 text-[10px] text-cyan-300/80">{command.value}</span>
+              <span className="ml-2 text-[10px] font-medium text-[#58A6FF]/80">{command.value}</span>
             </button>
           ))}
         </div>
       )}
-      <form
-        onSubmit={handleSubmit}
-        className="relative flex items-center gap-3 rounded-full border border-white/15 bg-[#0f1c2f]/80 px-5 py-2 shadow-[0_20px_60px_rgba(3,7,18,0.5)] backdrop-blur-2xl focus-within:border-blue-500/40 focus-within:ring-2 focus-within:ring-blue-500/10"
-      >
-        <textarea
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={handleKeyDown}
-          ref={textareaRef}
-          placeholder="질문을 입력하면 공시 기반 분석을 바로 제공합니다..."
-          className="min-h-[48px] flex-1 resize-none bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
+      <div className="relative">
+        <div
+          aria-hidden
+          className={`pointer-events-none absolute -inset-x-3 -inset-y-3 rounded-[28px] blur-2xl transition duration-500 ${
+            isFocused ? "opacity-100" : "opacity-0"
+          }`}
+          style={{
+            background: "radial-gradient(circle at 20% 20%, rgba(88,166,255,0.32), transparent 45%)",
+          }}
         />
-        <button
-          type="submit"
-          disabled={disabled}
-          className="rounded-full bg-gradient-to-r from-blue-600 to-cyan-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-blue-600/40 transition hover:scale-105 hover:from-blue-500 hover:to-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
+        <form
+          onSubmit={handleSubmit}
+          onFocusCapture={() => toggleFocus(true)}
+          onBlurCapture={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              toggleFocus(false);
+            }
+          }}
+          className="relative isolate flex items-start gap-3 rounded-[24px] border border-[#30363D] bg-[#161B22]/90 px-4 py-3 shadow-[0_18px_48px_rgba(0,0,0,0.45)] ring-1 ring-white/[0.02] backdrop-blur-xl transition-all duration-300 focus-within:-translate-y-0.5 focus-within:border-[#58A6FF]/70 focus-within:shadow-[0_24px_88px_rgba(88,166,255,0.28)] focus-within:ring-[#58A6FF]/20"
         >
-          전송
-        </button>
-      </form>
+          <div className="pointer-events-none absolute inset-0 rounded-[28px] border border-white/[0.03]" aria-hidden />
+          <textarea
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={handleKeyDown}
+            ref={textareaRef}
+            placeholder="질문을 입력하면 공시 기반 분석을 바로 제공합니다..."
+            className="min-h-[56px] flex-1 resize-none bg-transparent text-sm leading-relaxed text-white outline-none placeholder:text-slate-500"
+          />
+          <button
+            type="submit"
+            disabled={disabled}
+            className="group relative inline-flex items-center gap-2 overflow-hidden rounded-full bg-gradient-to-r from-[#58A6FF] to-[#58A6FF] px-4 py-2 text-sm font-semibold text-white shadow-[0_8px_28px_rgba(88,166,255,0.35)] transition duration-200 hover:-translate-y-[1px] hover:shadow-[0_12px_42px_rgba(88,166,255,0.55)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#58A6FF]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#161B22] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <span
+              className="absolute inset-0 opacity-0 blur-2xl transition duration-200 group-hover:opacity-70"
+              aria-hidden
+              style={{
+                background: "radial-gradient(circle at 30% 50%, rgba(255,255,255,0.22), transparent 55%)",
+              }}
+            />
+            <span className="relative z-10">전송</span>
+          </button>
+        </form>
+      </div>
       <ChatInputDisclaimer className="text-center text-[10px] text-slate-500" />
     </div>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 const queryPresets = [
   {
@@ -65,6 +66,16 @@ const Chip = ({ title, fullTitle, desc, onClick }: ChipProps) => (
 
 export function NuvienHero() {
   const [inputValue, setInputValue] = useState(queryPresets[0].fullTitle);
+  const router = useRouter();
+
+  const handleSend = () => {
+    const query = inputValue.trim();
+    if (!query) {
+      return;
+    }
+    const params = new URLSearchParams({ prefill: query, guest: "1" });
+    router.push(`/chat?${params.toString()}`);
+  };
 
   return (
     <section className="relative overflow-hidden bg-[#050A18] text-white">
@@ -123,6 +134,7 @@ export function NuvienHero() {
             />
             <button
               type="button"
+              onClick={handleSend}
               className="mr-1 rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-500"
             >
               Send

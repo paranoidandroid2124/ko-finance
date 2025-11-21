@@ -212,7 +212,7 @@ export default function LandingPage() {
           <p className="text-slate-200">생성된 리포트는 참고용 자료이며, 모든 투자 판단과 책임은 이용자에게 있습니다.</p>
           <div className="flex flex-wrap items-center justify-center gap-4">
             <Link
-              href="/auth/signup"
+              href="/chat?guest=1"
               className="inline-flex items-center rounded-full bg-white px-6 py-3 text-sm font-semibold text-slate-900 shadow-lg shadow-white/30"
             >
               무료 체험 시작

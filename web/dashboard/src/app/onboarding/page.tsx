@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
-
 import { AppShell } from "@/components/layout/AppShell";
 import { useToastStore } from "@/store/toastStore";
 import { useOnboardingStore } from "@/store/onboardingStore";
@@ -29,8 +27,7 @@ export default function OnboardingWizardPage() {
   const onboardingStore = useOnboardingStore();
   const toast = useToastStore((state) => state.show);
   const router = useRouter();
-  const { update } = useSession();
-  const [orgName, setOrgName] = useState("");
+    const [orgName, setOrgName] = useState("");
   const [orgSlug, setOrgSlug] = useState("");
   const [inviteInput, setInviteInput] = useState("");
   const [inviteRole, setInviteRole] = useState("viewer");
@@ -107,7 +104,6 @@ export default function OnboardingWizardPage() {
     }
     try {
       const org = await wizard.updateOrg({ name: orgName.trim(), slug: orgSlug || undefined });
-      await update?.({ orgId: org.id });
       toast({ id: "onboarding/org/saved", title: "조직 정보가 저장되었습니다.", intent: "success" });
     } catch (error) {
       toast({
@@ -268,7 +264,6 @@ export default function OnboardingWizardPage() {
     setCompletionLoading(true);
     try {
       await onboardingStore.completeOnboarding([]);
-      await update?.({ onboardingRequired: false });
       toast({ id: "onboarding/completed", title: "온보딩이 완료되었습니다.", intent: "success" });
       router.push("/");
     } catch (error) {

@@ -87,6 +87,7 @@ class MemoryService:
         *,
         plan_memory_enabled: Optional[bool] = None,
         watchlist_context: bool = False,
+        profile_context: bool = False,
     ) -> bool:
         if plan_memory_enabled is False:
             return False
@@ -94,6 +95,8 @@ class MemoryService:
             return True
         if watchlist_context:
             return self._feature_flags.watchlist_enabled
+        if profile_context:
+            return self._feature_flags.user_profile_enabled
         return self._feature_flags.default_enabled
 
     # ------------------------------------------------------------------
@@ -191,10 +194,44 @@ class MemoryService:
                 limit=self._runtime_settings.retrieval_k,
             )
 
+        # Profile summaries (hidden personalization) stored under a user-wide key.
+        profile_session_id = f"user:{user_id}" if user_id else None
+        profile_summaries: Sequence[SessionSummaryEntry] = []
+        if profile_session_id:
+            profile_summaries = self.get_session_summaries(profile_session_id)
+            # Limit profile highlights length for subtle use.
+            max_chars = self._runtime_settings.profile_max_chars
+            trimmed_profiles: List[SessionSummaryEntry] = []
+            for entry in profile_summaries:
+                highlights = []
+                total = 0
+                for h in entry.highlights[: self._runtime_settings.profile_max_highlights]:
+                    if total + len(h) > max_chars:
+                        break
+                    highlights.append(h)
+                    total += len(h)
+                trimmed_profiles.append(
+                    SessionSummaryEntry(
+                        session_id=entry.session_id,
+                        topic=entry.topic,
+                        highlights=highlights,
+                        expires_at=entry.expires_at,
+                        metadata=entry.metadata,
+                        created_at=entry.created_at,
+                        updated_at=entry.updated_at,
+                    )
+                )
+            profile_summaries = trimmed_profiles
+
+        combined_summaries = list(profile_summaries) + list(summaries)
+
         return PromptComposition(
             base_prompt=base_prompt,
             compressed_prompt=compressed,
-            session_summaries=summaries,
+            session_summaries=combined_summaries,
             long_term_records=records,
             rag_snippets=list(rag_snippets or []),
         )
+
+    def profile_expiry(self) -> datetime:
+        return datetime.now(UTC) + timedelta(minutes=self._runtime_settings.profile_ttl_minutes)

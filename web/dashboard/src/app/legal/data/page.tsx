@@ -7,7 +7,7 @@ const { contact: companyContact, updatedAt } = LEGAL_COMPANY;
 
 export const metadata: Metadata = {
   title: "데이터 & 라이선스 정책 | Nuvien",
-  description: "데이터 소스, Evidence 정책, 보존 주기, DSAR 절차를 안내합니다.",
+  description: "데이터 소스, Evidence 정책, 보존 주기, 데이터 열람·삭제 절차를 안내합니다.",
 };
 
 const sections: LegalSection[] = [
@@ -72,12 +72,12 @@ const sections: LegalSection[] = [
   },
   {
     id: "dsar",
-    title: "4. DSAR(데이터 열람·삭제) 절차",
+    title: "4. 데이터 열람·삭제(권리 요청) 절차",
     contents: [
       {
         type: "list",
         items: [
-          "Settings → Legal & Data에서 내보내기 또는 삭제 요청을 남기면 DSAR 요청 큐에 등록됩니다.",
+          "Settings → Legal & Data에서 내보내기 또는 삭제 요청을 남기면 처리 큐에 등록되어 순차적으로 처리됩니다.",
           "요청은 최대 24시간마다 실행되는 Celery 작업에서 처리되며, 진행 상태와 다운로드 링크는 화면과 API로 안내됩니다.",
           "삭제 요청 시 Chat·LightMem·Report 등의 개인 데이터를 우선 제거하고, 법적으로 보존해야 하는 데이터는 비식별화합니다.",
         ],
@@ -94,14 +94,14 @@ const sections: LegalSection[] = [
     contents: [
       {
         type: "paragraph",
-        text: "모든 사용자 데이터는 GCP Cloud SQL(PostgreSQL)과 GCS(evidence bundle, DSAR export)에 저장되며, 저장 시 AES256 서버 측 암호화를 적용합니다. 운영자 접근은 Bastion+MFA를 거쳐야 하고, 접근 기록은 admin_audit_logs에 남습니다.",
+        text: "모든 사용자 데이터는 GCP Cloud SQL(PostgreSQL)과 GCS(evidence bundle, 내보내기 파일)에 저장되며, 저장 시 AES256 서버 측 암호화를 적용합니다. 운영자 접근은 Bastion+MFA를 거쳐야 하고, 접근 기록은 admin_audit_logs에 남습니다.",
       },
     ],
   },
   buildCompanyContactSection({
     id: "contact",
     title: "6. 문의",
-    note: `데이터 사용, 라이선스, DSAR 처리 관련 문의는 ${companyContact} 로 연락해 주세요.`,
+    note: `데이터 사용, 라이선스, 데이터 열람·삭제(권리 요청) 처리 관련 문의는 ${companyContact} 로 연락해 주세요.`,
   }),
 ];
 
@@ -109,7 +109,7 @@ export default function DataPolicyPage() {
   return (
     <LegalDocumentPage
       title="데이터 & 라이선스 정책"
-      subtitle="데이터 소스, Guardrail, 보존/삭제 원칙, DSAR 흐름을 한눈에 제공합니다."
+      subtitle="데이터 소스, Guardrail, 보존/삭제 원칙, 권리 요청 흐름을 한눈에 제공합니다."
       updatedAtLabel={updatedAt}
       sections={sections}
     />

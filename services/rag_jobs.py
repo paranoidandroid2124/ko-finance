@@ -7,10 +7,11 @@ from typing import Any, Dict, List, Optional
 from core.logging import get_logger
 
 try:  # pragma: no cover - celery unavailable in some test envs
-    from parse.tasks import run_rag_self_check, snapshot_evidence_diff
+    from parse.tasks import run_rag_self_check, snapshot_evidence_diff, run_snapshot_company_task
 except Exception:  # pragma: no cover - fallback when tasks missing
     run_rag_self_check = None  # type: ignore[assignment]
     snapshot_evidence_diff = None  # type: ignore[assignment]
+    run_snapshot_company_task = None  # type: ignore[assignment]
 
 logger = get_logger(__name__)
 

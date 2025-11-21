@@ -13,6 +13,8 @@ type Props = {
   onClearAll?: () => void;
   persistenceError?: string | null;
   disabled?: boolean;
+  dimmed?: boolean;
+  footer?: React.ReactNode;
 };
 
 type ConfirmState =
@@ -31,6 +33,8 @@ export function ChatHistoryList({
   onClearAll,
   persistenceError,
   disabled,
+  dimmed,
+  footer,
 }: Props) {
   const [confirm, setConfirm] = useState<ConfirmState>(null);
 
@@ -60,8 +64,12 @@ export function ChatHistoryList({
   const isEmpty = sessions.length === 0;
   const showLoadingState = Boolean(disabled && isEmpty);
 
+  const asideClasses =
+    "hidden w-[320px] max-h-[calc(100vh-160px)] flex-shrink-0 flex-col gap-4 overflow-hidden rounded-3xl border border-[#30363D] bg-[#0f1624]/90 p-4 text-sm text-slate-300 shadow-[0_20px_80px_rgba(0,0,0,0.55)] backdrop-blur-xl transition duration-300 xl:flex" +
+    (dimmed ? " focused-mode" : "");
+
   return (
-    <aside className="hidden w-[260px] max-h-[calc(100vh-160px)] flex-shrink-0 flex-col gap-4 overflow-hidden rounded-3xl border border-white/5 bg-slate-900/30 p-4 text-sm text-slate-300 shadow-[0_20px_80px_rgba(8,15,40,0.65)] backdrop-blur-xl xl:flex">
+    <aside className={asideClasses}>
       <div className="flex items-center justify-between">
         <div>
           <p className="text-[10px] uppercase tracking-[0.4em] text-slate-500">History</p>
@@ -93,11 +101,11 @@ export function ChatHistoryList({
       ) : null}
       <div className="flex-1 min-h-0 space-y-2 overflow-y-auto pr-1">
         {showLoadingState ? (
-          <p className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-center text-xs text-slate-400">
+          <p className="rounded-2xl border border-[#30363D] bg-[#0D1117]/60 px-4 py-6 text-center text-xs text-slate-400">
             대화 기록을 불러오고 있습니다...
           </p>
         ) : isEmpty ? (
-          <p className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-center text-xs text-slate-500">
+          <p className="rounded-2xl border border-[#30363D] bg-[#0D1117]/60 px-4 py-6 text-center text-xs text-slate-500">
             아직 생성된 대화가 없습니다.
           </p>
         ) : (
@@ -136,6 +144,7 @@ export function ChatHistoryList({
           })
         )}
       </div>
+      {footer ? <div className="pt-3">{footer}</div> : null}
       {confirm && (
         <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/60 px-4">
           <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-[#050a1c]/95 p-6 text-sm text-slate-200 shadow-[0_40px_120px_rgba(4,7,15,0.85)] backdrop-blur-2xl">
