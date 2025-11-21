@@ -8,6 +8,8 @@ import { ChatMessageBubble } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
 import type { ChatMessage } from "@/store/chatStore";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
+import { ProactiveFeedWidget } from "@/components/feed/ProactiveFeedWidget";
+import { ProactiveBriefingsWidget } from "@/components/feed/ProactiveBriefingsWidget";
 
 type ChatStreamPaneProps = {
   sessionTitle: string;
@@ -154,6 +156,8 @@ export function ChatStreamPane({
               <p className="text-[12px] text-slate-400">종목이나 이슈를 입력하면 공시·뉴스·시세 기반 분석을 바로 제공합니다.</p>
             </div>
           </div>
+          <ProactiveBriefingsWidget />
+          <ProactiveFeedWidget />
           {hasContextBanner && showEmptyState ? (
             <div className="rounded-2xl border border-[#30363D] bg-[#0D1117]/60 px-4 py-3 text-sm text-slate-200 shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur-xl">
               <div className="flex items-start justify-between gap-3">

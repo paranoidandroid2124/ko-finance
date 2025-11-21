@@ -482,7 +482,7 @@ export function useChatController(): ChatController {
     }).format(resetDate)}에 초기화돼요.`;
   }, [chatQuotaNotice]);
   const handlePlanRedirect = useCallback(() => {
-    router.push('/settings?panel=plan');
+    router.push('/settings?panel=plan' as any);
   }, [router]);
   const dismissQuotaNotice = useCallback(() => setChatQuotaNotice(null), []);
 

@@ -73,7 +73,7 @@ export function SettingsOverlay({ onClose }: SettingsOverlayProps) {
         <div className="max-h-[75vh] overflow-y-auto px-6 py-6">
           <div className="space-y-5">
             <PlanSummaryCard />
-            <PlanAlertOverview plan={alertPlan} loading={isAlertPlanLoading} error={alertPlanErrorMessage} />
+            <PlanAlertOverview />
             <UserLightMemSettingsCard />
 
             <section className="rounded-xl border border-border-light bg-background-base p-5 shadow-sm dark:border-border-dark dark:bg-background-baseDark">

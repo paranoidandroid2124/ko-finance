@@ -39,7 +39,7 @@ export function AccountSecuritySettingsPanel({ onClose }: AccountSecuritySetting
           <div className="text-sm text-slate-300">
             <p>현재 플랜: 대시보드 상단 요약을 참고하세요.</p>
             <Link
-              href="/payments"
+              href={"/payments" as any}
               className="mt-2 inline-flex items-center gap-2 rounded-lg bg-blue-500 px-3 py-2 text-xs font-semibold text-white shadow hover:bg-blue-400"
             >
               결제 관리로 이동

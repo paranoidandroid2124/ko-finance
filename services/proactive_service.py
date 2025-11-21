@@ -1,1 +1,118 @@
-"\"\"\"Helpers for proactive notifications feed (storage + creation).\"\"\"\n+\n+from __future__ import annotations\n+\n+import uuid\n+from typing import Iterable, List, Optional\n+\n+from sqlalchemy import and_\n+from sqlalchemy.orm import Session\n+\n+from models import ProactiveNotification\n+\n+DEFAULT_LIMIT = 20\n+\n+\n+def upsert_notification(\n+    db: Session,\n+    *,\n+    user_id: uuid.UUID,\n+    source_type: str,\n+    source_id: str,\n+    title: Optional[str] = None,\n+    summary: Optional[str] = None,\n+    ticker: Optional[str] = None,\n+    target_url: Optional[str] = None,\n+    metadata: Optional[dict] = None,\n+) -> ProactiveNotification:\n+    existing: Optional[ProactiveNotification] = (\n+        db.query(ProactiveNotification)\n+        .filter(\n+            ProactiveNotification.user_id == user_id,\n+            ProactiveNotification.source_type == source_type,\n+            ProactiveNotification.source_id == source_id,\n+        )\n+        .first()\n+    )\n+    if existing:\n+        existing.title = title or existing.title\n+        existing.summary = summary or existing.summary\n+        existing.ticker = ticker or existing.ticker\n+        existing.target_url = target_url or existing.target_url\n+        if metadata:\n+            existing.metadata = metadata\n+        existing.status = existing.status or \"unread\"\n+        db.add(existing)\n+        db.commit()\n+        db.refresh(existing)\n+        return existing\n+\n+    notif = ProactiveNotification(\n+        user_id=user_id,\n+        source_type=source_type,\n+        source_id=source_id,\n+        title=title,\n+        summary=summary,\n+        ticker=ticker,\n+        target_url=target_url,\n+        metadata=metadata,\n+        status=\"unread\",\n+    )\n+    db.add(notif)\n+    db.commit()\n+    db.refresh(notif)\n+    return notif\n+\n+\n+def list_notifications(\n+    db: Session,\n+    *,\n+    user_id: uuid.UUID,\n+    limit: int = DEFAULT_LIMIT,\n+    statuses: Optional[Iterable[str]] = None,\n+) -> List[ProactiveNotification]:\n+    query = db.query(ProactiveNotification).filter(ProactiveNotification.user_id == user_id)\n+    if statuses:\n+        query = query.filter(ProactiveNotification.status.in_(list(statuses)))\n+    return query.order_by(ProactiveNotification.created_at.desc()).limit(limit).all()\n+\n+\n+def update_status(\n+    db: Session,\n+    *,\n+    user_id: uuid.UUID,\n+    notification_id: uuid.UUID,\n+    status: str,\n+) -> Optional[ProactiveNotification]:\n+    updated = (\n+        db.query(ProactiveNotification)\n+        .filter(\n+            and_(\n+                ProactiveNotification.id == notification_id,\n+                ProactiveNotification.user_id == user_id,\n+            )\n+        )\n+        .first()\n+    )\n+    if not updated:\n+        return None\n+    updated.status = status\n+    db.add(updated)\n+    db.commit()\n+    db.refresh(updated)\n+    return updated\n+\n+\n+__all__ = [\"upsert_notification\", \"list_notifications\", \"update_status\"]\n*** End Patch"
+"""Helpers for proactive notifications feed (storage + creation)."""
+
+from __future__ import annotations
+
+import uuid
+from typing import Iterable, List, Optional
+
+from sqlalchemy import and_
+from sqlalchemy.orm import Session
+
+from models import ProactiveNotification
+
+DEFAULT_LIMIT = 20
+
+
+def _merged_metadata(existing: Optional[dict], incoming: Optional[dict]) -> Optional[dict]:
+    if not incoming:
+        return existing
+    if not existing:
+        return incoming
+    if isinstance(existing, dict):
+        base = existing.copy()
+    else:
+        base = {}
+    base.update(incoming)
+    return base
+
+
+def upsert_notification(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    source_type: str,
+    source_id: str,
+    title: Optional[str] = None,
+    summary: Optional[str] = None,
+    ticker: Optional[str] = None,
+    target_url: Optional[str] = None,
+    metadata: Optional[dict] = None,
+) -> ProactiveNotification:
+    existing: Optional[ProactiveNotification] = (
+        db.query(ProactiveNotification)
+        .filter(
+            ProactiveNotification.user_id == user_id,
+            ProactiveNotification.source_type == source_type,
+            ProactiveNotification.source_id == source_id,
+        )
+        .first()
+    )
+    if existing:
+        existing.title = title or existing.title
+        existing.summary = summary or existing.summary
+        existing.ticker = ticker or existing.ticker
+        existing.target_url = target_url or existing.target_url
+        existing.metadata = _merged_metadata(existing.metadata, metadata)
+        existing.status = existing.status or "unread"
+        db.add(existing)
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    notif = ProactiveNotification(
+        user_id=user_id,
+        source_type=source_type,
+        source_id=source_id,
+        title=title,
+        summary=summary,
+        ticker=ticker,
+        target_url=target_url,
+        metadata=metadata,
+        status="unread",
+    )
+    db.add(notif)
+    db.commit()
+    db.refresh(notif)
+    return notif
+
+
+def list_notifications(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    limit: int = DEFAULT_LIMIT,
+    statuses: Optional[Iterable[str]] = None,
+) -> List[ProactiveNotification]:
+    query = db.query(ProactiveNotification).filter(ProactiveNotification.user_id == user_id)
+    if statuses:
+        query = query.filter(ProactiveNotification.status.in_(list(statuses)))
+    return query.order_by(ProactiveNotification.created_at.desc()).limit(limit).all()
+
+
+def update_status(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    notification_id: uuid.UUID,
+    status: str,
+) -> Optional[ProactiveNotification]:
+    updated = (
+        db.query(ProactiveNotification)
+        .filter(
+            and_(
+                ProactiveNotification.id == notification_id,
+                ProactiveNotification.user_id == user_id,
+            )
+        )
+        .first()
+    )
+    if not updated:
+        return None
+    updated.status = status
+    db.add(updated)
+    db.commit()
+    db.refresh(updated)
+    return updated
+
+
+__all__ = ["upsert_notification", "list_notifications", "update_status"]

@@ -17,6 +17,7 @@ export type ChatMessageProps = {
   timestamp: string;
   meta?: ChatMessageMeta;
   onRetry?: () => void;
+  isGuardrail?: boolean;
 };
 
 const statusLabel: Record<NonNullable<ChatMessageMeta["status"]>, string> = {

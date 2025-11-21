@@ -35,7 +35,7 @@ export function AppShell({ children }: AppShellProps) {
     if (loading) {
       return;
     }
-    const onboardingRequired = Boolean(user?.onboardingRequired);
+    const onboardingRequired = Boolean((user as any)?.onboardingRequired);
     setNeedsOnboarding(onboardingRequired);
     if (!onboardingRequired) {
       return;

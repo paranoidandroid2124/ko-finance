@@ -41,6 +41,10 @@ from models.ingest_dead_letter import IngestDeadLetter
 from services.memory.offline_pipeline import run_long_term_update
 from services.memory.health import lightmem_health_summary
 from models.summary import Summary
+from models.user import User
+from models.filing import Filing
+from models.news import NewsSignal
+from models.proactive_notification import ProactiveNotification
 from parse.pdf_parser import extract_chunks
 from parse.xml_parser import extract_chunks_from_xml
 from schemas.news import NewsArticleCreate
@@ -66,6 +70,9 @@ from services.aggregation.news_metrics import compute_news_window_metrics
 from services.notification_service import dispatch_notification, send_telegram_alert
 from services.reliability.source_reliability import score_article as score_source_reliability
 from services.aggregation.news_statistics import summarize_news_signals, build_top_topics
+from services.embedding_utils import EMBEDDING_MODEL, embed_texts
+from services.user_settings_service import read_user_proactive_settings
+from services import proactive_service, user_profile_service
 DAILY_BRIEF_CHANNEL = "daily_brief_disabled"
 DAILY_BRIEF_OUTPUT_ROOT = Path("build/daily_brief_disabled")
 from services.maintenance.data_retention import apply_retention_policies
@@ -2039,8 +2046,150 @@ def cleanup_profile_cache() -> Dict[str, int]:
     return {"cleaned": cleaned}
 
 
+def _round_vec(vec: List[float], ndigits: int = 6) -> List[float]:
+    return [round(float(x), ndigits) for x in vec]
+
+
 @shared_task(name="proactive.scan", bind=True, max_retries=1)
 def scan_proactive_notifications(self, window_minutes: int = 15) -> Dict[str, int]:
-    """Placeholder proactive scanner. TODO: implement keyword-based matching."""
-    logger.info("proactive.scan skipped (not implemented). window_minutes=%s", window_minutes)
-    return {"created": 0, "matched": 0, "window_minutes": window_minutes}
+    """Scan recent filings/news and upsert proactive notifications based on user interest tags."""
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(minutes=window_minutes)
+    db = SessionLocal()
+    created = 0
+    matched = 0
+    doc_vectors_filings: Dict[str, List[float]] = {}
+    doc_vectors_news: Dict[str, List[float]] = {}
+    try:
+        users = db.query(User.id).all()
+        # preload recent filings/news
+        recent_filings = (
+            db.query(Filing)
+            .filter(Filing.filed_at.isnot(None))
+            .filter(Filing.filed_at >= window_start)
+            .order_by(Filing.filed_at.desc())
+            .all()
+        )
+        recent_news = (
+            db.query(NewsSignal)
+            .filter(NewsSignal.detected_at >= window_start)
+            .order_by(NewsSignal.detected_at.desc())
+            .all()
+        )
+        # Precompute document embeddings once per scan for efficiency
+        filing_corpus = []
+        filing_keys = []
+        for filing in recent_filings:
+            text = " ".join(
+                part
+                for part in [
+                    filing.title,
+                    filing.report_name,
+                    filing.corp_name,
+                    filing.ticker,
+                    getattr(filing, "summary", None),
+                ]
+                if part
+            )
+            if text:
+                filing_corpus.append(text)
+                filing_keys.append(filing.receipt_no or str(filing.id))
+        if filing_corpus:
+            vectors = embed_texts(filing_corpus)
+            for key, vec in zip(filing_keys, vectors):
+                doc_vectors_filings[key] = vec
+
+        news_corpus = []
+        news_keys = []
+        for news in recent_news:
+            text = " ".join(part for part in [news.headline, news.summary, news.ticker] if part)
+            if text:
+                news_corpus.append(text)
+                news_keys.append(str(news.id))
+        if news_corpus:
+            vectors = embed_texts(news_corpus)
+            for key, vec in zip(news_keys, vectors):
+                doc_vectors_news[key] = vec
+
+        def _cosine(a: List[float], b: List[float]) -> float:
+            if not a or not b or len(a) != len(b):
+                return 0.0
+            dot = sum(x * y for x, y in zip(a, b))
+            na = sum(x * x for x in a) ** 0.5
+            nb = sum(y * y for y in b) ** 0.5
+            if na == 0 or nb == 0:
+                return 0.0
+            return dot / (na * nb)
+
+        for (user_id,) in users:
+            settings = read_user_proactive_settings(user_id)
+            if not settings.settings.enabled:
+                continue
+            tags = user_profile_service.list_interests(str(user_id))
+            if not tags:
+                continue
+            tag_vectors = embed_texts(tags)
+            if not tag_vectors:
+                continue
+
+            for filing in recent_filings:
+                key = filing.receipt_no or str(filing.id)
+                vec = doc_vectors_filings.get(key)
+                if not vec:
+                    continue
+                score = max(_cosine(tag_vec, vec) for tag_vec in tag_vectors)
+                if score < 0.8:
+                    continue
+                matched += 1
+                res = proactive_service.upsert_notification(
+                    db,
+                    user_id=user_id,
+                    source_type="filing",
+                    source_id=filing.receipt_no or str(filing.id),
+                    title=filing.report_name or filing.title,
+                    summary=filing.summary if hasattr(filing, "summary") else None,
+                    ticker=filing.ticker,
+                    target_url=(filing.urls or {}).get("viewer") if hasattr(filing, "urls") else None,
+                    metadata={
+                        "corp_name": filing.corp_name,
+                        "filed_at": filing.filed_at.isoformat() if filing.filed_at else None,
+                        "similarity": score,
+                        "embedding": _round_vec(vec),
+                        "embedding_model": EMBEDDING_MODEL,
+                    },
+                )
+                if res:
+                    created += 1
+
+            for news in recent_news:
+                key = str(news.id)
+                vec = doc_vectors_news.get(key)
+                if not vec:
+                    continue
+                score = max(_cosine(tag_vec, vec) for tag_vec in tag_vectors)
+                if score < 0.8:
+                    continue
+                matched += 1
+                res = proactive_service.upsert_notification(
+                    db,
+                    user_id=user_id,
+                    source_type="news",
+                    source_id=str(news.id),
+                    title=news.headline,
+                    summary=news.summary,
+                    ticker=news.ticker,
+                    target_url=news.url if hasattr(news, "url") else None,
+                    metadata={
+                        "publisher": getattr(news, "source", None),
+                        "detected_at": news.detected_at.isoformat() if news.detected_at else None,
+                        "similarity": score,
+                        "embedding": _round_vec(vec),
+                        "embedding_model": EMBEDDING_MODEL,
+                    },
+                )
+                if res:
+                    created += 1
+        logger.info("proactive.scan completed: matched=%s created=%s window=%s", matched, created, window_minutes)
+        return {"created": created, "matched": matched, "window_minutes": window_minutes}
+    finally:
+        db.close()

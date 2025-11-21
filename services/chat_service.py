@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
+import json
 
 from sqlalchemy.orm import Session
 

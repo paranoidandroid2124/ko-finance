@@ -25,7 +25,7 @@ export function OAuthButtonGroup({ callbackUrl, disabled }: Props) {
           disabled={disabled}
           onClick={() =>
             supabase.auth.signInWithOAuth({
-              provider: provider.id,
+              provider: provider.id as any,
               options: { redirectTo: callbackUrl ?? `${window.location.origin}/auth/callback` },
             })
           }

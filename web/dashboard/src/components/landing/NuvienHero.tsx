@@ -116,7 +116,7 @@ export function NuvienHero() {
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3">
             <Link
-              href="/chat"
+              href="/dashboard"
               className="inline-flex items-center rounded-full bg-white px-6 py-3 text-sm font-semibold text-slate-900 shadow-lg shadow-white/30 transition hover:-translate-y-[1px]"
             >
               채팅 시작하기

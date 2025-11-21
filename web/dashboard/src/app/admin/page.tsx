@@ -85,7 +85,10 @@ export default function AdminPage() {
             <p className="text-xs uppercase tracking-[0.4em] text-slate-500">Admin Dashboard</p>
             <h1 className="text-3xl font-semibold text-white">Nuvien 운영 현황</h1>
           </div>
-          <Link href="/chat" className="rounded-full border border-white/20 px-5 py-2 text-sm font-semibold text-white">
+          <Link
+            href="/dashboard"
+            className="rounded-full border border-white/20 px-5 py-2 text-sm font-semibold text-white"
+          >
             User Mode로 이동
           </Link>
         </header>
