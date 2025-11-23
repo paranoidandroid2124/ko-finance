@@ -13,7 +13,6 @@ def _make_plan(
     *,
     tier: str = "pro",
     entitlements: frozenset[str] | set[str],
-    memory_watchlist_enabled: bool = False,
 ) -> PlanContext:
     return PlanContext(
         tier=tier,
@@ -26,23 +25,22 @@ def _make_plan(
             self_check_enabled=True,
             peer_export_row_limit=None,
         ),
-        memory_watchlist_enabled=memory_watchlist_enabled,
     )
 
 
 def test_ensure_entitlement_allows_when_feature_enabled() -> None:
-    plan = _make_plan(entitlements={"search.alerts"})
-    resolved = ensure_entitlement(plan, "search.alerts")
+    plan = _make_plan(entitlements={"search.export"})
+    resolved = ensure_entitlement(plan, "search.export")
     assert resolved is plan
 
 
 def test_ensure_entitlement_raises_when_missing() -> None:
     plan = _make_plan(tier="free", entitlements=set())
     with pytest.raises(PlanGuardError) as exc:
-        ensure_entitlement(plan, "search.alerts")
+        ensure_entitlement(plan, "search.export")
     detail = exc.value.to_detail()
     assert detail["code"] == "plan.entitlement_required"
-    assert detail["feature"] == "search.alerts"
+    assert detail["feature"] == "search.export"
     assert detail["planTier"] == "free"
 
 

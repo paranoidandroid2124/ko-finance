@@ -86,15 +86,12 @@ class MemoryService:
         self,
         *,
         plan_memory_enabled: Optional[bool] = None,
-        watchlist_context: bool = False,
         profile_context: bool = False,
     ) -> bool:
         if plan_memory_enabled is False:
             return False
         if plan_memory_enabled is True:
             return True
-        if watchlist_context:
-            return self._feature_flags.watchlist_enabled
         if profile_context:
             return self._feature_flags.user_profile_enabled
         return self._feature_flags.default_enabled
@@ -144,12 +141,28 @@ class MemoryService:
         if not query.strip():
             return []
         try:
-            return search_records(
+            raw_records = search_records(
                 tenant_id=tenant_id,
                 user_id=user_id,
                 query_text=query,
                 limit=limit or self._runtime_settings.retrieval_k,
             )
+            min_score = max(0.0, self._runtime_settings.min_relevance_score)
+            max_age_days = self._runtime_settings.max_record_age_days
+            filtered: List[MemoryRecord] = []
+            seen: set[str] = set()
+            now = datetime.now(timezone.utc)
+            for record in raw_records:
+                if min_score and record.importance_score < min_score:
+                    continue
+                if max_age_days and (now - record.created_at).days > max_age_days:
+                    continue
+                key = (record.summary or record.topic or "").strip().lower()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                filtered.append(record)
+            return filtered
         except Exception as exc:
             logger.warning("Long-term memory retrieval failed; continuing without LTM. Error: %s", exc)
             return []
@@ -166,11 +179,8 @@ class MemoryService:
         user_id: Optional[str],
         rag_snippets: Optional[Iterable[str]] = None,
         plan_memory_enabled: Optional[bool] = None,
-        watchlist_context: bool = False,
     ) -> PromptComposition:
-        if not self.is_enabled(
-            plan_memory_enabled=plan_memory_enabled, watchlist_context=watchlist_context
-        ):
+        if not self.is_enabled(plan_memory_enabled=plan_memory_enabled):
             compressed = compress_prompt(base_prompt, max_chars=self._runtime_settings.max_prompt_chars)
             return PromptComposition(
                 base_prompt=base_prompt,

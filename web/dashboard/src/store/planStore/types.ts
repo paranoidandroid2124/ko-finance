@@ -4,7 +4,6 @@ export type PlanTier = "free" | "starter" | "pro" | "enterprise";
 
 export type PlanFeatureFlags = {
   searchCompare: boolean;
-  searchAlerts: boolean;
   searchExport: boolean;
   ragCore: boolean;
   evidenceInlinePdf: boolean;
@@ -14,7 +13,6 @@ export type PlanFeatureFlags = {
 };
 
 export type PlanMemoryFlags = {
-  watchlist: boolean;
   chat: boolean;
 };
 

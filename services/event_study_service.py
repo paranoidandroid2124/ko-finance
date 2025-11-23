@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from core.env import env_str
 from database import SessionLocal
+from models.company import FilingEvent
 from models.event_study import (
     EventIngestJob,
     EventRecord,
@@ -1333,3 +1334,91 @@ def _match_alert_rules_for_event(
 ) -> List[Tuple[Any, float, Dict[str, Any]]]:
     """Alert/watchlist matching removed; returns empty."""
     return []
+
+
+def update_event_derived_metrics(
+    db: Session,
+    *,
+    window_key: Optional[str] = None,
+) -> int:
+    """
+    Push CAAR/p-value into filing_events.derived_metrics for tools/cards.
+
+    - CAAR: event_study.t == preset.end
+    - p_value: latest EventSummary by (event_type, cap_bucket) for the preset window
+    """
+    preset = get_event_window_preset(window_key, db)
+    window_label = format_window_label(preset.start, preset.end)
+
+    # Latest summaries per (event_type, cap_bucket)
+    latest_subq = (
+        db.query(
+            EventSummary.event_type.label("event_type"),
+            EventSummary.cap_bucket.label("cap_bucket"),
+            func.max(EventSummary.asof).label("max_asof"),
+        )
+        .filter(EventSummary.window_key == window_label)
+        .group_by(EventSummary.event_type, EventSummary.cap_bucket)
+        .subquery()
+    )
+    summary_rows = (
+        db.query(EventSummary)
+        .join(
+            latest_subq,
+            and_(
+                EventSummary.event_type == latest_subq.c.event_type,
+                EventSummary.cap_bucket == latest_subq.c.cap_bucket,
+                EventSummary.asof == latest_subq.c.max_asof,
+            ),
+        )
+        .filter(EventSummary.window_key == window_label)
+        .all()
+    )
+    summary_map: Dict[Tuple[str, str], Dict[str, Optional[float]]] = {}
+    for row in summary_rows:
+        key = (row.event_type, row.cap_bucket or "ALL")
+        summary_map[key] = {
+            "p_value": to_float(row.p_value),
+            "mean_caar": to_float(row.mean_caar),
+        }
+
+    # CAAR at window end by receipt_no
+    caar_rows = (
+        db.query(EventStudyResult)
+        .filter(EventStudyResult.t == preset.end)
+        .all()
+    )
+    caar_map = {row.rcept_no: to_float(row.car) for row in caar_rows if row.car is not None}
+
+    # cap_bucket by receipt_no from EventRecord
+    cap_map = {row.rcept_no: row.cap_bucket or "ALL" for row in db.query(EventRecord).all()}
+
+    updated = 0
+    events = db.query(FilingEvent).all()
+    for event in events:
+        derived = dict(event.derived_metrics or {})
+        changed = False
+
+        if event.receipt_no in caar_map and derived.get("caar") is None:
+            derived["caar"] = caar_map[event.receipt_no]
+            changed = True
+
+        event_type = event.event_type or ""
+        bucket = cap_map.get(event.receipt_no, "ALL")
+        p_val = None
+        if (event_type, bucket) in summary_map:
+            p_val = summary_map[(event_type, bucket)].get("p_value")
+        if p_val is None and (event_type, "ALL") in summary_map:
+            p_val = summary_map[(event_type, "ALL")].get("p_value")
+        if p_val is not None and derived.get("p_value") is None:
+            derived["p_value"] = p_val
+            changed = True
+
+        if changed:
+            event.derived_metrics = derived
+            # Focus Score는 bulk 태스크로 계산되므로 여기서는 skip
+            updated += 1
+
+    if updated:
+        db.commit()
+    return updated

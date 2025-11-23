@@ -7,10 +7,9 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from core.logging import get_logger
-from services.admin_audit import append_audit_log
-from services.admin_shared import now_iso
 from services.json_store import JsonStore
 from core.plan_constants import SUPPORTED_PLAN_TIERS
+from datetime import datetime, timezone
 
 DEFAULT_PLAN_CATALOG_PATH = Path("uploads") / "admin" / "plan_catalog.json"
 
@@ -185,12 +184,7 @@ def _default_catalog() -> Dict[str, Any]:
 
 
 def _catalog_error_hook(path: Path, exc: Exception) -> None:
-    append_audit_log(
-        filename="plan_audit.jsonl",
-        actor="system",
-        action="plan_catalog_load_failed",
-        payload={"path": str(path), "error": str(exc)},
-    )
+    logger.warning("Plan catalog load failed for %s: %s", path, exc)
 
 
 def _load_catalog_from_raw(raw: Any) -> Dict[str, Any]:
@@ -250,22 +244,12 @@ def update_plan_catalog(
 
     payload = {
         "tiers": normalized_tiers,
-        "updated_at": now_iso(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
         "updated_by": (updated_by or "").strip() or None,
         "note": (note or "").strip() or None,
     }
 
     _PLAN_CATALOG_STORE.save(payload)
-
-    append_audit_log(
-        filename="plan_audit.jsonl",
-        actor=payload["updated_by"] or "system",
-        action="plan_catalog_update",
-        payload={
-            "tiers": [entry["tier"] for entry in normalized_tiers],
-            "note": payload["note"],
-        },
-    )
 
     return deepcopy(payload)
 

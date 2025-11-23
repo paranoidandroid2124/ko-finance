@@ -33,7 +33,7 @@ describe("PlanSummaryCard", () => {
 
     render(<PlanSummaryCard />);
 
-    expect(screen.getByText("Enterprise")).toBeInTheDocument();
+    expect(screen.getByText(/Team/i)).toBeInTheDocument();
     expect(screen.getByText("데이터 내보내기")).toBeInTheDocument();
     expect(screen.getByText("전체 타임라인")).toBeInTheDocument();
     expect(screen.getAllByText("무제한").length).toBeGreaterThanOrEqual(1);

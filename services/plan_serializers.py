@@ -23,7 +23,6 @@ def _feature_flags_from_plan(plan: PlanContext) -> PlanFeatureFlagsSchema:
     flags = plan.feature_flags()
     return PlanFeatureFlagsSchema(
         searchCompare=flags.get("search.compare", False),
-        searchAlerts=flags.get("search.alerts", False),
         searchExport=flags.get("search.export", False),
         ragCore=flags.get("rag.core", False),
         evidenceInlinePdf=flags.get("evidence.inline_pdf", False),
@@ -34,10 +33,7 @@ def _feature_flags_from_plan(plan: PlanContext) -> PlanFeatureFlagsSchema:
 
 
 def _memory_flags_from_plan(plan: PlanContext) -> PlanMemoryFlagsSchema:
-    return PlanMemoryFlagsSchema(
-        watchlist=plan.memory_watchlist_enabled,
-        chat=plan.memory_chat_enabled,
-    )
+    return PlanMemoryFlagsSchema(chat=plan.memory_chat_enabled)
 
 
 def serialize_plan_context(
@@ -80,7 +76,6 @@ def serialize_plan_presets(presets: Sequence[Mapping[str, Any]]) -> PlanPresetRe
                 entitlements=list(preset.get("entitlements") or []),
                 featureFlags=PlanFeatureFlagsSchema(
                     searchCompare=bool(feature_flags.get("search.compare")),
-                    searchAlerts=bool(feature_flags.get("search.alerts")),
                     searchExport=bool(feature_flags.get("search.export")),
                     ragCore=bool(feature_flags.get("rag.core")),
                     evidenceInlinePdf=bool(feature_flags.get("evidence.inline_pdf")),

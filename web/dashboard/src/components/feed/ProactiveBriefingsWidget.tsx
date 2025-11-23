@@ -6,7 +6,7 @@ import { ChevronDown, ChevronUp, Sparkles } from "lucide-react";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import { useToastStore } from "@/store/toastStore";
 
-type FeedItem = {
+export type FeedItem = {
   id: string;
   title?: string | null;
   summary?: string | null;
@@ -26,7 +26,11 @@ type FeedBriefing = {
   items: FeedItem[];
 };
 
-export function ProactiveBriefingsWidget() {
+type ProactiveBriefingsWidgetProps = {
+  onSelectItem?: (id: string, item: FeedItem) => void;
+};
+
+export function ProactiveBriefingsWidget({ onSelectItem }: ProactiveBriefingsWidgetProps) {
   const pushToast = useToastStore((state) => state.show);
   const [briefings, setBriefings] = useState<FeedBriefing[]>([]);
   const [loading, setLoading] = useState(false);
@@ -123,6 +127,17 @@ export function ProactiveBriefingsWidget() {
                         >
                           원문 보기
                         </a>
+                      ) : null}
+                      {onSelectItem ? (
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-full border border-blue-300/40 px-2 py-1 text-[11px] font-semibold text-blue-100 hover:border-blue-200 hover:text-white"
+                            onClick={() => onSelectItem(item.id, item)}
+                          >
+                            이 이벤트로 질문하기
+                          </button>
+                        </div>
                       ) : null}
                     </div>
                   ))}

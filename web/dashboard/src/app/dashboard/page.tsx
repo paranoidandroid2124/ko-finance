@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 import clsx from "clsx";
 
 import { ChatInterface } from "@/components/chat/ChatInterface";
+import { DailyBriefingCard } from "@/components/briefing/DailyBriefingCard";
 import { ReportEditor } from "@/components/report/ReportEditor";
 import { useReportStore } from "@/stores/useReportStore";
 
@@ -12,6 +13,9 @@ export default function DashboardPage() {
 
   return (
     <div className="relative flex h-screen w-full overflow-hidden">
+      <div className="pointer-events-auto absolute left-4 top-4 z-30 max-w-xl">
+        <DailyBriefingCard />
+      </div>
       <main className={clsx("flex-1 transition-all duration-300", isOpen ? "mr-[420px]" : "")}>
         <ChatInterface />
       </main>

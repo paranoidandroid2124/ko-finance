@@ -2,6 +2,7 @@
 
 import { ArrowUpRight, AlertTriangle, FileText, ShieldCheck } from "lucide-react";
 import { type EvidenceLink, type FiscalAlignmentInsight, type RestatementHighlight } from "@/hooks/useCompanySnapshot";
+import { interpretPercentile } from "@/lib/insightTemplates";
 
 const numberFormatter = new Intl.NumberFormat("ko-KR", {
   maximumFractionDigits: 1,
@@ -37,12 +38,20 @@ export function RestatementRadarCard({ highlights }: RestatementRadarCardProps) 
     );
   }
 
+  const relativeMessage = interpretPercentile(
+    highlights[0]?.frequencyPercentile ?? null,
+    "섹터/시총 그룹 기준 정정 빈도",
+  );
+
   return (
     <section className="rounded-2xl border border-border-light bg-background-cardLight p-4 shadow-card dark:border-border-dark dark:bg-background-cardDark">
       <header className="mb-3 flex items-center justify-between">
         <div>
           <p className="text-xs uppercase tracking-wide text-text-secondaryLight dark:text-text-secondaryDark">Restatement Radar</p>
           <h3 className="text-lg font-semibold text-text-primaryLight dark:text-text-primaryDark">정정 공시 영향</h3>
+          {relativeMessage.message ? (
+            <p className="mt-1 text-xs text-text-tertiaryLight dark:text-text-tertiaryDark">{relativeMessage.message}</p>
+          ) : null}
         </div>
         <AlertTriangle className="h-5 w-5 text-amber-500" aria-hidden />
       </header>

@@ -61,6 +61,9 @@ from services import (
     ingest_dlq_service,
     rag_grid,
     snapshot_service,
+    market_stats_cache_service,
+    event_study_service,
+    focus_score_service,
 )
 from services.evidence_service import save_evidence_snapshot
 from services.ingest_errors import FatalIngestError, TransientIngestError
@@ -71,10 +74,11 @@ from services.notification_service import dispatch_notification, send_telegram_a
 from services.reliability.source_reliability import score_article as score_source_reliability
 from services.aggregation.news_statistics import summarize_news_signals, build_top_topics
 from services.embedding_utils import EMBEDDING_MODEL, embed_texts
-from services.user_settings_service import read_user_proactive_settings
+from services.memory.facade import MEMORY_SERVICE
+from services.user_settings_service import read_user_proactive_settings, read_user_lightmem_settings
+from services.lightmem_config import default_user_id as lightmem_default_user_id
 from services import proactive_service, user_profile_service
-DAILY_BRIEF_CHANNEL = "daily_brief_disabled"
-DAILY_BRIEF_OUTPUT_ROOT = Path("build/daily_brief_disabled")
+from services import proactive_briefing_service
 from services.maintenance.data_retention import apply_retention_policies
 from services.compliance import dsar_service
 
@@ -1534,24 +1538,35 @@ def _parse_reference_date(target_date_iso: Optional[str]) -> date:
     return datetime.now(ZoneInfo("Asia/Seoul")).date()
 
 
-@shared_task(name="m4.cleanup_daily_briefs")
-def cleanup_daily_briefs(retention_days: int = 30) -> Dict[str, int]:
-    """Cleanup stale daily brief artifacts (local + storage)."""
+@shared_task(name="proactive.generate_insight_daily")
+def generate_daily_briefing() -> str:
+    """Generate lightweight daily proactive insights for the default user."""
 
-    logger.info("Daily brief cleanup disabled.")
-    return {"deleted_runs": 0, "deleted_files": 0, "status": "disabled"}
+    default_user = lightmem_default_user_id()
+    if not default_user:
+        logger.info("Skipping daily briefing: LIGHTMEM_DEFAULT_USER_ID not set.")
+        return "skipped"
 
-
-@shared_task(name="m4.generate_daily_brief")
-def generate_daily_brief(
-    target_date_iso: Optional[str] = None,
-    compile_pdf: bool = True,
-    force: bool = False,
-) -> str:
-    """Render the daily LaTeX brief and persist generation audit logs."""
-
-    logger.info("Daily brief generation disabled.")
-    return "disabled"
+    db: Optional[Session] = None
+    try:
+        db = SessionLocal()
+        settings_record = read_user_proactive_settings(default_user)
+        prefs = settings_record.settings
+        items = proactive_briefing_service.build_briefing_items(
+            db,
+            limit=5,
+            preferred_tickers=prefs.preferred_tickers,
+            blocked_tickers=prefs.blocked_tickers,
+        )
+        record = proactive_briefing_service.generate_daily_briefing(db, user_id=default_user, items=items)
+        logger.info("Generated proactive insight for user=%s, id=%s", default_user, record.id)
+        return str(record.id)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.exception("Failed to generate daily briefing: %s", exc)
+        return "failed"
+    finally:
+        if db:
+            db.close()
 
 
 def _flatten_citation_entries(meta: Mapping[str, Any]) -> List[str]:
@@ -1895,6 +1910,21 @@ def sync_security_metadata(days_back: int = 1) -> Dict[str, Any]:
         db.close()
 
 
+@shared_task(name="stats.refresh_market_cache")
+def refresh_market_stats_cache(window_days: int = 365) -> Dict[str, Any]:
+    """Refresh percentile cache for market stats (restatement frequency, etc.)."""
+    db = SessionLocal()
+    try:
+        rows = market_stats_cache_service.refresh_restatement_stats(db, window_days=window_days)
+        logger.info("Refreshed market_stats_cache: %d rows (window=%d days).", rows, window_days)
+        return {"rows": rows}
+    except Exception as exc:
+        logger.warning("Market stats cache refresh failed: %s", exc, exc_info=True)
+        return {"rows": 0, "error": str(exc)}
+    finally:
+        db.close()
+
+
 @shared_task(name="event_study.ingest_events")
 def ingest_event_study_events(days_back: int = 1) -> Dict[str, int]:
     """Normalize recent filings into event records."""
@@ -1944,6 +1974,44 @@ def aggregate_event_study_summary() -> Dict[str, int]:
 
     logger.info("Event study summary aggregation completed: %d rows.", summaries)
     return {"summaries": summaries}
+
+
+@shared_task(name="event_study.update_derived_metrics")
+def update_event_derived_metrics(window_key: str = None) -> Dict[str, int]:
+    """Push CAAR/p-value into filing_events.derived_metrics for cards."""
+    db = SessionLocal()
+    try:
+        updated = event_study_service.update_event_derived_metrics(db, window_key=window_key)
+    finally:
+        db.close()
+
+    logger.info("Event derived metrics refreshed: %d events.", updated)
+    return {"updated": updated}
+
+
+@shared_task(name="focus_score.compute_for_receipt")
+def compute_focus_score_for_receipt(receipt_no: str) -> Dict[str, object]:
+    """Compute Focus Score for a single event and persist to filing_events.derived_metrics."""
+    db = SessionLocal()
+    try:
+        score = focus_score_service.compute_and_persist_focus_score(db, receipt_no)
+    finally:
+        db.close()
+    success = score is not None
+    logger.info("Focus Score compute %s for %s", "ok" if success else "skip", receipt_no)
+    return {"receipt_no": receipt_no, "success": success}
+
+
+@shared_task(name="focus_score.compute_all")
+def compute_focus_score_for_all() -> Dict[str, int]:
+    """Compute Focus Score for all filing_events."""
+    db = SessionLocal()
+    try:
+        updated = focus_score_service.compute_focus_score_for_all(db)
+    finally:
+        db.close()
+    logger.info("Focus Score bulk compute: %d events updated.", updated)
+    return {"updated": updated}
 
 
 @shared_task(name="tables.extract_receipt", bind=True, max_retries=INGEST_TASK_MAX_RETRIES)
@@ -2050,6 +2118,42 @@ def _round_vec(vec: List[float], ndigits: int = 6) -> List[float]:
     return [round(float(x), ndigits) for x in vec]
 
 
+def _maybe_memory_hint(user_id: uuid.UUID, query: str) -> Optional[str]:
+    """Best-effort LightMem recall for proactive notifications."""
+    if not query or not query.strip():
+        return None
+    try:
+        records = MEMORY_SERVICE.retrieve_long_term(
+            tenant_id=str(user_id),
+            user_id=str(user_id),
+            query=query,
+            limit=1,
+        )
+    except Exception as exc:  # pragma: no cover - external store might fail
+        logger.debug("LightMem hint lookup failed for user %s: %s", user_id, exc, exc_info=True)
+        return None
+    if not records:
+        return None
+    record = records[0]
+    topic = (record.topic or "").strip()
+    summary = (record.summary or "").strip()
+    if summary and topic:
+        return f"{topic}: {summary}"
+    return summary or topic or None
+
+
+def _attach_memory_hint(summary: Optional[str], hint: Optional[str], *, max_chars: int = 480) -> Optional[str]:
+    """Append memory hint onto summary while keeping length bounded."""
+    if not hint:
+        return summary
+    parts = [part.strip() for part in [summary or "", f"기억 메모: {hint}"] if part and part.strip()]
+    combined = " · ".join(parts)
+    if len(combined) <= max_chars:
+        return combined
+    trimmed = combined[:max_chars].rsplit(" ", 1)[0] or combined[:max_chars]
+    return trimmed
+
+
 @shared_task(name="proactive.scan", bind=True, max_retries=1)
 def scan_proactive_notifications(self, window_minutes: int = 15) -> Dict[str, int]:
     """Scan recent filings/news and upsert proactive notifications based on user interest tags."""
@@ -2125,6 +2229,11 @@ def scan_proactive_notifications(self, window_minutes: int = 15) -> Dict[str, in
             settings = read_user_proactive_settings(user_id)
             if not settings.settings.enabled:
                 continue
+            try:
+                lm_settings = read_user_lightmem_settings(user_id).settings
+                lightmem_enabled = bool(lm_settings.enabled)
+            except Exception:
+                lightmem_enabled = False
             tags = user_profile_service.list_interests(str(user_id))
             if not tags:
                 continue
@@ -2141,13 +2250,29 @@ def scan_proactive_notifications(self, window_minutes: int = 15) -> Dict[str, in
                 if score < 0.8:
                     continue
                 matched += 1
+                summary_text = filing.summary if hasattr(filing, "summary") else None
+                if lightmem_enabled:
+                    hint = _maybe_memory_hint(
+                        user_id,
+                        " ".join(
+                            part
+                            for part in [
+                                filing.ticker,
+                                filing.corp_name,
+                                filing.report_name,
+                                filing.title,
+                            ]
+                            if part
+                        ),
+                    )
+                    summary_text = _attach_memory_hint(summary_text, hint)
                 res = proactive_service.upsert_notification(
                     db,
                     user_id=user_id,
                     source_type="filing",
                     source_id=filing.receipt_no or str(filing.id),
                     title=filing.report_name or filing.title,
-                    summary=filing.summary if hasattr(filing, "summary") else None,
+                    summary=summary_text,
                     ticker=filing.ticker,
                     target_url=(filing.urls or {}).get("viewer") if hasattr(filing, "urls") else None,
                     metadata={
@@ -2170,13 +2295,20 @@ def scan_proactive_notifications(self, window_minutes: int = 15) -> Dict[str, in
                 if score < 0.8:
                     continue
                 matched += 1
+                summary_text = news.summary
+                if lightmem_enabled:
+                    hint = _maybe_memory_hint(
+                        user_id,
+                        " ".join(part for part in [news.ticker, news.headline, news.summary] if part),
+                    )
+                    summary_text = _attach_memory_hint(summary_text, hint)
                 res = proactive_service.upsert_notification(
                     db,
                     user_id=user_id,
                     source_type="news",
                     source_id=str(news.id),
                     title=news.headline,
-                    summary=news.summary,
+                    summary=summary_text,
                     ticker=news.ticker,
                     target_url=news.url if hasattr(news, "url") else None,
                     metadata={

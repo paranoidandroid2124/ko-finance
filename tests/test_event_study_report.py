@@ -5,21 +5,9 @@ from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
-from sqlalchemy import Column, String
-from sqlalchemy.dialects.postgresql import UUID
-
-from database import Base
 from models.event_study import EventRecord, EventStudyResult, EventSummary
 from models.filing import Filing
 from services.event_study_report import build_event_study_report_payload
-
-
-class _TestUser(Base):
-    """Lightweight placeholder so FK(user_orgs.user_id) resolves in SQLite."""
-
-    __tablename__ = "users"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(String(255), nullable=True)
 
 
 def _seed_event_data(session: Session) -> None:

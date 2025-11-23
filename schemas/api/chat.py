@@ -58,6 +58,10 @@ class ChatMessageCreateRequest(BaseModel):
     retry_of_message_id: Optional[uuid.UUID] = None
     state: str = Field(default="pending")
     meta: Dict[str, Any] = Field(default_factory=dict)
+    context_ids: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Domain identifiers (company/filing/event) to persist with the message.",
+    )
     idempotency_key: Optional[str] = None
 
 

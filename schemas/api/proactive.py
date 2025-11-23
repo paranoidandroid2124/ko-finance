@@ -19,11 +19,19 @@ class ProactiveChannels(BaseModel):
 class ProactiveSettingsResponse(BaseModel):
     enabled: bool = False
     channels: ProactiveChannels
+    preferredTickers: list[str] = Field(default_factory=list, description="선호 티커 allow 리스트")
+    blockedTickers: list[str] = Field(default_factory=list, description="차단 티커 리스트")
+    preferredSectors: list[str] = Field(default_factory=list, description="선호 섹터 allow 리스트")
+    blockedSectors: list[str] = Field(default_factory=list, description="차단 섹터 리스트")
 
 
 class ProactiveSettingsRequest(BaseModel):
     enabled: Optional[bool] = None
     channels: Optional[ProactiveChannels] = None
+    preferredTickers: Optional[list[str]] = None
+    blockedTickers: Optional[list[str]] = None
+    preferredSectors: Optional[list[str]] = None
+    blockedSectors: Optional[list[str]] = None
 
 
 __all__ = ["EmailChannel", "ProactiveChannels", "ProactiveSettingsResponse", "ProactiveSettingsRequest"]

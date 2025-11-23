@@ -62,7 +62,6 @@ def test_plan_context_uses_environment_defaults(plan_api_client: TestClient):
     # base entitlements for pro + env override should be present
     assert set(payload["entitlements"]) >= {
         "search.compare",
-        "search.alerts",
         "search.export",
         "evidence.inline_pdf",
         "rag.core",
@@ -214,7 +213,7 @@ def test_plan_context_patch_conflict_returns_409(plan_api_client: TestClient):
 
     payload = {
         "planTier": "pro",
-        "entitlements": ["search.compare", "search.alerts"],
+        "entitlements": ["search.compare", "search.export"],
         "quota": {
             "chatRequestsPerDay": 400,
             "ragTopK": 4,
@@ -246,7 +245,7 @@ def test_plan_context_patch_conflict_returns_409(plan_api_client: TestClient):
     # reuse the stale timestamp from the previous save to trigger a conflict
     stale_payload = {
         "planTier": "pro",
-        "entitlements": ["search.compare", "search.alerts"],
+        "entitlements": ["search.compare", "search.export"],
         "quota": {
             "chatRequestsPerDay": 480,
             "ragTopK": 6,
@@ -321,7 +320,7 @@ def test_plan_presets_update(plan_api_client: TestClient, plan_config_file: Path
         "tiers": [
             {
                 "tier": "free",
-                "entitlements": ["search.alerts"],
+                "entitlements": ["rag.core"],
                 "quota": {
                     "chatRequestsPerDay": 10,
                     "ragTopK": 2,
@@ -331,7 +330,7 @@ def test_plan_presets_update(plan_api_client: TestClient, plan_config_file: Path
             },
             {
                 "tier": "pro",
-                "entitlements": ["search.compare", "search.alerts", "search.export"],
+                "entitlements": ["search.compare", "search.export", "evidence.inline_pdf"],
                 "quota": {
                     "chatRequestsPerDay": 600,
                     "ragTopK": 8,
@@ -347,15 +346,15 @@ def test_plan_presets_update(plan_api_client: TestClient, plan_config_file: Path
     assert response.status_code == 200, response.text
     body = response.json()
     tiers = {entry["tier"]: entry for entry in body["presets"]}
-    assert tiers["free"]["entitlements"] == ["search.alerts"]
+    assert tiers["free"]["entitlements"] == ["rag.core"]
     assert tiers["pro"]["quota"]["chatRequestsPerDay"] == 600
-    assert set(tiers["pro"]["entitlements"]) == {"search.compare", "search.alerts", "search.export"}
+    assert set(tiers["pro"]["entitlements"]) == {"search.compare", "search.export", "evidence.inline_pdf"}
 
     reread = plan_api_client.get("/api/v1/plan/presets")
     assert reread.status_code == 200
     reread_body = reread.json()
     pro_entry = next(item for item in reread_body["presets"] if item["tier"] == "pro")
-    assert set(pro_entry["entitlements"]) == {"search.compare", "search.alerts", "search.export"}
+    assert set(pro_entry["entitlements"]) == {"search.compare", "search.export", "evidence.inline_pdf"}
     assert pro_entry["quota"]["ragTopK"] == 8
 
     saved = json.loads(plan_config_file.read_text(encoding="utf-8"))

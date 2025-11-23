@@ -108,7 +108,7 @@ export default function PrivacySettingsPage() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              {/* TODO: Pro/Enterprise 플랜 이상에서만 노출할지 결정되면 plan/entitlement 가드를 추가합니다. */}
+              {/* TODO: Pro/Team 플랜 이상에서만 노출할지 결정되면 plan/entitlement 가드를 추가합니다. */}
               <button
                 type="button"
                 onClick={() => setDialogOpen(true)}

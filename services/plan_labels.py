@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_LABELS: Dict[str, str] = {
     "search.compare": "비교 검색",
-    "search.alerts": "알림 자동화",
     "search.export": "데이터 내보내기",
     "evidence.inline_pdf": "Evidence PDF",
     "evidence.diff": "Evidence Diff",

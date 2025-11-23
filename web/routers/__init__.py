@@ -7,12 +7,10 @@ from importlib import import_module
 from typing import Dict, Optional
 
 _ROUTER_MODULES = [
-    "admin",
     "auth",
     "account",
     "chat",
     "company",
-    "dashboard",
     "evidence",
     "health",
     "public",
@@ -30,6 +28,7 @@ _ROUTER_MODULES = [
     "search",
     "sectors",
     "user_settings",
+    "briefing",
 ]
 
 __all__ = list(_ROUTER_MODULES)

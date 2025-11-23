@@ -13,12 +13,11 @@
 | --- | --- | --- | --- |
 | Top Bar 프로필 메뉴 | `web/dashboard/src/components/layout/UserMenu.tsx:132` | `https://docs.kfinance.co/help` | 글로벌 도움말 진입점 |
 | Settings Overlay “도움말 센터” | `web/dashboard/src/components/settings/SettingsOverlay.tsx:104-131` | 동일 | 플랜·LightMem·알림 설정과 인접 |
-| 향후: 알림/Watchlist 빈 상태 | `web/dashboard/src/app/watchlist/page.tsx` | (미정) | Rule Wizard 내부 툴팁 필요 |
 
 Help Center 정보 구조는 다음 5개 허브 아래 개별 문서로 분기합니다.
 1. **시작하기 & 계정** (Auth, 환경 준비)
 2. **리서치 작업 흐름** (Dashboard, Filings, Company, Chat)
-3. **감시 & 알림** (Watchlist, LightMem, Digest)
+3. **감시 & 알림** (LightMem)
 4. **데이터 인사이트 & Labs** (News, Sector Signals, Labs)
 5. **플랜·결제·운영** (Plan, Billing, Admin/지원)
 

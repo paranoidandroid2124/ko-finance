@@ -36,23 +36,14 @@ REDIS_PREFIX = env_str("ENTITLEMENT_REDIS_PREFIX", "ent")
 
 DEFAULT_PLAN_LIMITS: Dict[str, Dict[str, LimitValue]] = {
     "free": {
-        "alerts.rules.create": 3,
-        "watchlist.radar": 6,
-        "watchlist.preview": 2,
         "rag.chat": 20,
         "api.chat": 40,
     },
     "starter": {
-        "alerts.rules.create": 10,
-        "watchlist.radar": 24,
-        "watchlist.preview": 6,
         "rag.chat": 80,
         "api.chat": 150,
     },
     "pro": {
-        "alerts.rules.create": 50,
-        "watchlist.radar": 100,
-        "watchlist.preview": 20,
         "rag.chat": 500,
         "api.chat": 400,
     },

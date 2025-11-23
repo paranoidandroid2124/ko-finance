@@ -97,14 +97,17 @@ def get_proactive_settings(
 ) -> ProactiveSettingsResponse:
     user_id = _resolve_user_id(x_user_id)
     record = user_settings_service.read_user_proactive_settings(user_id)
-    channels = record.settings
     return ProactiveSettingsResponse(
-        enabled=channels.enabled,
+        enabled=record.settings.enabled,
         channels={
-            "widget": channels.widget,
-            "email": {"enabled": channels.email_enabled, "schedule": channels.email_schedule},
-            "slack": channels.slack_enabled,
+            "widget": record.settings.widget,
+            "email": {"enabled": record.settings.email_enabled, "schedule": record.settings.email_schedule},
+            "slack": record.settings.slack_enabled,
         },
+        preferredTickers=record.settings.preferred_tickers or [],
+        blockedTickers=record.settings.blocked_tickers or [],
+        preferredSectors=record.settings.preferred_sectors or [],
+        blockedSectors=record.settings.blocked_sectors or [],
     )
 
 
@@ -128,6 +131,10 @@ def update_proactive_settings(
     email_enabled = channels.email.enabled if channels else current.email_enabled
     email_schedule = channels.email.schedule if channels else current.email_schedule
     slack_enabled = channels.slack if channels else current.slack_enabled
+    preferred_tickers = payload.preferredTickers if payload.preferredTickers is not None else current.preferred_tickers
+    blocked_tickers = payload.blockedTickers if payload.blockedTickers is not None else current.blocked_tickers
+    preferred_sectors = payload.preferredSectors if payload.preferredSectors is not None else current.preferred_sectors
+    blocked_sectors = payload.blockedSectors if payload.blockedSectors is not None else current.blocked_sectors
 
     next_settings = user_settings_service.UserProactiveSettings(
         enabled=enabled,
@@ -135,6 +142,10 @@ def update_proactive_settings(
         email_enabled=email_enabled,
         email_schedule=email_schedule,
         slack_enabled=slack_enabled,
+        preferred_tickers=preferred_tickers,
+        blocked_tickers=blocked_tickers,
+        preferred_sectors=preferred_sectors,
+        blocked_sectors=blocked_sectors,
     )
     updated = user_settings_service.write_user_proactive_settings(user_id, settings=next_settings)
     return ProactiveSettingsResponse(
@@ -144,6 +155,10 @@ def update_proactive_settings(
             "email": {"enabled": updated.settings.email_enabled, "schedule": updated.settings.email_schedule},
             "slack": updated.settings.slack_enabled,
         },
+        preferredTickers=updated.settings.preferred_tickers or [],
+        blockedTickers=updated.settings.blocked_tickers or [],
+        preferredSectors=updated.settings.preferred_sectors or [],
+        blockedSectors=updated.settings.blocked_sectors or [],
     )
 
 

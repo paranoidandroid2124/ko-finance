@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models.company import CorpMetric, FilingEvent
+from models.market_stats_cache import MarketStatsCache
+from models.security_metadata import SecurityMetadata
 from models.filing import Filing
 from models.news import NewsWindowAggregate
 from models.summary import Summary
@@ -355,10 +357,14 @@ def _collect_restatement_highlights(db: Session, corp_code: str, limit: int = 3)
     if limit <= 0:
         return []
 
+    window_start = datetime.now(timezone.utc) - timedelta(days=365)
+
     corrections = (
         db.query(Filing)
         .filter(
             Filing.corp_code == corp_code,
+            Filing.filed_at.isnot(None),
+            Filing.filed_at >= window_start,
             or_(
                 Filing.category.in_(("correction", "revision", "정정 공시")),
                 Filing.title.ilike("%정정%"),
@@ -369,6 +375,8 @@ def _collect_restatement_highlights(db: Session, corp_code: str, limit: int = 3)
         .order_by(nulls_last(Filing.filed_at.desc()), Filing.created_at.desc())
         .limit(limit * 4)
     )
+
+    freq_percentile = _restatement_frequency_percentile(db, corp_code, window_start)
 
     highlights: List[RestatementHighlight] = []
     for filing in corrections:
@@ -387,6 +395,7 @@ def _collect_restatement_highlights(db: Session, corp_code: str, limit: int = 3)
                 current_value=impact.get("current_value"),
                 delta_percent=impact.get("delta_percent"),
                 viewer_url=_viewer_url(filing.receipt_no) if filing.receipt_no else None,
+                frequency_percentile=freq_percentile,
             )
         )
         if len(highlights) >= limit:
@@ -759,6 +768,116 @@ def _select_metric_record(db: Session, corp_code: str, keywords: Sequence[str]) 
         )
     )
     return query.first()
+
+
+def _restatement_frequency_percentile(db: Session, corp_code: str, window_start: datetime) -> Optional[float]:
+    """Compute percentile of restatement frequency vs peers (cap bucket cache first, global fallback)."""
+    count = (
+        db.query(func.count(Filing.id))
+        .filter(
+            Filing.corp_code == corp_code,
+            Filing.filed_at.isnot(None),
+            Filing.filed_at >= window_start,
+            Filing.receipt_no.isnot(None),
+            or_(
+                Filing.category.in_(("correction", "revision", "정정 공시")),
+                Filing.title.ilike("%정정%"),
+                Filing.report_name.ilike("%정정%"),
+            ),
+        )
+        .scalar()
+        or 0
+    )
+
+    def _load_meta() -> Dict[str, Optional[str]]:
+        row = (
+            db.query(SecurityMetadata.cap_bucket, SecurityMetadata.extra)
+            .filter(SecurityMetadata.corp_code == corp_code)
+            .first()
+        )
+        cap_bucket = row[0] if row and row[0] else None
+        sector = None
+        if row and getattr(row, "extra", None):
+            extra = row.extra or {}
+            if isinstance(extra, dict):
+                sector = extra.get("sector") or extra.get("sector_name") or extra.get("sector_slug") or extra.get("sectorSlug")
+        return {"cap_bucket": cap_bucket, "sector": sector}
+
+    def _load_cached_thresholds(segment: str, segment_value: str) -> List[Tuple[float, Optional[float]]]:
+        latest = (
+            db.query(func.max(MarketStatsCache.computed_at))
+            .filter(
+                MarketStatsCache.segment == segment,
+                MarketStatsCache.segment_value == segment_value,
+                MarketStatsCache.metric == "restatement_freq",
+            )
+            .scalar()
+        )
+        if not latest:
+            return []
+        rows = (
+            db.query(MarketStatsCache.percentile, MarketStatsCache.value)
+            .filter(
+                MarketStatsCache.segment == segment,
+                MarketStatsCache.segment_value == segment_value,
+                MarketStatsCache.metric == "restatement_freq",
+                MarketStatsCache.computed_at == latest,
+            )
+            .order_by(MarketStatsCache.percentile.asc())
+            .all()
+        )
+        return [(float(row.percentile), row.value) for row in rows]
+
+    def _resolve_from_thresholds(thresholds: List[Tuple[float, Optional[float]]]) -> Optional[float]:
+        if not thresholds:
+            return None
+        resolved: Optional[float] = None
+        for percentile, value in sorted(thresholds, key=lambda entry: entry[0]):
+            if value is None:
+                continue
+            if count >= value:
+                resolved = percentile
+            else:
+                break
+        return resolved
+
+    meta = _load_meta()
+    cap_bucket = meta.get("cap_bucket") or "unknown"
+    sector = meta.get("sector")
+
+    # 우선순위: sector -> cap_bucket -> global(all)
+    percentile = None
+    if sector:
+        percentile = _resolve_from_thresholds(_load_cached_thresholds("sector", sector))
+    if percentile is None:
+        percentile = _resolve_from_thresholds(_load_cached_thresholds("cap_bucket", cap_bucket))
+    if percentile is None:
+        percentile = _resolve_from_thresholds(_load_cached_thresholds("cap_bucket", "all"))
+    if percentile is not None:
+        return percentile
+
+    # Fallback: compute percentile on the fly (global)
+    rows = (
+        db.query(Filing.corp_code, func.count(Filing.id))
+        .filter(
+            Filing.filed_at.isnot(None),
+            Filing.filed_at >= window_start,
+            Filing.receipt_no.isnot(None),
+            or_(
+                Filing.category.in_(("correction", "revision", "정정 공시")),
+                Filing.title.ilike("%정정%"),
+                Filing.report_name.ilike("%정정%"),
+            ),
+        )
+        .group_by(Filing.corp_code)
+        .all()
+    )
+    if not rows:
+        return None
+    sorted_counts = sorted((row[1] or 0) for row in rows)
+    total = len(sorted_counts)
+    below_or_equal = sum(1 for value in sorted_counts if value <= count)
+    return (below_or_equal / total) * 100 if total else None
 
 
 def _latest_events(db: Session, corp_code: str, limit: int = 8) -> List[FilingEvent]:

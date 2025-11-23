@@ -1,2 +1,26 @@
 timezone: Asia/Seoul
-entries: {}
+entries:
+  stats.refresh_market_cache.daily:
+    task: stats.refresh_market_cache
+    cron: "30 3 * * *"  # 매일 03:30 KST
+    args: []
+    kwargs:
+      window_days: 365
+  event_study.update_returns.daily:
+    task: event_study.update_returns
+    cron: "40 3 * * *"  # 매일 03:40 KST
+  event_study.aggregate_summary.daily:
+    task: event_study.aggregate_summary
+    cron: "45 3 * * *"  # 매일 03:45 KST
+  event_study.update_derived_metrics.daily:
+    task: event_study.update_derived_metrics
+    cron: "50 3 * * *"  # 매일 03:50 KST
+  focus_score.compute_all.daily:
+    task: focus_score.compute_all
+    cron: "55 3 * * *"  # 매일 03:55 KST
+  lightmem.promote_long_term.daily:
+    task: memory.promote_long_term
+    cron: "10 4 * * *"  # 매일 04:10 KST, 단기 메모리 만료분을 장기로 승격
+  proactive.generate_insight_daily:
+    task: proactive.generate_insight_daily
+    cron: "0 7 * * *"   # 매일 07:00 KST

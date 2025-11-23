@@ -54,7 +54,6 @@ type PlanStoreState = {
 
 const DEFAULT_FEATURE_FLAGS: PlanFeatureFlags = {
   searchCompare: false,
-  searchAlerts: false,
   searchExport: false,
   ragCore: true,
   evidenceInlinePdf: false,
@@ -64,7 +63,6 @@ const DEFAULT_FEATURE_FLAGS: PlanFeatureFlags = {
 };
 
 const DEFAULT_MEMORY_FLAGS: PlanMemoryFlags = {
-  watchlist: false,
   chat: false,
 };
 

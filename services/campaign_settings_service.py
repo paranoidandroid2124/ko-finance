@@ -9,7 +9,6 @@ from typing import Any, Dict, Mapping, Optional
 
 from core.env import env_str
 from core.logging import get_logger
-from services.admin_shared import ensure_parent_dir
 
 DEFAULT_CAMPAIGN_SETTINGS_PATH = Path("uploads") / "admin" / "campaign_settings.json"
 
@@ -38,7 +37,10 @@ def _settings_path() -> Path:
     env_path = env_str("CAMPAIGN_SETTINGS_FILE")
     path = Path(env_path) if env_path else DEFAULT_CAMPAIGN_SETTINGS_PATH
     _CAMPAIGN_SETTINGS_PATH = path
-    ensure_parent_dir(path, logger)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.error("Failed to create campaign settings dir %s: %s", path.parent, exc)
     return path
 
 

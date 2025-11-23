@@ -24,7 +24,8 @@ class ProactiveNotification(Base):
     summary = Column(Text, nullable=True)
     target_url = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="unread", server_default="unread")
-    metadata = Column(JSONB, nullable=True)
+    # SQLAlchemy 2.0 reserves attribute name "metadata"; use column name explicitly.
+    meta = Column("metadata", JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 

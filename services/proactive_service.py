@@ -52,7 +52,7 @@ def upsert_notification(
         existing.summary = summary or existing.summary
         existing.ticker = ticker or existing.ticker
         existing.target_url = target_url or existing.target_url
-        existing.metadata = _merged_metadata(existing.metadata, metadata)
+        existing.meta = _merged_metadata(existing.meta, metadata)
         existing.status = existing.status or "unread"
         db.add(existing)
         db.commit()
@@ -67,7 +67,7 @@ def upsert_notification(
         summary=summary,
         ticker=ticker,
         target_url=target_url,
-        metadata=metadata,
+        meta=metadata,
         status="unread",
     )
     db.add(notif)

@@ -20,7 +20,7 @@ export const PLAN_CHECKOUT_PRESETS: Record<Exclude<PlanTier, "free">, PlanChecko
   },
   enterprise: {
     amount: 185000,
-    orderName: "Nuvien Enterprise 플랜 구독",
+    orderName: "Nuvien Team 플랜 구독",
   },
 };
 

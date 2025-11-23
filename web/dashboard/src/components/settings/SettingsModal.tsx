@@ -10,9 +10,11 @@ import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { AccountSecuritySettingsPanel } from "./AccountSecuritySettingsPanel";
 import { useSettingsModalStore } from "@/store/settingsModalStore";
 import type { SettingsSection } from "@/store/settingsModalStore";
+import { PlanSummaryCard } from "@/components/plan/PlanSummaryCard";
 
 const sections: Array<{ id: SettingsSection; label: string; description: string }> = [
   { id: "account", label: "계정/보안", description: "프로필·플랜·데이터" },
+  { id: "plan", label: "플랜", description: "내 플랜 확인 및 업그레이드" },
   { id: "lightmem", label: "LightMem 제어", description: "관심 태그와 개인화 설정" },
   { id: "proactive", label: "프로액티브 인사이트", description: "먼저 알려주는 알림 채널" },
   { id: "general", label: "일반", description: "테마·언어 설정" },
@@ -83,6 +85,16 @@ export function SettingsModal() {
               </div>
             </aside>
             <section className="relative z-10 flex-1 overflow-y-auto p-8">
+              {activeSection === "plan" ? (
+                <div className="space-y-6">
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-primary/80">Plan</p>
+                    <h2 className="text-xl font-semibold text-white">내 플랜과 혜택</h2>
+                    <p className="text-sm text-slate-300">현재 플랜을 확인하고 필요하면 바로 업그레이드하세요.</p>
+                  </div>
+                  <PlanSummaryCard />
+                </div>
+              ) : null}
               {activeSection === "account" ? <AccountSecuritySettingsPanel onClose={closeModal} /> : null}
               {activeSection === "lightmem" ? <LightMemSettingsPanel onClose={closeModal} /> : null}
               {activeSection === "proactive" ? <ProactiveSettingsPanel onClose={closeModal} /> : null}

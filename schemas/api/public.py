@@ -39,3 +39,28 @@ class PublicChatResponse(BaseModel):
     answer: str
     sources: List[PublicChatSource]
     disclaimer: str
+
+
+class PublicEventShareResponse(BaseModel):
+    receiptNo: str
+    corpName: Optional[str] = None
+    ticker: Optional[str] = None
+    reportName: Optional[str] = None
+    eventName: Optional[str] = None
+    eventType: Optional[str] = None
+    filedAt: Optional[datetime] = None
+    caar: Optional[float] = Field(default=None, description="CAAR[-2,+5] 혹은 기본 윈도우")
+    pValue: Optional[float] = Field(default=None, description="CAAR p-value")
+    focusScore: Optional[float] = Field(default=None, description="Focus Score 총점")
+    focusDetails: Optional[dict] = Field(default=None, description="Focus Score 서브 점수 원본")
+    targetUrl: Optional[str] = Field(default=None, description="대시보드 딥링크 (/filings?receiptNo=)")
+
+
+__all__ = [
+    "PublicFiling",
+    "PublicFilingsResponse",
+    "PublicChatRequest",
+    "PublicChatSource",
+    "PublicChatResponse",
+    "PublicEventShareResponse",
+]

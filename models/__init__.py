@@ -13,6 +13,7 @@ from .summary import Summary  # noqa: F401
 from .payments import TossWebhookEventLog  # noqa: F401
 from .event_study import EventRecord, Price, EventStudyResult, EventSummary  # noqa: F401
 from .security_metadata import SecurityMetadata  # noqa: F401
+from .market_stats_cache import MarketStatsCache  # noqa: F401
 from .ingest_viewer_flag import IngestViewerFlag  # noqa: F401
 from .ingest_dead_letter import IngestDeadLetter  # noqa: F401
 from .org import Org, OrgRole, UserOrg  # noqa: F401

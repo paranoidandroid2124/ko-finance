@@ -35,8 +35,10 @@
   },
   "include": [
     "next-env.d.ts",
+    "src/components/legal/LegalCopy.d.ts",
     "**/*.ts",
     "**/*.tsx",
+    "**/*.d.ts",
     ".storybook",
     ".next/types/**/*.ts"
   ],

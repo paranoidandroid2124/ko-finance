@@ -14,10 +14,6 @@ class UserLightMemSettingsSchema(BaseModel):
         default=False,
         description="전체 LightMem 개인화 사용 여부. False일 경우 모든 LightMem 호출을 차단합니다.",
     )
-    watchlist: bool = Field(
-        default=True,
-        description="워치리스트 알림·다이제스트에 LightMem을 사용할지 여부 (enabled가 true일 때만 적용).",
-    )
     chat: bool = Field(
         default=True,
         description="Chat 세션 개인화에 LightMem을 허용할지 여부.",

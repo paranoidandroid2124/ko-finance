@@ -40,7 +40,7 @@ const sections: LegalSection[] = [
       },
       {
         type: "note",
-        text: "투자 권유·목표가·매수/매도 지시 문구는 기본적으로 차단되며, 허용 예외는 Enterprise 계약서에 명시된 범위에서만 적용합니다.",
+        text: "투자 권유·목표가·매수/매도 지시 문구는 기본적으로 차단되며, 허용 예외는 Team(구 Enterprise) 계약서에 명시된 범위에서만 적용합니다.",
       },
     ],
   },

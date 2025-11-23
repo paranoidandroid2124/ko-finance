@@ -14,7 +14,6 @@ from filelock import FileLock, Timeout
 
 from core.env import env_int, env_str
 from core.plan_constants import PlanTier, SUPPORTED_PLAN_TIERS
-from services.admin_audit import append_audit_log
 from services import plan_config_store
 
 logger = logging.getLogger(__name__)
@@ -49,12 +48,10 @@ class PlanQuota:
 class PlanMemoryFlags:
     """Fine-grained LightMem feature toggles stored with the plan."""
 
-    watchlist_enabled: bool = False
     chat_enabled: bool = False
 
     def to_dict(self) -> Dict[str, bool]:
         return {
-            "watchlist": self.watchlist_enabled,
             "chat": self.chat_enabled,
         }
 
@@ -114,7 +111,6 @@ class PlanContext:
     updated_by: Optional[str] = None
     change_note: Optional[str] = None
     checkout_requested: bool = False
-    memory_watchlist_enabled: bool = False
     memory_chat_enabled: bool = False
     trial_tier: Optional[PlanTier] = None
     trial_starts_at: Optional[datetime] = None
@@ -130,7 +126,6 @@ class PlanContext:
         """Expose consolidated feature flags derived from entitlements."""
         return {
             "search.compare": self.allows("search.compare"),
-            "search.alerts": self.allows("search.alerts"),
             "search.export": self.allows("search.export"),
             "evidence.inline_pdf": self.allows("evidence.inline_pdf"),
             "evidence.diff": self.allows("evidence.diff"),
@@ -141,7 +136,6 @@ class PlanContext:
 
     def memory_flags(self) -> Mapping[str, bool]:
         return {
-            "watchlist": self.memory_watchlist_enabled,
             "chat": self.memory_chat_enabled,
         }
 
@@ -215,7 +209,6 @@ def _parse_memory_flags(payload: Optional[Mapping[str, Any]]) -> PlanMemoryFlags
     if not isinstance(payload, Mapping):
         return PlanMemoryFlags()
     return PlanMemoryFlags(
-        watchlist_enabled=bool(payload.get("watchlist")),
         chat_enabled=bool(payload.get("chat")),
     )
 
@@ -246,7 +239,6 @@ def _feature_flags_from_entitlements(entitlements: Iterable[str]) -> Dict[str, b
     ent_set = {item.strip() for item in entitlements if item.strip()}
     return {
         "search.compare": "search.compare" in ent_set,
-        "search.alerts": "search.alerts" in ent_set,
         "search.export": "search.export" in ent_set,
         "evidence.inline_pdf": "evidence.inline_pdf" in ent_set,
         "evidence.diff": "evidence.diff" in ent_set,
@@ -545,7 +537,6 @@ def _build_plan_context(
         updated_by=updated_by,
         change_note=change_note,
         checkout_requested=settings.checkout_requested if settings else False,
-        memory_watchlist_enabled=memory_flags.watchlist_enabled,
         memory_chat_enabled=memory_flags.chat_enabled,
         trial_tier=trial_state.tier,
         trial_starts_at=trial_state.started_at,
@@ -651,23 +642,6 @@ def update_plan_context(
             settings.updated_by or "unknown",
         )
 
-    append_audit_log(
-        filename="plan_audit.jsonl",
-        actor=settings.updated_by or "unknown-admin",
-        action="plan_update",
-        payload={
-            "planTier": settings.plan_tier,
-            "entitlements": list(settings.entitlements),
-            "quota": settings.quota.to_dict(),
-            "expiresAt": settings.expires_at.isoformat() if settings.expires_at else None,
-            "changeNote": settings.change_note,
-            "triggerCheckout": trigger_checkout,
-            "forceCheckoutRequested": force_checkout_requested,
-            "checkoutRequested": settings.checkout_requested,
-            "memoryFlags": settings.memory_flags.to_dict(),
-        },
-    )
-
     _load_plan_settings(reload=True)
     return _build_plan_context()
 
@@ -724,10 +698,7 @@ def start_plan_trial(
             updated_by=actor or "trial-bootstrap",
             change_note="trial_bootstrap",
             checkout_requested=False,
-            memory_flags=PlanMemoryFlags(
-                watchlist_enabled=current.memory_watchlist_enabled,
-                chat_enabled=current.memory_chat_enabled,
-            ),
+            memory_flags=PlanMemoryFlags(chat_enabled=current.memory_chat_enabled),
             trial_state=PlanTrialState(),
         )
         _store_plan_settings(settings)
@@ -753,18 +724,6 @@ def start_plan_trial(
     settings.change_note = "trial_started"
 
     _store_plan_settings(settings)
-
-    append_audit_log(
-        filename="plan_audit.jsonl",
-        actor=settings.updated_by or "self-service",
-        action="plan_trial_started",
-        payload={
-            "tier": target_tier,
-            "durationDays": duration,
-            "startsAt": settings.trial_state.started_at.isoformat() if settings.trial_state.started_at else None,
-            "endsAt": settings.trial_state.ends_at.isoformat() if settings.trial_state.ends_at else None,
-        },
-    )
 
     return _build_plan_context()
 

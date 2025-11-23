@@ -7,6 +7,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import pytest
+
+pytest.skip("admin API removed", allow_module_level=True)
+
 from services import plan_service
 from web.routers.admin import router as admin_router
 

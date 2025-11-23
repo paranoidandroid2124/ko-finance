@@ -78,6 +78,7 @@ export type RestatementHighlight = {
   currentValue?: number | null;
   deltaPercent?: number | null;
   viewerUrl?: string | null;
+  frequencyPercentile?: number | null;
 };
 
 export type EvidenceLink = {
@@ -363,6 +364,7 @@ const mapRestatementHighlights = (entries: unknown): RestatementHighlight[] => {
       currentValue: toNumberOrNull(entry.current_value ?? entry.currentValue),
       deltaPercent: toNumberOrNull(entry.delta_percent ?? entry.deltaPercent),
       viewerUrl: toStringOrNull(entry.viewer_url ?? entry.viewerUrl),
+      frequencyPercentile: toNumberOrNull(entry.frequency_percentile ?? entry.frequencyPercentile ?? entry.percentile),
     });
     return acc;
   }, []);

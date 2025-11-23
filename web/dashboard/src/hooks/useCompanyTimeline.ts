@@ -8,6 +8,8 @@ export type CompanyTimelinePoint = {
   sentiment?: number | null;
   newsCount?: number | null;
   filingCount?: number | null;
+  priceClose?: number | null;
+  volume?: number | null;
   headline?: string | null;
   url?: string | null;
 };

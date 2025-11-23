@@ -11,7 +11,6 @@ const DEFAULT_BASE_URL = "http://localhost:8000";
 
 const ENDPOINTS: EndpointCheck[] = [
   { label: "filings_list", path: "/api/v1/filings/?limit=1" },
-  { label: "dashboard_overview", path: "/api/v1/dashboard/overview" },
   { label: "sector_signals", path: "/api/v1/sectors/signals" },
 ];
 

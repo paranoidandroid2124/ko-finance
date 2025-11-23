@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import pytest
+
+pytest.skip("analytics router removed", allow_module_level=True)
 import json
 import sys
 import types

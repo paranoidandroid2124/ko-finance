@@ -165,6 +165,12 @@ def resolve_tool_by_call(call_name: str) -> Optional[ToolDefinition]:
     return _CALL_NAME_INDEX.get(call_name)
 
 
+def resolve_tool_by_call_name(call_name: str) -> Optional[ToolDefinition]:
+    """Backward-compatible alias for resolve_tool_by_call."""
+
+    return resolve_tool_by_call(call_name)
+
+
 def resolve_tool(tool_id: str) -> Optional[ToolDefinition]:
     """Lookup a tool by its identifier."""
 
@@ -176,4 +182,5 @@ __all__ = [
     "list_tools",
     "resolve_tool",
     "resolve_tool_by_call",
+    "resolve_tool_by_call_name",
 ]

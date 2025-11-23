@@ -36,6 +36,7 @@ import type { PlanTier } from "@/store/planStore/types";
 import { useToastStore } from '@/store/toastStore';
 import { useToolStore } from '@/store/toolStore';
 import { PLAN_TIER_CONFIG } from "@/config/planConfig";
+import { getPlanLabel } from "@/lib/planTier";
 
 const isPlanTier = (value: string | undefined): value is PlanTier =>
   value === 'free' || value === 'starter' || value === 'pro' || value === 'enterprise';
@@ -482,7 +483,7 @@ export function useChatController(): ChatController {
     }).format(resetDate)}에 초기화돼요.`;
   }, [chatQuotaNotice]);
   const handlePlanRedirect = useCallback(() => {
-    router.push('/settings?panel=plan' as any);
+    router.push('/settings?panel=plan' as Route);
   }, [router]);
   const dismissQuotaNotice = useCallback(() => setChatQuotaNotice(null), []);
 
@@ -517,6 +518,11 @@ export function useChatController(): ChatController {
         typeof detail?.message === 'string'
           ? (detail.message as string)
           : '오늘 사용할 수 있는 AI 대화 횟수를 모두 사용했습니다.';
+
+      const nextTier: PlanTier | null =
+        planTier === 'starter' ? 'pro' : planTier === 'pro' ? 'enterprise' : null;
+      const nextLabel = nextTier ? getPlanLabel(nextTier) : null;
+      const upgradeHref = nextTier ? `/pricing?tier=${nextTier}` : '/pricing';
 
       setChatQuotaNotice({
         message,
@@ -555,7 +561,12 @@ export function useChatController(): ChatController {
       showToast({
         intent: 'warning',
         title: '오늘 할당량을 모두 사용했어요',
-        message: 'Pro 플랜으로 업그레이드하면 더 여유롭게 대화할 수 있어요.'
+        message:
+          nextLabel && nextTier
+            ? `${nextLabel} 플랜으로 업그레이드하면 더 여유롭게 대화할 수 있어요.`
+            : '업그레이드하면 더 여유롭게 대화할 수 있어요.',
+        actionLabel: nextLabel ? `${nextLabel}로 업그레이드` : '플랜 보기',
+        actionHref: upgradeHref
       });
       return true;
     },
@@ -679,6 +690,33 @@ export function useChatController(): ChatController {
       router.push("/evidence" as Route);
     }
   }, [filingReferenceId, isFilingContext, router]);
+
+  const extractContextIds = useCallback((sessionId: string) => {
+    const session = useChatStore.getState().sessions.find((item) => item.id === sessionId);
+    if (!session) {
+      return null;
+    }
+
+    for (let i = session.messages.length - 1; i >= 0; i -= 1) {
+      const meta = session.messages[i]?.meta as Record<string, unknown> | undefined;
+      const raw = (meta?.contextIds ?? meta?.context_ids) as Record<string, unknown> | undefined;
+      if (!raw) continue;
+      const cleaned: Record<string, string> = {};
+      Object.entries(raw).forEach(([key, value]) => {
+        if (typeof value === "string" && value.trim()) {
+          cleaned[key] = value.trim();
+        }
+      });
+      if (Object.keys(cleaned).length > 0) {
+        return cleaned;
+      }
+    }
+
+    if (session.context?.type === "filing" && session.context.referenceId) {
+      return { filing_id: session.context.referenceId };
+    }
+    return null;
+  }, []);
   const runQuery = useCallback(
     async ({
       question,
@@ -698,6 +736,7 @@ export function useChatController(): ChatController {
       const sessionState = useChatStore.getState().sessions.find((session) => session.id === sessionId);
       const referenceId =
         sessionState?.context?.type === 'filing' ? sessionState.context.referenceId : undefined;
+      const contextIds = extractContextIds(sessionId);
       const documentTitle = sessionState?.evidence?.documentTitle ?? sessionState?.title ?? '대화';
       const documentUrl = sessionState?.evidence?.documentUrl;
       const quotaContext: QuotaErrorContext = {
@@ -747,6 +786,15 @@ export function useChatController(): ChatController {
       const toolContext = useToolStore.getState().consumeToolContext(sessionId);
       if (toolContext) {
         ragPayload.meta = { tool_context: toolContext };
+      }
+      if (contextIds) {
+        ragPayload.meta = { ...(ragPayload.meta ?? {}), context_ids: contextIds };
+        if (!ragPayload.filing_id && contextIds.filing_id) {
+          ragPayload.filing_id = contextIds.filing_id;
+        }
+        if (!ragPayload.tickers?.length && contextIds.company_id) {
+          ragPayload.tickers = [contextIds.company_id];
+        }
       }
       if (referenceId) {
         ragPayload.filing_id = referenceId;
@@ -1032,6 +1080,7 @@ export function useChatController(): ChatController {
       activeSessionId,
       setSessionEvidence,
       setSessionTelemetry,
+      extractContextIds,
       showToast,
       updateMessage
     ]

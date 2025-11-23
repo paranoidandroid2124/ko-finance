@@ -9,6 +9,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from database import get_db
+from models.company import FilingEvent
 from models.filing import Filing
 from schemas.api.public import (
     PublicChatRequest,
@@ -16,6 +17,7 @@ from schemas.api.public import (
     PublicChatSource,
     PublicFiling,
     PublicFilingsResponse,
+    PublicEventShareResponse,
 )
 
 try:  # pragma: no cover - redis may be optional
@@ -157,3 +159,44 @@ def create_public_chat_preview(
     answer, sources = _build_chat_answer(question, filings)
 
     return PublicChatResponse(answer=answer, sources=sources, disclaimer=_CHAT_DISCLAIMER)
+
+
+@router.get("/events/{receipt_no}", response_model=PublicEventShareResponse, summary="공유용 이벤트 데이터를 반환합니다.")
+def read_public_event(receipt_no: str, db: Session = Depends(get_db)) -> PublicEventShareResponse:
+    event = (
+        db.query(FilingEvent)
+        .filter(FilingEvent.receipt_no == receipt_no.strip())
+        .first()
+    )
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "public.event_not_found", "message": "해당 공시 이벤트를 찾을 수 없습니다."},
+        )
+
+    filing = db.query(Filing).filter(Filing.receipt_no == receipt_no.strip()).first()
+    filed_at = filing.filed_at if filing else None
+    derived = event.derived_metrics or {}
+    caar = derived.get("caar")
+    p_val = derived.get("p_value") or derived.get("pValue") or derived.get("pvalue")
+    focus = derived.get("focus_score") or derived.get("focusScore")
+    focus_total = None
+    focus_detail = None
+    if isinstance(focus, dict):
+        focus_total = focus.get("total_score") or focus.get("totalScore")
+        focus_detail = focus.get("sub_scores") or focus.get("subScores") or focus
+
+    return PublicEventShareResponse(
+        receiptNo=receipt_no,
+        corpName=event.corp_name,
+        ticker=event.ticker,
+        reportName=event.report_name,
+        eventName=event.event_name,
+        eventType=event.event_type,
+        filedAt=filed_at,
+        caar=caar if isinstance(caar, (int, float)) else None,
+        pValue=p_val if isinstance(p_val, (int, float)) else None,
+        focusScore=focus_total if isinstance(focus_total, (int, float)) else None,
+        focusDetails=focus_detail if isinstance(focus_detail, dict) else None,
+        targetUrl=f"/filings?receiptNo={receipt_no}",
+    )

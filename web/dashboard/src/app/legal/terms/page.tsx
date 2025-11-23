@@ -21,7 +21,7 @@ const sections: LegalSection[] = [
       },
       {
         type: "paragraph",
-        text: "본 약관은 서비스를 이용하는 모든 사용자(개인 회원, 조직 계정 포함)에 적용되며 Enterprise 고객처럼 별도 계약을 체결한 경우에는 개별 계약서가 우선합니다.",
+        text: "본 약관은 서비스를 이용하는 모든 사용자(개인 회원, 조직 계정 포함)에 적용되며 Team(구 Enterprise) 고객처럼 별도 계약을 체결한 경우에는 개별 계약서가 우선합니다.",
       },
     ],
   },
@@ -47,7 +47,7 @@ const sections: LegalSection[] = [
     contents: [
       {
         type: "paragraph",
-        text: "Starter·Pro·Enterprise 플랜 기능과 한도는 플랜 카탈로그, PlanLock 안내, 견적서·계약서에 명시된 내용을 따릅니다.",
+        text: "Starter·Pro·Team 플랜 기능과 한도는 플랜 카탈로그, PlanLock 안내, 견적서·계약서에 명시된 내용을 따릅니다.",
       },
       {
         type: "list",

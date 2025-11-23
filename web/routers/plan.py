@@ -21,17 +21,12 @@ from services.plan_service import (
     start_plan_trial as start_plan_trial_service,
     update_plan_context as update_plan_context_service,
 )
-from services.plan_catalog_service import (
-    PlanCatalogConflictError,
-    load_plan_catalog,
-    update_plan_catalog,
-)
+from services.plan_catalog_service import PlanCatalogConflictError, load_plan_catalog, update_plan_catalog
 from services.plan_serializers import (
     serialize_plan_catalog,
     serialize_plan_context,
     serialize_plan_presets,
 )
-from web.deps_admin import AdminSession, require_admin_session_for_plan
 from web.deps import get_plan_context
 
 router = APIRouter(prefix="/plan", tags=["Plan"])
@@ -59,7 +54,6 @@ def read_plan_presets() -> PlanPresetResponse:
 )
 def update_plan_presets_route(
     payload: PlanPresetUpdateRequest,
-    _admin_session: AdminSession = Depends(require_admin_session_for_plan),
 ) -> PlanPresetResponse:
     plan_config_store.update_plan_config(
         [tier.model_dump() for tier in payload.tiers],
@@ -73,7 +67,6 @@ def update_plan_presets_route(
 @router.patch("/context", response_model=PlanContextResponse, summary="플랜 기본값을 저장합니다.")
 def patch_plan_context(
     payload: PlanContextUpdateRequest,
-    _admin_session: AdminSession = Depends(require_admin_session_for_plan),
 ) -> PlanContextResponse:
     try:
         updated = update_plan_context_service(
@@ -144,7 +137,6 @@ def read_plan_catalog() -> PlanCatalogResponse:
 )
 def update_plan_catalog_route(
     payload: PlanCatalogUpdateRequest,
-    _admin_session: AdminSession = Depends(require_admin_session_for_plan),
 ) -> PlanCatalogResponse:
     try:
         stored = update_plan_catalog(

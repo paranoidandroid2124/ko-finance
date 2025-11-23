@@ -54,7 +54,7 @@ _PLAN_LABELS: Dict[PlanTier, str] = {
     "free": "Free",
     "starter": "Starter",
     "pro": "Pro",
-    "enterprise": "Enterprise",
+    "enterprise": "Team",
 }
 _PLAN_AMOUNT_FALLBACKS: Dict[PlanTier, int] = {
     "starter": 9900,

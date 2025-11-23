@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 
-export type SettingsSection = "account" | "lightmem" | "proactive" | "general";
+export type SettingsSection = "account" | "plan" | "lightmem" | "proactive" | "general";
 
 type SettingsModalState = {
   open: boolean;

@@ -16,9 +16,7 @@ type SettingsOverlayProps = {
 };
 
 export function SettingsOverlay({ onClose }: SettingsOverlayProps) {
-  const { data: alertRulesData, isLoading: isAlertPlanLoading, isError: isAlertPlanError } = useAlertRules();
-  const alertPlan = alertRulesData?.plan ?? null;
-  const alertPlanErrorMessage = isAlertPlanError ? "알림 플랜 정보를 불러오지 못했어요." : undefined;
+  useAlertRules();
 
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);

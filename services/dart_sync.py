@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from core.logging import get_logger
 from ingest.dart_client import DartClient
 from models.company import CorpMetric, FilingEvent, InsiderTransaction
+from models.event_study import Price
 from models.filing import Filing
 
 logger = get_logger(__name__)
@@ -425,7 +426,15 @@ def _sync_major_issues(
         event.resolution_date = resolution_date
         event.payload = row
         event.source = "DE005"
-        event.derived_metrics = _derive_event_metrics(event_type, event_name, row)
+        event.derived_metrics = _derive_event_metrics(
+            event_type,
+            event_name,
+            row,
+            metadata=metadata,
+            db=db,
+            event_date=event_date,
+            ticker=filing.ticker,
+        )
 
         db.add(event)
 
@@ -437,7 +446,16 @@ def _sync_major_issues(
     )
 
 
-def _derive_event_metrics(event_type: str, event_name: Optional[str], payload: Dict[str, Any]) -> Dict[str, Any]:
+def _derive_event_metrics(
+    event_type: str,
+    event_name: Optional[str],
+    payload: Dict[str, Any],
+    *,
+    metadata: Optional[SecurityMetadata] = None,
+    db: Optional[Session] = None,
+    event_date: Optional[date] = None,
+    ticker: Optional[str] = None,
+) -> Dict[str, Any]:
     derived: Dict[str, Any] = {}
     text = f"{event_type} {event_name or ''}".lower()
 
@@ -448,6 +466,54 @@ def _derive_event_metrics(event_type: str, event_name: Optional[str], payload: D
         dilution = _extract_dilution_ratio(payload)
         if dilution is not None:
             derived["cb_dilution_ratio"] = dilution
+
+    # --- 발행/희석 메트릭 추출 ---
+    issue_price = _parse_float(payload.get("issue_price") or payload.get("issu_prc") or payload.get("발행가") or payload.get("발행가액"))
+    new_shares = _parse_float(
+        payload.get("issu_amt")
+        or payload.get("issue_amount")
+        or payload.get("new_shares")
+        or payload.get("신주수")
+        or payload.get("신주수량")
+        or payload.get("발행주식수")
+    )
+    discount_rate = _parse_float(payload.get("discount_rate") or payload.get("할인율"))
+
+    existing_shares = None
+    if metadata and metadata.shares:
+        existing_shares = float(metadata.shares)
+
+    current_price = None
+    if db and ticker:
+        current_price = _resolve_latest_price(db, ticker, event_date)
+
+    # 계산: 할인율/희석률/이론가
+    if issue_price is not None and current_price and discount_rate is None:
+        try:
+            discount_rate = 1 - (issue_price / current_price)
+        except ZeroDivisionError:
+            discount_rate = None
+
+    if issue_price is not None:
+        derived["issue_price"] = issue_price
+    if current_price is not None:
+        derived["current_price"] = current_price
+    if new_shares is not None:
+        derived["new_shares"] = new_shares
+    if existing_shares is not None:
+        derived["existing_shares"] = existing_shares
+    if discount_rate is not None:
+        derived["discount_rate"] = discount_rate
+
+    if existing_shares and new_shares and issue_price is not None and current_price:
+        total_shares = existing_shares + new_shares
+        try:
+            dilution_rate = new_shares / total_shares
+        except ZeroDivisionError:
+            dilution_rate = None
+        theoretical_price = (existing_shares * current_price + new_shares * issue_price) / total_shares
+        derived["dilution_rate"] = dilution_rate
+        derived["theoretical_price_dilution"] = theoretical_price
 
     return derived
 
@@ -481,6 +547,21 @@ def _parse_float(raw: Any) -> Optional[float]:
         return float(text)
     except ValueError:
         return None
+
+
+def _resolve_latest_price(db: Session, ticker: str, as_of: Optional[date]) -> Optional[float]:
+    if not ticker:
+        return None
+    query = db.query(Price).filter(Price.symbol == ticker.upper())
+    if as_of:
+        query = query.filter(Price.date <= as_of)
+    row = query.order_by(Price.date.desc()).first()
+    if row and row.close is not None:
+        try:
+            return float(row.close)
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def _parse_date(raw: Any) -> Optional[date]:

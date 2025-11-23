@@ -77,7 +77,6 @@ class UserLightMemSettings:
     """Per-user LightMem opt-in flags."""
 
     enabled: bool = False
-    watchlist: bool = True
     chat: bool = True
 
     @classmethod
@@ -85,14 +84,12 @@ class UserLightMemSettings:
         data = payload or {}
         return cls(
             enabled=bool(data.get("enabled", False)),
-            watchlist=bool(data.get("watchlist", True)),
             chat=bool(data.get("chat", True)),
         )
 
     def to_dict(self) -> Dict[str, bool]:
         return {
             "enabled": bool(self.enabled),
-            "watchlist": bool(self.watchlist),
             "chat": bool(self.chat),
         }
 
@@ -170,6 +167,10 @@ class UserProactiveSettings:
     email_enabled: bool = False
     email_schedule: str = "morning"
     slack_enabled: bool = False
+    preferred_tickers: list[str] = None  # optional allow list
+    blocked_tickers: list[str] = None
+    preferred_sectors: list[str] = None
+    blocked_sectors: list[str] = None
 
     @classmethod
     def from_dict(cls, payload: Optional[Dict[str, object]]) -> "UserProactiveSettings":
@@ -180,6 +181,10 @@ class UserProactiveSettings:
             email_enabled=bool(data.get("email_enabled", False)),
             email_schedule=str(data.get("email_schedule") or "morning"),
             slack_enabled=bool(data.get("slack_enabled", False)),
+            preferred_tickers=list(data.get("preferred_tickers") or []) if isinstance(data.get("preferred_tickers"), list) else [],
+            blocked_tickers=list(data.get("blocked_tickers") or []) if isinstance(data.get("blocked_tickers"), list) else [],
+            preferred_sectors=list(data.get("preferred_sectors") or []) if isinstance(data.get("preferred_sectors"), list) else [],
+            blocked_sectors=list(data.get("blocked_sectors") or []) if isinstance(data.get("blocked_sectors"), list) else [],
         )
 
     def to_dict(self) -> Dict[str, object]:
@@ -189,6 +194,10 @@ class UserProactiveSettings:
             "email_enabled": bool(self.email_enabled),
             "email_schedule": self.email_schedule or "morning",
             "slack_enabled": bool(self.slack_enabled),
+            "preferred_tickers": list(self.preferred_tickers or []),
+            "blocked_tickers": list(self.blocked_tickers or []),
+            "preferred_sectors": list(self.preferred_sectors or []),
+            "blocked_sectors": list(self.blocked_sectors or []),
         }
 
 

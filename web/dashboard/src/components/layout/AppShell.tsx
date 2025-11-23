@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect } from "react";
-import { CircleUserRound, Settings } from "lucide-react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { CircleUserRound, LogOut, Settings } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import type { Route } from "next";
 
@@ -15,6 +15,8 @@ import { AppFooter } from "./AppFooter";
 import { useAuth } from "@/lib/authContext";
 import { useSettingsModalStore } from "@/store/settingsModalStore";
 import { SettingsModal } from "@/components/settings/SettingsModal";
+import supabase from "@/lib/supabase";
+import { toast } from "@/store/toastStore";
 
 type AppShellProps = {
   children: React.ReactNode;
@@ -24,6 +26,7 @@ export function AppShell({ children }: AppShellProps) {
   const { loading, user } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
+  const [loggingOut, setLoggingOut] = useState(false);
   const setNeedsOnboarding = useOnboardingStore((state) => state.setNeedsOnboarding);
   const openSettings = useSettingsModalStore((state) => state.openModal);
   const displayName =
@@ -31,11 +34,30 @@ export function AppShell({ children }: AppShellProps) {
     (typeof user?.user_metadata?.full_name === "string" ? user.user_metadata.full_name : undefined) ??
     "Guest";
 
+  const handleLogout = useCallback(async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error("[Supabase] Logout failed", error);
+      toast.show({ intent: "error", message: "로그아웃에 실패했습니다. 잠시 후 다시 시도해 주세요." });
+      setLoggingOut(false);
+      return;
+    }
+    router.replace("/auth/login" as Route);
+  }, [loggingOut, router]);
+
   useEffect(() => {
     if (loading) {
       return;
     }
-    const onboardingRequired = Boolean((user as any)?.onboardingRequired);
+    const onboardingRequired =
+      typeof user === "object" &&
+      user !== null &&
+      "onboardingRequired" in user &&
+      typeof (user as { onboardingRequired?: unknown }).onboardingRequired === "boolean"
+        ? Boolean((user as { onboardingRequired?: boolean }).onboardingRequired)
+        : false;
     setNeedsOnboarding(onboardingRequired);
     if (!onboardingRequired) {
       return;
@@ -73,6 +95,15 @@ export function AppShell({ children }: AppShellProps) {
               <Settings className="h-4 w-4 text-[#58A6FF]" />
               설정
             </Link>
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={loggingOut}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[#30363D] bg-[#161B22] px-3 py-1 text-[12px] font-semibold text-slate-200 shadow-[0_8px_24px_rgba(0,0,0,0.35)] transition hover:border-rose-400/70 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <LogOut className="h-4 w-4 text-rose-400" />
+              {loggingOut ? "로그아웃 중" : "로그아웃"}
+            </button>
             <div className="flex items-center gap-2 rounded-full border border-[#30363D] bg-[#161B22] px-2.5 py-1 text-[12px] font-semibold text-slate-200 shadow-[0_8px_24px_rgba(0,0,0,0.35)]">
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#58A6FF]/15 text-[#58A6FF]">
                 <CircleUserRound className="h-4 w-4" aria-hidden />

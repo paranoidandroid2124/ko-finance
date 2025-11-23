@@ -53,7 +53,7 @@ pip install -r requirements.txt
 - The script pins `PLAN_SETTINGS_FILE`, `PLAN_CONFIG_FILE`, `PLAN_CATALOG_FILE`, and `NEWS_SUMMARY_CACHE_PATH` to `/tmp/nuvien_state/...`; customize via `CI_STATE_ROOT` if your CI provides a different tmpfs mount.
 - Long term we are migrating these JSON stores into PostgreSQL/Cloud Storage—see `docs/state_storage_migration.md` for the roadmap.
 
-#### SSO & SCIM (Enterprise)
+#### SSO & SCIM (Team/Enterprise)
 - Single Sign-On now supports multiple tenants via `/api/v1/admin/sso/providers` and `/api/v1/auth/saml|oidc/{provider}/*`. Use the admin API to register IdP metadata, rotate credentials, and issue SCIM bearer tokens per org. The legacy `AUTH_SAML_*` / `AUTH_OIDC_*` env vars remain available as a fallback for single-provider deployments.
 - SCIM provisioning (`/scim/v2/Users`, `/scim/v2/Groups`) is protected by `SCIM_BEARER_TOKEN` and maps directly to `users`, `orgs`, and `user_orgs`. See `docs/sso_scim_runbook.md` for the rollout checklist and pilot dashboard.
 

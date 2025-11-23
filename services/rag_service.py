@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Mapping
 from pydantic import BaseModel
 from fastapi import HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import or_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -63,6 +64,9 @@ from services.semantic_router import DEFAULT_ROUTER
 from services.user_settings_service import UserLightMemSettings
 from services.rag_shared import build_anchor_payload, normalize_reliability, safe_float, safe_int
 from models.chat import ChatMessage, ChatSession
+from models.event_study import EventRecord
+from models.filing import Filing
+from models.summary import Summary
 from services.memory.facade import MEMORY_SERVICE
 from services.plan_service import PlanContext
 import services.rag_metrics as rag_metrics
@@ -400,6 +404,225 @@ def _parse_uuid(value: Optional[str]) -> Optional[uuid.UUID]:
         return uuid.UUID(value)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID header.") from exc
+
+
+def _normalize_context_ids(value: Any) -> Dict[str, str]:
+    """Extract stable context identifiers (company/filing/event) from arbitrary metadata."""
+
+    if not isinstance(value, dict):
+        return {}
+
+    candidates = {
+        "company_id": [
+            value.get("company_id"),
+            value.get("company"),
+            value.get("ticker"),
+            value.get("corp_code"),
+            value.get("corpCode"),
+        ],
+        "filing_id": [
+            value.get("filing_id"),
+            value.get("filingId"),
+            value.get("receipt_no"),
+            value.get("receiptNo"),
+            value.get("report_code"),
+        ],
+        "event_id": [
+            value.get("event_id"),
+            value.get("eventId"),
+            value.get("rcept_no"),
+            value.get("event"),
+        ],
+    }
+
+    normalized: Dict[str, str] = {}
+    for key, values in candidates.items():
+        for candidate in values:
+            if candidate is None:
+                continue
+            text = str(candidate).strip()
+            if text:
+                normalized[key] = text
+                break
+    return normalized
+
+
+def _stringify_number(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    try:
+        return f"{value}"
+    except Exception:
+        return None
+
+
+def _load_company_context_chunk(identifier: Optional[str], db: Session) -> Optional[Dict[str, Any]]:
+    if not identifier:
+        return None
+    try:
+        snapshot = snapshot_service.get_company_snapshot(identifier, db=db)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.debug("Company snapshot prefetch failed for %s: %s", identifier, exc)
+        return None
+
+    if not isinstance(snapshot, dict):
+        return None
+
+    corp_label = snapshot.get("corp_name") or snapshot.get("ticker") or identifier
+    summary_block = snapshot.get("summary") or {}
+    latest = snapshot.get("latest_filing") or {}
+    lines: List[str] = []
+    if latest:
+        label = latest.get("report_name") or latest.get("title") or latest.get("receipt_no")
+        filed_at = latest.get("filed_at")
+        if label:
+            lines.append(f"최근 공시: {label} ({filed_at})")
+    for key in ("insight", "why", "what", "who"):
+        text = summary_block.get(key)
+        if isinstance(text, str) and text.strip():
+            lines.append(text.strip())
+            break
+    metrics = snapshot.get("key_metrics") or []
+    if isinstance(metrics, list) and metrics:
+        top_metrics = []
+        for metric in metrics[:3]:
+            if not isinstance(metric, dict):
+                continue
+            label = metric.get("label") or metric.get("name")
+            value = metric.get("value") or metric.get("formatted_value")
+            if label and value:
+                top_metrics.append(f"{label}: {value}")
+        if top_metrics:
+            lines.append("주요 지표 - " + "; ".join(top_metrics))
+
+    content = "\n".join(lines) if lines else f"{corp_label} 최신 스냅샷"
+    return {
+        "id": f"ctx:company:{identifier}",
+        "chunk_id": f"ctx:company:{identifier}",
+        "source_type": "snapshot",
+        "doc_type": "snapshot",
+        "ticker": snapshot.get("ticker") or identifier,
+        "corp_name": snapshot.get("corp_name"),
+        "filing_id": latest.get("receipt_no"),
+        "filed_at": latest.get("filed_at"),
+        "section": "company_snapshot",
+        "title": f"{corp_label} 스냅샷",
+        "content": content,
+        "score": 1.2,
+    }
+
+
+def _load_filing_context_chunk(filing_identifier: Optional[str], db: Session) -> Optional[Dict[str, Any]]:
+    if not filing_identifier:
+        return None
+
+    filing = None
+    try:
+        filing_uuid = uuid.UUID(filing_identifier)
+    except Exception:
+        filing_uuid = None
+
+    if filing_uuid:
+        filing = (
+            db.query(Filing)
+            .filter(Filing.id == filing_uuid)
+            .first()
+        )
+    if filing is None:
+        filing = (
+            db.query(Filing)
+            .filter(or_(Filing.receipt_no == filing_identifier, Filing.report_code == filing_identifier))
+            .first()
+        )
+    if filing is None:
+        return None
+
+    summary = (
+        db.query(Summary)
+        .filter(Summary.filing_id == filing.id)
+        .order_by(Summary.created_at.desc())
+        .first()
+    )
+
+    lines: List[str] = []
+    if filing.report_name or filing.title:
+        lines.append(f"{filing.report_name or ''} {filing.title or ''}".strip())
+    if filing.filed_at:
+        lines.append(f"제출일자: {filing.filed_at.isoformat()}")
+    if summary:
+        for key in ("insight", "what", "why", "how"):
+            text = getattr(summary, key, None)
+            if isinstance(text, str) and text.strip():
+                lines.append(text.strip())
+                break
+
+    content = "\n".join(lines) if lines else "요약 정보가 없습니다."
+    return {
+        "id": f"ctx:filing:{filing.id}",
+        "chunk_id": f"ctx:filing:{filing.id}",
+        "source_type": "filing",
+        "doc_type": "filing",
+        "ticker": filing.ticker,
+        "corp_name": filing.corp_name,
+        "filing_id": str(filing.id),
+        "receipt_no": filing.receipt_no,
+        "section": filing.category or "filing",
+        "title": filing.report_name or filing.title or filing.receipt_no,
+        "content": content,
+        "score": 1.3,
+    }
+
+
+def _load_event_context_chunk(event_id: Optional[str], db: Session) -> Optional[Dict[str, Any]]:
+    if not event_id:
+        return None
+    event = (
+        db.query(EventRecord)
+        .filter(EventRecord.rcept_no == event_id)
+        .first()
+    )
+    if event is None:
+        return None
+
+    lines = [f"{event.event_type} 이벤트", event.corp_name or event.ticker or ""]
+    if event.event_date:
+        lines.append(f"발생일: {event.event_date.isoformat()}")
+    if event.amount:
+        amount = _stringify_number(event.amount)
+        if amount:
+            lines.append(f"규모: {amount}")
+    if event.metadata and isinstance(event.metadata, dict):
+        summary = event.metadata.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            lines.append(summary.strip())
+
+    return {
+        "id": f"ctx:event:{event.rcept_no}",
+        "chunk_id": f"ctx:event:{event.rcept_no}",
+        "source_type": "event",
+        "doc_type": "event",
+        "ticker": event.ticker,
+        "corp_name": event.corp_name,
+        "filing_id": event.rcept_no,
+        "section": event.event_type,
+        "title": event.event_type,
+        "content": "\n".join([line for line in lines if line]) or event.event_type,
+        "score": 1.1,
+    }
+
+
+def _prefetch_context_chunks(context_ids: Dict[str, str], db: Session) -> List[Dict[str, Any]]:
+    chunks: List[Dict[str, Any]] = []
+    filing_chunk = _load_filing_context_chunk(context_ids.get("filing_id"), db)
+    if filing_chunk:
+        chunks.append(filing_chunk)
+    company_chunk = _load_company_context_chunk(context_ids.get("company_id"), db)
+    if company_chunk:
+        chunks.append(company_chunk)
+    event_chunk = _load_event_context_chunk(context_ids.get("event_id"), db)
+    if event_chunk:
+        chunks.append(event_chunk)
+    return chunks
 
 
 def _default_lightmem_user_id() -> Optional[uuid.UUID]:
@@ -2953,6 +3176,18 @@ def query_rag_v2(
     user_meta.setdefault("router_intent", route_decision.intent)
     user_meta.setdefault("router_decision", route_decision.model_dump_route())
     user_meta.setdefault("router_confidence", route_decision.confidence)
+    context_ids = _normalize_context_ids(user_meta.get("context_ids"))
+    if context_ids:
+        user_meta["context_ids"] = context_ids
+        if context_ids.get("company_id"):
+            if context_ids["company_id"] not in payload.tickers:
+                payload.tickers.insert(0, context_ids["company_id"])
+            if context_ids["company_id"] not in payload.filters.tickers:
+                payload.filters.tickers.insert(0, context_ids["company_id"])
+        if context_ids.get("filing_id") and not payload.filingId:
+            payload.filingId = context_ids["filing_id"]
+    else:
+        context_ids = {}
     user_settings = _load_user_lightmem_settings(user_id)
     plan_memory_enabled = _plan_memory_enabled(plan, user_settings=user_settings)
 
@@ -3043,6 +3278,8 @@ def query_rag_v2(
         )
         prompt_metadata = _build_prompt_metadata(relative_range)
 
+        prefetched_chunks = _prefetch_context_chunks(context_ids, db) if context_ids else []
+
         try:
             pipeline_result = rag_pipeline.run_rag_query(db, payload)
         except RuntimeError as exc:
@@ -3050,6 +3287,9 @@ def query_rag_v2(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={"code": "rag.pipeline_unavailable", "message": "RAG 파이프라인을 잠시 사용할 수 없습니다. 잠시 후 다시 시도해 주세요."},
             ) from exc
+
+        if prefetched_chunks:
+            pipeline_result.raw_chunks = prefetched_chunks + pipeline_result.raw_chunks
 
         filtered_chunks = _filter_chunks_by_relevance(pipeline_result.raw_chunks, threshold=RAG_MIN_RELEVANCE)
         llm_payload = llm_service.generate_rag_answer(
@@ -3079,6 +3319,8 @@ def query_rag_v2(
         selected_filing_id = pipeline_result.trace.get("selectedFilingId")
 
         meta_payload = dict(llm_payload.get("meta", {}))
+        if context_ids:
+            meta_payload.setdefault("context_ids", context_ids)
         retrieval_meta = dict(meta_payload.get("retrieval") or {})
         retrieval_meta.setdefault("filing_id", selected_filing_id)
         retrieval_meta.setdefault("doc_ids", [doc.get("filing_id") for doc in pipeline_result.related_documents])

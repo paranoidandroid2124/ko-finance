@@ -27,7 +27,6 @@ class PlanQuotaSchema(BaseModel):
 
 class PlanFeatureFlagsSchema(BaseModel):
     searchCompare: bool = False
-    searchAlerts: bool = False
     searchExport: bool = False
     ragCore: bool = False
     evidenceInlinePdf: bool = False
@@ -37,7 +36,6 @@ class PlanFeatureFlagsSchema(BaseModel):
 
 
 class PlanMemoryFlagsSchema(BaseModel):
-    watchlist: bool = False
     chat: bool = False
 
 

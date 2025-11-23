@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS org_roles (
 INSERT INTO org_roles (key, rank, description)
 VALUES
     ('viewer', 10, 'Read-only access'),
-    ('editor', 20, 'May edit alerts/reports'),
+    ('editor', 20, 'May edit reports'),
     ('admin', 30, 'Full organisation administration')
 ON CONFLICT (key) DO NOTHING;
 

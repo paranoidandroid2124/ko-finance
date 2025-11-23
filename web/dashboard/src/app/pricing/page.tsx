@@ -1,38 +1,174 @@
 "use client";
 
 import Link from "next/link";
-import { Check } from "lucide-react";
+import { ArrowRight, Sparkles, ShieldCheck, Users } from "lucide-react";
 
-const FEATURES = ["무제한 리포트 생성", "Event Study 분석 도구", "Excel 데이터 내보내기", "모든 상장사 데이터 접근"];
+type PlanId = "starter" | "pro" | "team";
+
+type PlanFeature = {
+  label: string;
+  highlight?: boolean;
+  tooltip?: string;
+};
+
+type Plan = {
+  id: PlanId;
+  name: string;
+  price: string;
+  subtitle: string;
+  badge?: string;
+  ctaLabel: string;
+  ctaHref: string;
+  ctaSecondary?: { label: string; href: string };
+  tone: "default" | "primary";
+  features: PlanFeature[];
+};
+
+const PLANS: Plan[] = [
+  {
+    id: "starter",
+    name: "Starter",
+    price: "무료",
+    subtitle: "금융 분석의 시작",
+    ctaLabel: "무료로 시작하기",
+    ctaHref: "/auth/signup",
+    tone: "default",
+    features: [
+      { label: "기본 Q&A (월 100회)" },
+      { label: "최근 공시 요약 & 핵심 포인트" },
+      { label: "기본 이벤트 임팩트 미리보기" },
+    ],
+  },
+  {
+    id: "pro",
+    name: "Pro",
+    price: "월 14,900원",
+    subtitle: "가장 강력한 AI 애널리스트",
+    badge: "Most Popular",
+    ctaLabel: "14일 무료 체험 시작",
+    ctaHref: "/auth/signup?plan=pro",
+    tone: "primary",
+    features: [
+      { label: "Starter의 모든 기능" },
+      { label: "무제한 심층 분석 질문", highlight: true },
+      { label: "이벤트 임팩트 카드", tooltip: "주요 이벤트의 가격 영향 핵심 요약" },
+      { label: "정정 레이더", tooltip: "정정/오류 가능성을 빠르게 감지" },
+      { label: "희석 임팩트 카드", tooltip: "증자·전환 이벤트 희석 효과 추정" },
+      { label: "프로액티브 인사이트 (일 5회)" },
+      { label: "LightMem 요약 저장" },
+    ],
+  },
+  {
+    id: "team",
+    name: "Team",
+    price: "월 49,000원",
+    subtitle: "팀 협업과 보안이 필요한 조직용",
+    ctaLabel: "팀으로 시작하기",
+    ctaHref: "/auth/signup?plan=enterprise",
+    ctaSecondary: { label: "데모 보기", href: "mailto:sales@nuvien.ai?subject=Nuvien%20Team%20데모%20문의" },
+    tone: "default",
+    features: [
+      { label: "Pro의 모든 기능" },
+      { label: "이벤트 퀄리티 점수", tooltip: "이벤트 신뢰도·영향도 총점" },
+      { label: "공시 위생 점수", tooltip: "공시 신뢰도·정합성 평가" },
+      { label: "마켓 스크리너", tooltip: "섹터/팩터 기반 종목 발굴" },
+      { label: "팀 워크스페이스 · 멤버 초대" },
+      { label: "팀 채팅 · 공유 노트 · 권한 관리" },
+      { label: "SSO 및 강화된 보안" },
+    ],
+  },
+];
+
+const ICONS: Record<PlanId, JSX.Element> = {
+  starter: <Sparkles className="h-5 w-5 text-blue-300" />,
+  pro: <ShieldCheck className="h-5 w-5 text-amber-300" />,
+  enterprise: <Users className="h-5 w-5 text-emerald-300" />,
+};
 
 export default function PricingPage() {
   return (
-    <div className="min-h-screen bg-[#0f172a] py-20 px-4 text-white">
-      <div className="mx-auto max-w-5xl text-center">
-        <h1 className="text-4xl font-bold">단순하고 투명한 요금제</h1>
-        <p className="mt-2 text-slate-400">초기 베타 기간 동안 모든 기능을 무료로 체험하세요.</p>
-        <div className="mt-12 mx-auto w-full max-w-sm rounded-3xl border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur-sm relative">
-          <div className="absolute top-0 right-0 rounded-bl-xl bg-blue-500 px-3 py-1 text-xs font-bold">BETA</div>
-          <h3 className="text-xl font-bold">Pro Access</h3>
-          <p className="mt-1 text-sm text-slate-400">모든 기능 · 실시간 업데이트</p>
-          <div className="mt-6 text-4xl font-bold">
-            $0 <span className="text-lg font-normal text-slate-500">/ mo</span>
-          </div>
-          <ul className="mt-8 space-y-3 text-left text-slate-300">
-            {FEATURES.map((feat) => (
-              <li key={feat} className="flex items-center gap-3">
-                <span className="rounded-full bg-blue-500/20 p-1 text-blue-400">
-                  <Check size={14} />
+    <div className="min-h-screen bg-[#0b1221] text-white px-4 py-16">
+      <div className="mx-auto max-w-6xl space-y-8">
+        <div className="text-center space-y-3">
+          <p className="text-sm font-semibold tracking-wide text-blue-300/80 uppercase">Pricing</p>
+          <h1 className="text-3xl md:text-4xl font-bold leading-tight">분석가와 팀을 위한 단순한 요금제</h1>
+          <p className="text-slate-300 text-sm md:text-base">
+            필요할 때 바로 업그레이드하고, 언제든지 다운그레이드할 수 있습니다.
+          </p>
+        </div>
+
+        <div className="grid gap-6 md:grid-cols-3">
+          {PLANS.map((plan) => (
+            <div
+              key={plan.id}
+              className={`relative flex flex-col rounded-2xl border bg-white/5 p-6 shadow-xl backdrop-blur-sm transition hover:-translate-y-1 hover:shadow-2xl hover:border-white/20 ${
+                plan.tone === "primary"
+                  ? "border-amber-300/50 bg-gradient-to-b from-amber-200/10 to-amber-200/5"
+                  : "border-white/10"
+              }`}
+            >
+              {plan.badge ? (
+                <span className="absolute right-4 top-4 rounded-full bg-amber-400/20 px-3 py-1 text-xs font-semibold text-amber-200">
+                  {plan.badge}
                 </span>
-                {feat}
-              </li>
-            ))}
-          </ul>
-          <Link href="/auth/signup">
-            <button className="mt-8 w-full rounded-xl bg-white py-3 font-bold text-slate-900 transition hover:bg-gray-100">
-              무료로 시작하기
-            </button>
-          </Link>
+              ) : null}
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl border border-white/10 bg-white/5 p-2">{ICONS[plan.id]}</div>
+                <div>
+                  <p className="text-lg font-semibold">{plan.name}</p>
+                  <p className="text-xs text-slate-300">{plan.subtitle}</p>
+                </div>
+              </div>
+
+              <div className="mt-6">
+                <p className="text-3xl font-bold">{plan.price}</p>
+                <p className="text-xs text-slate-400">월 구독 · 언제든 해지 가능</p>
+              </div>
+
+              <div className="mt-5 space-y-2">
+                <Link
+                  href={plan.ctaHref}
+                  className={`flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition ${
+                    plan.tone === "primary"
+                      ? "bg-amber-300 text-slate-900 hover:bg-amber-200"
+                      : "bg-white/10 text-white hover:bg-white/20"
+                  }`}
+                >
+                  {plan.ctaLabel} <ArrowRight className="h-4 w-4" />
+                </Link>
+                {plan.ctaSecondary ? (
+                  <Link
+                    href={plan.ctaSecondary.href}
+                    className="flex items-center justify-center gap-2 rounded-xl border border-white/15 px-4 py-3 text-xs font-semibold text-slate-200 transition hover:border-white/40 hover:text-white"
+                  >
+                    {plan.ctaSecondary.label}
+                  </Link>
+                ) : null}
+              </div>
+
+              <ul className="mt-6 space-y-3 text-sm text-slate-200">
+                {plan.features.map((feature, idx) => (
+                  <li key={idx} className="flex items-start gap-2">
+                    <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-300" />
+                    <span
+                      className={`${feature.highlight ? "font-semibold text-white" : ""}`}
+                      title={feature.tooltip}
+                    >
+                      {feature.label}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="mt-auto pt-6 text-[11px] text-slate-400">
+                {plan.id === "pro"
+                  ? "14일 무료 체험 후 매월 자동 결제됩니다."
+                  : plan.id === "enterprise"
+                  ? "보안/통합 요건에 맞춰 커스텀 견적이 제공됩니다."
+                  : "언제든 Pro로 업그레이드할 수 있습니다."}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </div>

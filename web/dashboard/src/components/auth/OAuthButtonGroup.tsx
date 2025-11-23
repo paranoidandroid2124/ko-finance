@@ -1,8 +1,10 @@
 "use client";
 
+import type { Provider } from "@supabase/supabase-js";
+
 import supabase from "@/lib/supabase";
 
-type OAuthProvider = "google" | "kakao" | "naver";
+type OAuthProvider = Extract<Provider, "google" | "kakao" | "naver">;
 
 const PROVIDERS: Array<{ id: OAuthProvider; label: string }> = [
   { id: "google", label: "Google" },
@@ -25,7 +27,7 @@ export function OAuthButtonGroup({ callbackUrl, disabled }: Props) {
           disabled={disabled}
           onClick={() =>
             supabase.auth.signInWithOAuth({
-              provider: provider.id as any,
+              provider: provider.id,
               options: { redirectTo: callbackUrl ?? `${window.location.origin}/auth/callback` },
             })
           }

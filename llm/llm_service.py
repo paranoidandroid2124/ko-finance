@@ -1125,48 +1125,6 @@ def summarize_chat_transcript(transcript: List[Dict[str, str]]) -> str:
     summary_text = _choice_content(response) or ""
     return summary_text.strip()
 
-def generate_watchlist_personal_note(prompt_text: str) -> Tuple[str, Dict[str, Any]]:
-    """사용자 맞춤 워치리스트 코멘트를 생성한다."""
-
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "당신은 사용자의 워치리스트 히스토리를 이해하는 Nuvien Copilot입니다.\n"
-                "- 개인 메모는 3~5문장으로 구성하며, 각 문장은 25~65자 사이입니다.\n"
-                "- 첫 문장은 관찰된 패턴·이벤트, 두 번째는 해당 종목/섹터의 의미, 세 번째는 리스크·주의 포인트를 설명합니다.\n"
-                "- 네 번째 문장이 있다면 사용자에게 다음 액션(체크포인트, 비교 대상 등)을 제안합니다.\n"
-                "- '투자하세요' 같은 직접 조언이나 감탄사는 금지하고, 중립적이지만 친절한 톤을 유지합니다.\n"
-                "- 이미 prompt에 포함된 문장을 반복하지 말고 새롭게 정리합니다."
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                "다음 맥락을 참고해 개인화된 워치리스트 메모를 작성해 주세요.\n"
-                "### 사용자 맥락\n"
-                f"{prompt_text}\n\n"
-                "### 출력 지침\n"
-                "1. 문장 수 3~5개, 각 문장은 25~65자.\n"
-                "2. 첫 문장=관찰, 두 번째=의미/맥락, 세 번째=리스크, 네 번째=다음 액션.\n"
-                "3. 존댓말(예: '~하셨습니다', '~확인해보세요')로 작성합니다.\n"
-                "4. 동일한 단어 반복은 피하고, 각 문장은 고유한 정보를 담습니다."
-            ),
-        },
-    ]
-    response, model_used = _safe_completion(SUMMARY_MODEL, messages, fallback_model=QUALITY_FALLBACK_MODEL)
-    if response is None:
-        raise RuntimeError("watchlist_personal_note_failed")
-    note = _choice_content(response) or ""
-    metadata: Dict[str, Any] = {}
-    if model_used:
-        metadata["model"] = model_used
-    usage_payload = _extract_usage_payload(response)
-    if usage_payload:
-        metadata["usage"] = usage_payload
-    return note.strip(), metadata
-
-
 async def write_investment_memo(ticker: str, context: str) -> str:
     """Generate a Markdown-formatted investment memo for TOOL_REPORT."""
 
@@ -1223,7 +1181,6 @@ __all__ = [
     "stream_rag_answer",
     "classify_query_category",
     "summarize_chat_transcript",
-    "generate_watchlist_personal_note",
     "write_investment_memo",
     "set_guardrail_copy",
     "assess_query_risk",

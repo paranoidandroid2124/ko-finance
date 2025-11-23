@@ -24,7 +24,7 @@ def test_plan_config_override_file(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     payload = {
         "tiers": {
             "pro": {
-                "entitlements": ["timeline.full", " search.alerts "],
+                "entitlements": ["timeline.full", " search.export "],
                 "quota": {
                     "chatRequestsPerDay": 999,
                     "ragTopK": "12",
@@ -42,7 +42,7 @@ def test_plan_config_override_file(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     plan_config_store.reload_plan_config()
 
     config = plan_config_store.get_tier_config("pro")
-    assert config["entitlements"] == ["timeline.full", "search.alerts"]
+    assert config["entitlements"] == ["timeline.full", "search.export"]
     assert config["quota"]["chatRequestsPerDay"] == 999
     assert config["quota"]["ragTopK"] == 12
     assert config["quota"]["selfCheckEnabled"] is False
@@ -53,5 +53,5 @@ def test_unknown_tier_falls_back_to_free():
     plan_config_store.clear_plan_config_cache()
     config = plan_config_store.get_tier_config("custom-tier")
     # free tier defaults
-    assert config["entitlements"] == ["search.alerts", "rag.core"]
+    assert config["entitlements"] == ["rag.core"]
     assert config["quota"]["chatRequestsPerDay"] == 20

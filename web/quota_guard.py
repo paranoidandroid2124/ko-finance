@@ -18,13 +18,10 @@ _PLAN_LABELS = {
     "free": "Free",
     "starter": "Starter",
     "pro": "Pro",
-    "enterprise": "Enterprise",
+    "enterprise": "Team",
 }
 
 _ACTION_LABELS = {
-    "alerts.rules.create": "알림 생성",
-    "watchlist.radar": "워치리스트 레이더",
-    "watchlist.preview": "다이제스트 미리보기",
     "rag.chat": "AI 분석",
     "api.chat": "Chat API",
 }

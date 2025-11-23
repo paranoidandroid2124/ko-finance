@@ -135,6 +135,11 @@ class RestatementHighlight(BaseModel):
     current_value: Optional[float] = Field(default=None, description="Value after the restatement.")
     delta_percent: Optional[float] = Field(default=None, description="Percentage change introduced by the restatement.")
     viewer_url: Optional[str] = Field(default=None, description="Direct DART viewer link for the restatement.")
+    frequency_percentile: Optional[float] = Field(
+        default=None,
+        description="Relative frequency percentile within sector/size peer group.",
+        serialization_alias="frequencyPercentile",
+    )
 
 
 class FiscalAlignmentInsight(BaseModel):

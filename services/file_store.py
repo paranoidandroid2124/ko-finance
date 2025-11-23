@@ -8,7 +8,13 @@ import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
-from services.admin_shared import ensure_parent_dir
+
+def ensure_parent_dir(path: Path, logger: Optional[logging.Logger] = None) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:  # pragma: no cover - best effort
+        if logger:
+            logger.error("Failed to create parent dir for %s: %s", path, exc)
 
 
 def write_json_atomic(

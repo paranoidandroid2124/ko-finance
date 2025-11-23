@@ -1,4 +1,4 @@
-import { createLegalText, LegalText } from "./LegalText";
+import { createLegalText } from "./LegalText";
 
 export { LegalText, createLegalText } from "./LegalText";
 export type { LegalTextProps } from "./LegalText";

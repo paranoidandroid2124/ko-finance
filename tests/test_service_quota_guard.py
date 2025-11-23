@@ -15,7 +15,7 @@ def test_consume_quota_skips_when_subject_missing(monkeypatch):
         return EntitlementDecision(allowed=True, remaining=None, limit=None)
 
     monkeypatch.setattr(quota_guard, "entitlement_service", SimpleNamespace(consume=_not_expected))
-    assert quota_guard.consume_quota("watchlist.preview", user_id=None, org_id=None) is True
+    assert quota_guard.consume_quota("rag.chat", user_id=None, org_id=None) is True
     assert tracker["called"] is False
 
 
@@ -37,4 +37,4 @@ def test_consume_quota_normalizes_subject(monkeypatch):
 def test_consume_quota_returns_false_when_blocked(monkeypatch):
     decision = EntitlementDecision(allowed=False, remaining=0, limit=5)
     monkeypatch.setattr(quota_guard, "entitlement_service", SimpleNamespace(consume=lambda **_: decision))
-    assert quota_guard.consume_quota("watchlist.preview", user_id=uuid4(), org_id=None) is False
+    assert quota_guard.consume_quota("rag.chat", user_id=uuid4(), org_id=None) is False

@@ -20,12 +20,12 @@ type Story = StoryObj<typeof PlanLock>;
 
 export const FreeUser: Story = {};
 
-export const ProNeedsEnterprise: Story = {
+export const ProNeedsTeam: Story = {
   args: {
     requiredTier: "enterprise",
     currentTier: "pro",
-    title: "Enterprise 플랜 기능입니다.",
-    description: "Slack/웹훅 알림, SLA 모니터링, 감사 로그는 Enterprise 전용 기능이에요.",
+    title: "Team 플랜 기능입니다.",
+    description: "Slack/웹훅 알림, SLA 모니터링, 감사 로그는 Team(구 Enterprise) 전용 기능이에요.",
   },
 };
 

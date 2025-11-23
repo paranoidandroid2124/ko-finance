@@ -9,6 +9,7 @@ from typing import Iterable, List, Optional, Sequence
 
 from qdrant_client import QdrantClient, models
 
+from datetime import datetime, timezone
 from services.memory.models import MemoryRecord
 from services.embedding_utils import embed_text, EMBEDDING_MODEL
 
@@ -77,6 +78,13 @@ def search_records(
     entries: List[MemoryRecord] = []
     for point in search_result:
         payload = point.payload or {}
+        created_at_raw = payload.get("created_at")
+        created_at = None
+        if created_at_raw:
+            try:
+                created_at = datetime.fromisoformat(str(created_at_raw))
+            except Exception:
+                created_at = None
         try:
             entries.append(
                 MemoryRecord(
@@ -86,6 +94,8 @@ def search_records(
                     summary=str(payload.get("summary") or ""),
                     embedding=point.vector or [],
                     importance_score=float(payload.get("importance_score") or point.score or 0.0),
+                    created_at=created_at or datetime.now(timezone.utc),
+                    updated_at=created_at or datetime.now(timezone.utc),
                     record_id=str(payload.get("record_id") or point.id),
                 )
             )

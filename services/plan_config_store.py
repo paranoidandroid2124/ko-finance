@@ -7,8 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional
 
 from core.logging import get_logger
-from services.admin_audit import append_audit_log
-from services.admin_shared import now_iso
+from datetime import datetime, timezone
 from services.json_store import JsonStore
 
 DEFAULT_PLAN_CONFIG_PATH = Path("uploads") / "admin" / "plan_config.json"
@@ -22,7 +21,7 @@ _PLAN_CONFIG_STORE = JsonStore(
 _DEFAULT_PLAN_CONFIG: Dict[str, Any] = {
     "tiers": {
         "free": {
-            "entitlements": ["search.alerts", "rag.core"],
+            "entitlements": ["rag.core"],
             "quota": {
                 "chatRequestsPerDay": 20,
                 "ragTopK": 4,
@@ -32,7 +31,6 @@ _DEFAULT_PLAN_CONFIG: Dict[str, Any] = {
         },
         "starter": {
             "entitlements": [
-                "search.alerts",
                 "search.export",
                 "rag.core",
                 "evidence.inline_pdf",
@@ -47,7 +45,6 @@ _DEFAULT_PLAN_CONFIG: Dict[str, Any] = {
         "pro": {
             "entitlements": [
                 "search.compare",
-                "search.alerts",
                 "search.export",
                 "evidence.inline_pdf",
                 "rag.core",
@@ -63,7 +60,6 @@ _DEFAULT_PLAN_CONFIG: Dict[str, Any] = {
         "enterprise": {
             "entitlements": [
                 "search.compare",
-                "search.alerts",
                 "search.export",
                 "evidence.inline_pdf",
                 "evidence.diff",
@@ -253,21 +249,11 @@ def update_plan_config(
     for tier, payload in normalized_entries.items():
         config["tiers"][tier] = payload
 
-    config["updated_at"] = now_iso()
+    config["updated_at"] = datetime.now(timezone.utc).isoformat()
     config["updated_by"] = (updated_by or "").strip() or None
     config["note"] = (note or "").strip() or None
 
     _PLAN_CONFIG_STORE.save(config)
-
-    append_audit_log(
-        filename="plan_audit.jsonl",
-        actor=config["updated_by"] or "system",
-        action="plan_config_update",
-        payload={
-            "tiers": list(normalized_entries.keys()),
-            "note": config["note"],
-        },
-    )
 
     return deepcopy(config)
 

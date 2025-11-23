@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -53,6 +53,32 @@ def _coerce_uuid(value: Optional[Union[str, uuid.UUID]]) -> uuid.UUID:
         except ValueError:
             return uuid.uuid5(uuid.NAMESPACE_URL, text)
     return uuid.uuid4()
+
+
+def _merge_context_ids(meta: Optional[dict], context_ids: Optional[Dict[str, object]]) -> dict:
+    """Attach normalized context IDs into the meta payload."""
+
+    merged = dict(meta or {})
+    if not context_ids:
+        return merged
+
+    cleaned: Dict[str, str] = {}
+    for key, value in context_ids.items():
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            cleaned[key] = text
+
+    if not cleaned:
+        return merged
+
+    existing = merged.get("context_ids")
+    if isinstance(existing, dict):
+        merged["context_ids"] = {**existing, **cleaned}
+    else:
+        merged["context_ids"] = cleaned
+    return merged
 
 
 def _guard_session_owner(session, user_id: Optional[uuid.UUID], org_id: Optional[uuid.UUID]) -> None:
@@ -284,6 +310,7 @@ def create_message(
 
     idempotency_key = payload.idempotency_key or idempotency_key_header
     turn_id = _coerce_uuid(payload.turn_id)
+    meta_payload = _merge_context_ids(payload.meta, payload.context_ids)
     try:
         message = chat_service.create_chat_message(
             db,
@@ -294,7 +321,7 @@ def create_message(
             idempotency_key=idempotency_key,
             reply_to_message_id=payload.reply_to_message_id,
             retry_of_message_id=payload.retry_of_message_id,
-            meta=payload.meta,
+            meta=meta_payload,
             state=payload.state,
         )
         db.commit()

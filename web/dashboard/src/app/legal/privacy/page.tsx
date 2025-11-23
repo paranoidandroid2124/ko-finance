@@ -62,7 +62,7 @@ const sections: LegalSection[] = [
         type: "list",
         title: "기본 보유 기간",
         items: [
-          "감사 로그(audit_logs): 2년",
+          "감사 로그: 2년",
           "Chat 세션·메시지: 이용자가 직접 삭제하거나 마지막 활동 후 180일 경과 시 순차 삭제",
           "Chat Archive·Chat Audit: 365일",
           "Report Export Log: 180일",
@@ -87,7 +87,7 @@ const sections: LegalSection[] = [
       },
       {
         type: "paragraph",
-        text: "데이터는 기본적으로 GCP 서울 리전(asia-northeast3)에 저장되며, 백업·로그 분석 목적의 암호화 자료가 다른 리전에 일시 저장될 수 있습니다. Enterprise 고객은 전용 리전이나 데이터 국지화 옵션을 요청할 수 있습니다.",
+        text: "데이터는 기본적으로 GCP 서울 리전(asia-northeast3)에 저장되며, 백업·로그 분석 목적의 암호화 자료가 다른 리전에 일시 저장될 수 있습니다. Team(구 Enterprise) 고객은 전용 리전이나 데이터 국지화 옵션을 요청할 수 있습니다.",
       },
     ],
   },

@@ -8,7 +8,10 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from core.logging import get_logger
-from services import admin_ui_service
+try:
+    from services import admin_ui_service
+except Exception:
+    admin_ui_service = None
 from services.rag_shared import safe_int
 
 logger = get_logger(__name__)
@@ -173,7 +176,10 @@ def load_brand_theme() -> BrandTheme:
     """Load brand colours and tagline from admin UI settings."""
 
     try:
-        settings = admin_ui_service.load_ui_settings()
+        if admin_ui_service:
+            settings = admin_ui_service.load_ui_settings()
+        else:
+            settings = {}
     except Exception as exc:  # pragma: no cover - defensive fallback
         logger.debug("UI settings unavailable: %s", exc, exc_info=True)
         return BrandTheme()

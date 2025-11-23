@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileText, Loader2 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
+import { nanoid } from "nanoid";
 
 import { ChatPageShell } from "@/components/chat/ChatPageShell";
 import { GuestUpsellModal } from "@/components/chat/GuestUpsellModal";
@@ -13,6 +14,8 @@ import { useGuestPass } from "@/hooks/useGuestPass";
 import { extractEventStudyKeyStats } from "@/lib/reportExport";
 import { useReportStore } from "@/stores/useReportStore";
 import { useAuth } from "@/lib/authContext";
+import { useChatStore, type ChatMessage } from "@/store/chatStore";
+import { createMessage } from "@/lib/chatApi";
 
 export function ChatInterface() {
   return (
@@ -45,6 +48,7 @@ function ChatInterfaceContent() {
   const lastStatsRef = useRef<string | null>(null);
   const prefillHandledRef = useRef(false);
   const isAuthReady = !authLoading;
+  const miniImportHandledRef = useRef(false);
 
   useEffect(() => {
     const stats = extractEventStudyKeyStats(messages);
@@ -143,6 +147,85 @@ function ChatInterfaceContent() {
     prefillHandledRef.current = true;
     void handleGuestSend(trimmed);
   }, [guestPass.ready, handleGuestSend, isAuthReady, searchParams]);
+
+  useEffect(() => {
+    if (miniImportHandledRef.current) {
+      return;
+    }
+    if (!guestPass.ready || !isAuthReady) {
+      return;
+    }
+    const flag = searchParams?.get("importMini");
+    const stored = sessionStorage.getItem("miniChatImport");
+    if (!flag || !stored) {
+      return;
+    }
+    miniImportHandledRef.current = true;
+    sessionStorage.removeItem("miniChatImport");
+    const run = async () => {
+      try {
+        const payload = JSON.parse(stored) as {
+          prompt?: string;
+          context?: string | null;
+          turns?: Array<{ role: "user" | "assistant"; content: string }>;
+          contextIds?: Record<string, string | null | undefined>;
+        };
+        const activeSessionId = controller.history.selectedId;
+        if (!activeSessionId) {
+          return;
+        }
+        const addMessage = useChatStore.getState().addMessage;
+        const turns =
+          payload.turns?.length && payload.turns.length > 0
+            ? payload.turns
+            : payload.prompt
+              ? [{ role: "user", content: payload.prompt }]
+              : [];
+        if (!turns.length) return;
+
+        const contextText = payload.context?.trim() || "";
+        const contextIds = payload.contextIds ?? null;
+        let lastMessageId: string | null = null;
+        const turnId = nanoid();
+        for (const turn of turns) {
+          const contentWithContext = contextText
+            ? `${turn.content}\n\n[컨텍스트]\n${contextText}`
+            : turn.content;
+          let savedId = nanoid();
+          let savedTimestamp = new Date().toISOString();
+          try {
+            const saved = await createMessage({
+              session_id: activeSessionId,
+              role: turn.role,
+              content: contentWithContext,
+              turn_id: turnId,
+              reply_to_message_id: lastMessageId ?? undefined,
+              state: "ready",
+              meta: { imported: true, context: contextText || undefined, contextIds: contextIds ?? undefined },
+              context_ids: contextIds,
+            });
+            savedId = saved.id ?? savedId;
+            savedTimestamp = (saved as any)?.created_at ?? savedTimestamp;
+          } catch (error) {
+            console.warn("Mini chat import save failed (using local only):", error);
+          }
+
+          const message: ChatMessage = {
+            id: savedId,
+            role: turn.role,
+            content: contentWithContext,
+            meta: { status: "ready", imported: true, context: contextText || undefined, contextIds: contextIds ?? undefined },
+            timestamp: savedTimestamp,
+          };
+          addMessage(activeSessionId, message);
+          lastMessageId = savedId;
+        }
+      } catch (error) {
+        console.warn("Mini chat import parse failed:", error);
+      }
+    };
+    void run();
+  }, [controller.history.selectedId, guestPass.ready, isAuthReady, searchParams]);
 
   const hasUserMessage = useMemo(() => messages.some((msg) => msg.role === "user"), [messages]);
   const hasAssistantAnswer = useMemo(

@@ -1,7 +1,7 @@
-﻿"use client";
+"use client";
 
-import { Suspense, useEffect, useMemo, useRef } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 
 import { PaymentResultCard } from "@/components/payments/PaymentResultCard";
 import { AppShell } from "@/components/layout/AppShell";
@@ -15,10 +15,12 @@ const isPlanTier = (value: string | null): value is PlanTier =>
 
 const safeRedirectPath = (value?: string | null) => {
   if (!value || !value.startsWith("/")) {
-    return "/settings";
+    return "/dashboard";
   }
   return value;
 };
+
+const REDIRECT_DELAY_MS = 10_000;
 
 const TOSS_ERROR_MESSAGES: Record<string, string> = {
   USER_CANCEL: "사용자가 결제를 취소했어요. 다시 시도해 주세요.",
@@ -49,8 +51,13 @@ function PaymentStatusFallback() {
 
 function TossPaymentFailPageInner() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const pushToast = useToastStore((state) => state.show);
   const toastShownRef = useRef(false);
+  const redirectStartedRef = useRef(false);
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [remainingSeconds, setRemainingSeconds] = useState<number>(Math.ceil(REDIRECT_DELAY_MS / 1000));
 
   const orderId = searchParams?.get("orderId") ?? null;
   const code = searchParams?.get("code") ?? null;
@@ -80,7 +87,7 @@ function TossPaymentFailPageInner() {
     if (code) {
       return `오류 코드(${code})로 결제가 중단됐어요. 관리자에게 문의해 주세요.`;
     }
-    return "결제가 완료되지 않았어요. 다시 시도해 주세요.";
+    return "이번 결제가 완료되지 않았어요. 잠시 후 다시 시도해 주세요.";
   }, [code, failureMessage]);
 
   const supportAction = useMemo(() => {
@@ -115,6 +122,40 @@ function TossPaymentFailPageInner() {
     }
   }, [amountParam, code, orderId, pushToast, resolvedMessage, tierParam]);
 
+  useEffect(() => {
+    if (redirectStartedRef.current) return;
+    redirectStartedRef.current = true;
+    const startedAt = Date.now();
+    countdownTimerRef.current = setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      const remainingMs = Math.max(0, REDIRECT_DELAY_MS - elapsed);
+      setRemainingSeconds(Math.ceil(remainingMs / 1000));
+    }, 250);
+    redirectTimerRef.current = setTimeout(() => {
+      router.replace(redirectPath);
+    }, REDIRECT_DELAY_MS);
+    return () => {
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current);
+      }
+      if (redirectTimerRef.current) {
+        clearTimeout(redirectTimerRef.current);
+      }
+    };
+  }, [redirectPath, router]);
+
+  const handleImmediateRedirect = () => {
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    if (redirectTimerRef.current) {
+      clearTimeout(redirectTimerRef.current);
+      redirectTimerRef.current = null;
+    }
+    router.replace(redirectPath);
+  };
+
   const detailItems = useMemo(
     () => [
       { label: "주문 번호", value: orderId ?? "확인 불가" },
@@ -134,9 +175,13 @@ function TossPaymentFailPageInner() {
           description={resolvedMessage}
           details={detailItems}
           actionHref={redirectPath}
-          actionLabel="다시 결제 시도하기"
+          actionLabel="지금 대시보드로 이동"
+          actionOnClick={handleImmediateRedirect}
           secondaryAction={supportAction}
         />
+        <p className="text-center text-xs text-slate-400">
+          {remainingSeconds}초 후 자동으로 대시보드로 이동해요. 지금 이동하려면 아래 버튼을 눌러주세요.
+        </p>
       </div>
     </AppShell>
   );
