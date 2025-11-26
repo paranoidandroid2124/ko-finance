@@ -90,7 +90,7 @@ export default function InsightHubPage() {
     if (!prompt.trim()) return;
     const payload = {
       prompt: prompt.trim(),
-      context: context ?? query.trim() || null,
+      context: context ?? (query.trim() || null),
       turns,
       contextIds,
     };
@@ -101,7 +101,11 @@ export default function InsightHubPage() {
   const handleSelectFiling = (filing: FilingCardProps) => {
     const label = filing.company || "";
     setQuery(label);
-    setContextIds({ filing_id: filing.id, company_id: label || undefined });
+    const nextContext: Record<string, string> = { filing_id: filing.id };
+    if (label) {
+      nextContext.company_id = label;
+    }
+    setContextIds(nextContext);
     setShowSuggestions(false);
     router.push(`/dashboard?filingId=${filing.id}`);
   };

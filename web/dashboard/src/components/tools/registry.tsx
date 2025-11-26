@@ -1,18 +1,12 @@
 import { type ComponentType } from "react";
 
 import { DisclosurePanel } from "@/components/tools/panels/DisclosurePanel";
-import { QuantScreenerPanel } from "@/components/tools/panels/QuantScreenerPanel";
-import { SnapshotPanel } from "@/components/tools/panels/SnapshotPanel";
-import { MarketBriefPanel } from "@/components/tools/panels/MarketBriefPanel";
 import { NewsPanel } from "@/components/tools/panels/NewsPanel";
 import { PeerPanel } from "@/components/tools/panels/PeerPanel";
 import type { CommanderPaywallTier, CommanderRouteDecision, CommanderUiContainer } from "@/lib/chatApi";
 
 export type CommanderToolId =
   | "disclosure_viewer"
-  | "quant_screener"
-  | "snapshot"
-  | "market_briefing"
   | "news_insights"
   | "peer_compare";
 
@@ -48,34 +42,6 @@ export const COMMANDER_TOOL_REGISTRY: Record<CommanderToolId, CommanderToolDefin
     uiContainer: "side_panel",
     paywall: "starter",
     component: DisclosurePanel,
-  }),
-  quant_screener: buildDefinition({
-    id: "quant_screener",
-    callName: "quant.screener",
-    title: "퀀트 스크리너",
-    subtitle: "자연어 필터로 저평가·마진 개선 종목을 찾습니다.",
-    uiContainer: "overlay",
-    paywall: "pro",
-    teaser: "blur",
-    component: QuantScreenerPanel,
-  }),
-  snapshot: buildDefinition({
-    id: "snapshot",
-    callName: "snapshot.company",
-    title: "기업 Snapshot",
-    subtitle: "기본 시세와 주요 재무지표를 카드로 요약합니다.",
-    uiContainer: "inline_card",
-    paywall: "free",
-    component: SnapshotPanel,
-  }),
-  market_briefing: buildDefinition({
-    id: "market_briefing",
-    callName: "market.briefing",
-    title: "AI 마켓 브리핑",
-    subtitle: "장 마감 후 시황과 주요 뉴스를 정리합니다.",
-    uiContainer: "inline_card",
-    paywall: "free",
-    component: MarketBriefPanel,
   }),
   news_insights: buildDefinition({
     id: "news_insights",

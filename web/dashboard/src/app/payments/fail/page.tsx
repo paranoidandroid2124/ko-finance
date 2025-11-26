@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import type { Route } from "next";
 import { useSearchParams, useRouter } from "next/navigation";
 
 import { PaymentResultCard } from "@/components/payments/PaymentResultCard";
@@ -13,11 +14,11 @@ import { useToastStore } from "@/store/toastStore";
 const isPlanTier = (value: string | null): value is PlanTier =>
   value === "free" || value === "starter" || value === "pro" || value === "enterprise";
 
-const safeRedirectPath = (value?: string | null) => {
+const safeRedirectPath = (value?: string | null): Route => {
   if (!value || !value.startsWith("/")) {
     return "/dashboard";
   }
-  return value;
+  return value as Route;
 };
 
 const REDIRECT_DELAY_MS = 10_000;

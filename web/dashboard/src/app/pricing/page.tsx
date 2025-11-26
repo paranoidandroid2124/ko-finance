@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import { ArrowRight, Sparkles, ShieldCheck, Users } from "lucide-react";
 
 type PlanId = "starter" | "pro" | "team";
@@ -18,8 +19,8 @@ type Plan = {
   subtitle: string;
   badge?: string;
   ctaLabel: string;
-  ctaHref: string;
-  ctaSecondary?: { label: string; href: string };
+  ctaHref: Route;
+  ctaSecondary?: { label: string; href: string; external?: boolean };
   tone: "default" | "primary";
   features: PlanFeature[];
 };
@@ -65,7 +66,11 @@ const PLANS: Plan[] = [
     subtitle: "팀 협업과 보안이 필요한 조직용",
     ctaLabel: "팀으로 시작하기",
     ctaHref: "/auth/signup?plan=enterprise",
-    ctaSecondary: { label: "데모 보기", href: "mailto:sales@nuvien.ai?subject=Nuvien%20Team%20데모%20문의" },
+    ctaSecondary: {
+      label: "데모 보기",
+      href: "mailto:sales@nuvien.ai?subject=Nuvien%20Team%20데모%20문의",
+      external: true,
+    },
     tone: "default",
     features: [
       { label: "Pro의 모든 기능" },
@@ -82,7 +87,7 @@ const PLANS: Plan[] = [
 const ICONS: Record<PlanId, JSX.Element> = {
   starter: <Sparkles className="h-5 w-5 text-blue-300" />,
   pro: <ShieldCheck className="h-5 w-5 text-amber-300" />,
-  enterprise: <Users className="h-5 w-5 text-emerald-300" />,
+  team: <Users className="h-5 w-5 text-emerald-300" />,
 };
 
 export default function PricingPage() {
@@ -137,12 +142,21 @@ export default function PricingPage() {
                   {plan.ctaLabel} <ArrowRight className="h-4 w-4" />
                 </Link>
                 {plan.ctaSecondary ? (
-                  <Link
-                    href={plan.ctaSecondary.href}
-                    className="flex items-center justify-center gap-2 rounded-xl border border-white/15 px-4 py-3 text-xs font-semibold text-slate-200 transition hover:border-white/40 hover:text-white"
-                  >
-                    {plan.ctaSecondary.label}
-                  </Link>
+                  plan.ctaSecondary.external ? (
+                    <a
+                      href={plan.ctaSecondary.href}
+                      className="flex items-center justify-center gap-2 rounded-xl border border-white/15 px-4 py-3 text-xs font-semibold text-slate-200 transition hover:border-white/40 hover:text-white"
+                    >
+                      {plan.ctaSecondary.label}
+                    </a>
+                  ) : (
+                    <Link
+                      href={plan.ctaSecondary.href as Route}
+                      className="flex items-center justify-center gap-2 rounded-xl border border-white/15 px-4 py-3 text-xs font-semibold text-slate-200 transition hover:border-white/40 hover:text-white"
+                    >
+                      {plan.ctaSecondary.label}
+                    </Link>
+                  )
                 ) : null}
               </div>
 
@@ -163,7 +177,7 @@ export default function PricingPage() {
               <div className="mt-auto pt-6 text-[11px] text-slate-400">
                 {plan.id === "pro"
                   ? "14일 무료 체험 후 매월 자동 결제됩니다."
-                  : plan.id === "enterprise"
+                  : plan.id === "team"
                   ? "보안/통합 요건에 맞춰 커스텀 견적이 제공됩니다."
                   : "언제든 Pro로 업그레이드할 수 있습니다."}
               </div>

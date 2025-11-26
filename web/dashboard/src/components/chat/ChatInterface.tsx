@@ -14,7 +14,7 @@ import { useGuestPass } from "@/hooks/useGuestPass";
 import { extractEventStudyKeyStats } from "@/lib/reportExport";
 import { useReportStore } from "@/stores/useReportStore";
 import { useAuth } from "@/lib/authContext";
-import { useChatStore, type ChatMessage } from "@/store/chatStore";
+import { useChatStore, type ChatMessage, type ChatRole } from "@/store/chatStore";
 import { createMessage } from "@/lib/chatApi";
 
 export function ChatInterface() {
@@ -175,7 +175,7 @@ function ChatInterfaceContent() {
           return;
         }
         const addMessage = useChatStore.getState().addMessage;
-        const turns =
+        const turns: Array<{ role: ChatRole; content: string }> =
           payload.turns?.length && payload.turns.length > 0
             ? payload.turns
             : payload.prompt
@@ -184,7 +184,7 @@ function ChatInterfaceContent() {
         if (!turns.length) return;
 
         const contextText = payload.context?.trim() || "";
-        const contextIds = payload.contextIds ?? null;
+        const contextIds = payload.contextIds ?? undefined;
         let lastMessageId: string | null = null;
         const turnId = nanoid();
         for (const turn of turns) {
