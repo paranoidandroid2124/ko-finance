@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 import clsx from "clsx";
 import { useEffect, useState } from "react";
 
+import { AppShell } from "@/components/layout/AppShell";
 import { ChatInterface } from "@/components/chat/ChatInterface";
 import { DailyBriefingCard } from "@/components/briefing/DailyBriefingCard";
 import { ReportEditor } from "@/components/report/ReportEditor";
@@ -65,22 +66,26 @@ export default function DashboardPage() {
   }, [proactiveChecked]);
 
   return (
-    <div className="min-h-screen w-full bg-canvas">
-      <div className="mx-auto grid max-w-6xl grid-cols-12 gap-4 px-4 py-4 lg:gap-6 lg:px-6 lg:py-6">
-        <div className="col-span-12 space-y-4 lg:col-span-4">
-          <DailyBriefingCard />
+    <AppShell>
+      <div className="min-h-screen w-full bg-canvas">
+        {/* Fixed DailyBriefingCard in top-left */}
+        <div className="pointer-events-none fixed left-6 top-6 z-20 hidden xl:block">
+          <DailyBriefingCard className="pointer-events-auto" />
         </div>
-        <div className={clsx("col-span-12 transition-motion-medium", isOpen ? "lg:col-span-8" : "lg:col-span-12")}>
-          <ChatInterface />
-        </div>
-        {isOpen ? (
-          <div className="col-span-12 lg:col-span-4">
-            <Card variant="raised" padding="lg" className="h-full">
-              <ReportEditor />
-            </Card>
+
+        <div className="mx-auto grid max-w-6xl grid-cols-12 gap-4 px-4 py-4 lg:gap-6 lg:px-6 lg:py-6">
+          <div className={clsx("col-span-12 transition-motion-medium", isOpen ? "lg:col-span-8" : "lg:col-span-12")}>
+            <ChatInterface />
           </div>
-        ) : null}
+          {isOpen ? (
+            <div className="col-span-12 lg:col-span-4">
+              <Card variant="raised" padding="lg" className="h-full">
+                <ReportEditor />
+              </Card>
+            </div>
+          ) : null}
+        </div>
       </div>
-    </div>
+    </AppShell>
   );
 }

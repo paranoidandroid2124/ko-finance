@@ -3,17 +3,19 @@ import { useQuery } from "@tanstack/react-query";
 import { resolveApiBase } from "@/lib/apiBase";
 import { formatDateTime } from "@/lib/date";
 
-export type FilingSentimentFilter = "all" | "positive" | "negative";
+export type FilingSentimentFilter = "all" | "positive" | "negative" | "neutral";
 
 type FilingListParams = {
   days?: number;
   limit?: number;
+  skip?: number;
   company?: string;
   ticker?: string;
   corpCode?: string;
   startDate?: string;
   endDate?: string;
   sentiment?: FilingSentimentFilter;
+  highlight?: boolean;
 };
 
 export type FilingSentiment = "positive" | "neutral" | "negative";
@@ -32,6 +34,11 @@ export type FilingListItem = {
   filedAt: string;
   sentiment: FilingSentiment;
   sentimentReason?: string;
+  sentimentScore?: number | null;
+  sentimentSource?: string | null;
+  insightScore?: number | null;
+  highlightReason?: string | null;
+  highlightFlags?: Record<string, unknown> | null;
   status: "PENDING" | "COMPLETED" | "FAILED" | "PARTIAL";
 };
 
@@ -54,6 +61,11 @@ type ApiFilingBrief = {
   analysis_status: string;
   sentiment?: FilingSentiment;
   sentiment_reason?: string | null;
+  sentiment_score?: number | null;
+  sentiment_source?: string | null;
+  insight_score?: number | null;
+  highlight_reason?: string | null;
+  highlight_flags?: Record<string, unknown> | null;
 };
 
 type ApiSummary = {
@@ -167,6 +179,11 @@ const toListItem = (item: ApiFilingBrief): FilingListItem => {
     filedAt: formatDateTime(item.filed_at, { fallback: "날짜 미상" }),
     sentiment: item.sentiment ?? deriveSentiment(item.analysis_status, item.category),
     sentimentReason: item.sentiment_reason ?? undefined,
+    sentimentScore: item.sentiment_score ?? undefined,
+    sentimentSource: item.sentiment_source ?? undefined,
+    insightScore: item.insight_score ?? undefined,
+    highlightReason: item.highlight_reason ?? undefined,
+    highlightFlags: item.highlight_flags ?? undefined,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     status: (item.status as any) || "COMPLETED",
   };
@@ -233,6 +250,9 @@ const buildQueryString = (params: FilingListParams): string => {
   if (params.limit !== undefined) {
     search.set("limit", params.limit.toString());
   }
+  if (params.skip !== undefined) {
+    search.set("skip", params.skip.toString());
+  }
   if (params.company) {
     search.set("company", params.company);
   }
@@ -256,8 +276,10 @@ const buildQueryString = (params: FilingListParams): string => {
 
 const fetchFilings = async (params: FilingListParams): Promise<FilingListItem[]> => {
   const baseUrl = resolveApiBase();
-  const query = buildQueryString(params);
-  const response = await fetch(`${baseUrl}/api/v1/filings/?${query}`);
+  const { highlight, skip, ...rest } = params;
+  const query = highlight ? buildQueryString(rest) : buildQueryString({ ...rest, skip });
+  const path = highlight ? "/api/v1/filings/highlights" : "/api/v1/filings/";
+  const response = await fetch(`${baseUrl}${path}?${query}`);
   if (!response.ok) {
     throw new Error("공시 목록을 불러오지 못했습니다.");
   }

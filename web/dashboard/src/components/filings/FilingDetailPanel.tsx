@@ -77,6 +77,21 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
             {filing.sentimentReason || sentiment.description}
           </p>
         </div>
+        {(filing.highlightReason || filing.insightScore !== undefined) && (
+          <div className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-primary">
+            <div className="flex items-center justify-between">
+              <p className="font-semibold">주목 이유</p>
+              {filing.insightScore !== undefined && (
+                <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-semibold">
+                  주목도 {filing.insightScore?.toFixed(2)}
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-primary/80">
+              {filing.highlightReason || "주목 공시로 선별되었습니다."}
+            </p>
+          </div>
+        )}
       </header>
 
       <section className="mt-5 flex-1 overflow-y-auto pr-1 text-sm">

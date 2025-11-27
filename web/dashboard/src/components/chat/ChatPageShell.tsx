@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 
-import { AppShell } from "@/components/layout/AppShell";
 import { ChatHistoryList } from "@/components/chat/ChatHistoryList";
 import { ChatStreamPane } from "@/components/chat/ChatStreamPane";
 import { PlanTrialBanner } from "@/components/plan/PlanTrialBanner";
@@ -30,22 +29,20 @@ export function ChatPageShell({ controller, reportAction, guestBadge }: ChatPage
 
   if (plan.initialized && !plan.ragEnabled) {
     return (
-      <AppShell>
-        <div className="flex min-h-[60vh] items-center justify-center px-6">
-          <PlanTrialBanner
-            currentTier={plan.tier}
-            title="AI 애널리스트는 Pro 플랜에서 열립니다."
-            description="근거 기반 Q&A, 증거 Diff, LightMem 문맥 유지는 Pro 업그레이드 후 이용할 수 있어요."
-            errorMessage={plan.error}
-            onUpgrade={openPlanSettings}
-          />
-        </div>
-      </AppShell>
+      <div className="flex min-h-[60vh] items-center justify-center px-6">
+        <PlanTrialBanner
+          currentTier={plan.tier}
+          title="AI 애널리스트는 Pro 플랜에서 열립니다."
+          description="근거 기반 Q&A, 증거 Diff, LightMem 문맥 유지는 Pro 업그레이드 후 이용할 수 있어요."
+          errorMessage={plan.error}
+          onUpgrade={openPlanSettings}
+        />
+      </div>
     );
   }
 
   return (
-    <AppShell>
+    <>
       {quotaNotice.notice ? (
         <QuotaNotice
           message={quotaNotice.notice.message}
@@ -93,7 +90,7 @@ export function ChatPageShell({ controller, reportAction, guestBadge }: ChatPage
           </div>
         </div>
       </div>
-    </AppShell>
+    </>
   );
 }
 

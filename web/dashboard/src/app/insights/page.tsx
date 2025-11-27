@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Sparkles, ArrowRight, Activity, MessageCircle, Search, Plus } from "lucide-react";
+import { Sparkles, ArrowRight, Activity, Search, Plus } from "lucide-react";
 import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { AppShell } from "@/components/layout/AppShell";
@@ -12,55 +12,11 @@ import { ProactiveBriefingsWidget, type FeedItem } from "@/components/feed/Proac
 import { useFilings, useFilingDetail } from "@/hooks/useFilings";
 import { FilingsTable } from "@/components/filings/FilingsTable";
 import { FilingDetailPanel } from "@/components/filings/FilingDetailPanel";
-import { formatDateTime } from "@/lib/date";
 import { useCompanySearch } from "@/hooks/useCompanySearch";
 import { resolveApiBase } from "@/lib/apiBase";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
 
-type FilingCardProps = {
-  id: string;
-  company: string;
-  title: string;
-  type: string;
-  filedAt: string;
-  sentiment: "positive" | "neutral" | "negative";
-};
-
-function sentimentTone(sentiment: FilingCardProps["sentiment"]) {
-  if (sentiment === "positive") return "text-emerald-300 bg-emerald-500/10 border-emerald-400/20";
-  if (sentiment === "negative") return "text-rose-300 bg-rose-500/10 border-rose-400/20";
-  return "text-slate-300 bg-white/5 border-white/10";
-}
-
-function FilingCard({ filing, onChat }: { filing: FilingCardProps; onChat: () => void }) {
-  const formattedDate = useMemo(() => formatDateTime(filing.filedAt, { fallback: "-" }), [filing.filedAt]);
-  return (
-    <Card variant="glass" padding="md" className="rounded-2xl transition hover:border-white/20 hover:-translate-y-0.5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="space-y-1">
-          <p className="text-sm font-semibold text-white">{filing.company}</p>
-          <p className="text-xs text-slate-400">{filing.type}</p>
-        </div>
-        <span className="rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-300 border-white/10 bg-white/5">
-          {formattedDate}
-        </span>
-      </div>
-      <p className="mt-2 text-sm text-slate-200 line-clamp-2">{filing.title}</p>
-      <div className="mt-3 flex items-center justify-between gap-3">
-        <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${sentimentTone(filing.sentiment)}`}>
-          {filing.sentiment === "positive" ? "긍정" : filing.sentiment === "negative" ? "부정" : "중립"}
-        </span>
-        <button
-          type="button"
-          onClick={onChat}
-          className="inline-flex items-center gap-1.5 rounded-full border border-blue-400/40 px-3 py-1.5 text-xs font-semibold text-blue-100 transition hover:border-blue-300 hover:text-white"
-        >
-          이 내용으로 질문하기 <MessageCircle className="h-4 w-4" />
-        </button>
-      </div>
-    </Card>
-  );
-}
+// Note: Filing card UI removed; relying on table + detail panel for now.
 
 function InsightHubContent() {
   const router = useRouter();
@@ -70,7 +26,6 @@ function InsightHubContent() {
   const [quickQuestion, setQuickQuestion] = useState("");
   const [miniMessages, setMiniMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [contextIds, setContextIds] = useState<Record<string, string>>({});
-  const [miniLoading, setMiniLoading] = useState(false);
   const [selectedFilingId, setSelectedFilingId] = useState<string | undefined>(undefined);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -88,26 +43,15 @@ function InsightHubContent() {
   }, [searchParams]);
 
   const { data, isLoading } = useFilings({
-    limit: 50,
+    limit: 30,
     ticker: companyQuery || undefined,
     startDate: startDate || undefined,
     endDate: endDate || undefined,
-    days: (!startDate && !endDate) ? 3 : undefined
+    days: (!startDate && !endDate) ? 3 : undefined,
+    highlight: true
   });
   const { data: selectedFilingDetail } = useFilingDetail(selectedFilingId);
   const { data: searchResults } = useCompanySearch(query, 6);
-
-  const filings = useMemo<FilingCardProps[]>(() => {
-    const items = data ?? [];
-    return items.map((item) => ({
-      id: item.id,
-      company: item.company,
-      title: item.title,
-      type: item.type,
-      filedAt: item.filedAt,
-      sentiment: item.sentiment,
-    }));
-  }, [data]);
 
   const handleSearch = () => {
     const trimmed = query.trim();
@@ -126,18 +70,6 @@ function InsightHubContent() {
     };
     sessionStorage.setItem("miniChatImport", JSON.stringify(payload));
     router.push("/dashboard?importMini=1");
-  };
-
-  const handleSelectFiling = (filing: FilingCardProps) => {
-    const label = filing.company || "";
-    setQuery(label);
-    const nextContext: Record<string, string> = { filing_id: filing.id };
-    if (label) {
-      nextContext.company_id = label;
-    }
-    setContextIds(nextContext);
-    setShowSuggestions(false);
-    router.push(`/dashboard?filingId=${filing.id}`);
   };
 
   const handleSelectEvent = (id: string, item?: FeedItem) => {
@@ -339,41 +271,57 @@ function InsightHubContent() {
                 </div>
               ) : null}
               <p className="text-xs text-slate-500">검색하면 해당 기업 컨텍스트로 채팅이 열립니다.</p>
-              <div className="flex flex-col gap-2 rounded-2xl border border-dashed border-white/10 bg-white/5 p-3 text-left text-slate-200 shadow-lg">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-semibold text-white">짧은 질문 바로 보내기</p>
-                    <p className="text-xs text-slate-400">현재 입력한 기업명을 컨텍스트로 메인 채팅에서 답변을 받습니다.</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleMiniSend}
-                    className="inline-flex items-center gap-2 rounded-full bg-blue-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-400"
-                  >
-                    메인 채팅으로 보내기 <Plus className="h-4 w-4" />
-                  </button>
-                </div>
-                <textarea
-                  value={quickQuestion}
-                  onChange={(e) => setQuickQuestion(e.target.value)}
-                  rows={2}
-                  placeholder="예: 이번 공시에서 희석이 얼마나 될까?"
-                  className="w-full rounded-xl bg-black/30 px-3 py-2 text-sm outline-none placeholder:text-slate-500"
-                />
-                <div className="max-h-60 space-y-2 overflow-y-auto">
-                  {miniMessages.map((msg, idx) => (
-                    <div
-                      key={`${msg.role}-${idx}`}
-                      className={`rounded-2xl border px-3 py-2 text-sm ${msg.role === "user"
-                        ? "border-blue-400/30 bg-blue-500/10 text-blue-50"
-                        : "border-white/10 bg-white/5 text-slate-200"
-                        }`}
-                    >
-                      {msg.content}
+              {companyQuery ? (
+                <div className="flex flex-col gap-2 rounded-2xl border border-dashed border-white/10 bg-white/5 p-3 text-left text-slate-200 shadow-lg">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-white">짧은 질문 바로 보내기</p>
+                      <p className="text-xs text-slate-300">
+                        컨텍스트: <span className="font-semibold text-white">{companyQuery}</span> 기준으로 메인 채팅에 전달됩니다.
+                      </p>
                     </div>
-                  ))}
+                    <button
+                      type="button"
+                      onClick={handleMiniSend}
+                      className="inline-flex items-center gap-2 rounded-full bg-blue-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-400"
+                    >
+                      메인 채팅으로 보내기 <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <textarea
+                    value={quickQuestion}
+                    onChange={(e) => setQuickQuestion(e.target.value)}
+                    rows={3}
+                    placeholder={`예: ${companyQuery} 이번 공시에서 희석이 얼마나 될까?`}
+                    className="w-full rounded-xl bg-black/30 px-3 py-2 text-sm outline-none placeholder:text-slate-500"
+                  />
+                  {miniMessages.length > 0 ? (
+                    <div className="max-h-60 space-y-2 overflow-y-auto">
+                      {miniMessages.map((msg, idx) => (
+                        <div
+                          key={`${msg.role}-${idx}`}
+                          className={`rounded-2xl border px-3 py-2 text-sm ${
+                            msg.role === "user"
+                              ? "border-blue-400/30 bg-blue-500/10 text-blue-50"
+                              : "border-white/10 bg-white/5 text-slate-200"
+                          }`}
+                        >
+                          {msg.content}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400">짧은 질문을 입력하면 메인 채팅으로 바로 전송됩니다.</p>
+                  )}
                 </div>
-              </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
+                  <p className="font-semibold text-white">짧은 질문 바로 보내기</p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    기업을 먼저 선택하면, 해당 컨텍스트로 메인 채팅에 짧은 질문을 보낼 수 있습니다.
+                  </p>
+                </div>
+              )}
             </div>
           </header>
 
@@ -391,7 +339,7 @@ function InsightHubContent() {
                 </div>
               </Card>
               <Card variant="glass" padding="md" className="rounded-3xl shadow-xl">
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2">
                     <Activity className="h-5 w-5 text-emerald-300" />
                     <div>
@@ -399,12 +347,12 @@ function InsightHubContent() {
                       <h2 className="text-lg font-semibold text-white">최근 주목할 만한 공시</h2>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
                     <input
                       type="text"
                       value={companyQuery}
                       onChange={(e) => setCompanyQuery(e.target.value)}
-                      className="rounded-lg border border-white/10 bg-black/30 px-3 py-1 text-xs text-white outline-none focus:border-blue-400 w-32"
+                      className="w-full min-w-[120px] flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-1 text-xs text-white outline-none focus:border-blue-400 sm:w-32"
                       placeholder="기업명/티커"
                     />
                     <input
@@ -430,6 +378,12 @@ function InsightHubContent() {
                         초기화
                       </button>
                     )}
+                    <Link
+                      href="/insights/filings"
+                      className="inline-flex items-center justify-center rounded-full border border-white/20 bg-white/5 px-3 py-2 text-[11px] font-semibold text-slate-100 transition hover:border-blue-400 hover:text-white"
+                    >
+                      전체 공시 보기
+                    </Link>
                   </div>
                 </div>
                 <div className="mt-4">
@@ -451,7 +405,10 @@ function InsightHubContent() {
                       )}
                     </>
                   ) : (
-                    <p className="text-sm text-slate-300">표시할 공시가 없습니다.</p>
+                    <div className="rounded-2xl border border-dashed border-white/10 bg-white/5 p-6 text-sm text-slate-300">
+                      <p className="font-semibold text-white">표시할 공시가 없습니다.</p>
+                      <p className="mt-1 text-xs text-slate-400">필터를 리셋하거나 기간을 넓혀 다시 조회해 보세요.</p>
+                    </div>
                   )}
                 </div>
               </Card>

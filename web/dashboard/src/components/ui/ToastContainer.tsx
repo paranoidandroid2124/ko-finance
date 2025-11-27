@@ -70,7 +70,7 @@ export function ToastContainer() {
   }
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-4 z-[1000] flex justify-center px-4 sm:justify-end sm:px-6">
+    <div className="pointer-events-none fixed left-6 top-[420px] z-[1000] flex justify-start px-4 sm:px-0">
       <div className="flex w-full max-w-sm flex-col gap-3">
         {toasts.map((toast) => (
           <ToastItem key={toast.id} toast={toast} onDismiss={dismiss} />

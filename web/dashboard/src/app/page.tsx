@@ -8,7 +8,6 @@ import type { LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { HeroDemo } from "@/components/landing/HeroDemo";
-import { NuvienHero } from "@/components/landing/NuvienHero";
 import { TermDefinition } from "@/components/ui/TermDefinition";
 import { useAuth } from "@/lib/authContext";
 
@@ -173,7 +172,6 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen text-white">
-      <NuvienHero />
       <main className="mx-auto flex w-full max-w-6xl flex-col gap-16 px-6 py-16">
         <section className="rounded-[32px] border border-border-subtle bg-surface-muted/80 p-4 shadow-card">
           <HeroDemo />

@@ -212,3 +212,6 @@ def submit_feedback(
         comment=payload.comment,
     )
     return {"status": "ok"}
+
+
+__all__ = ["router", "report_service"]

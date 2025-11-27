@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from core.logging import get_logger
 from database import get_db
@@ -72,6 +73,32 @@ CATEGORY_TRANSLATIONS = {
     "기타": "기타",
 }
 
+CATEGORY_WEIGHTS = {
+    "M&A/합병·분할": 1.0,
+    "전환사채·신주인수권부사채": 0.9,
+    "증자": 0.85,
+    "자사주 매입/소각": 0.85,
+    "배당/주주환원": 0.8,
+    "대규모 공급·수주 계약": 0.75,
+    "정기·수시 보고서": 0.6,
+    "지배구조·임원 변경": 0.6,
+    "감사 의견": 0.55,
+    "정정 공시": 0.5,
+    "기타": 0.2,
+}
+HIGHLIGHT_CATEGORY_SET = {
+    "M&A/합병·분할",
+    "전환사채·신주인수권부사채",
+    "증자",
+    "자사주 매입/소각",
+    "배당/주주환원",
+    "대규모 공급·수주 계약",
+    "정기·수시 보고서",
+    "지배구조·임원 변경",
+    "감사 의견",
+    "정정 공시",
+}
+
 POSITIVE_CATEGORIES = {
     "자사주 매입/소각",
     "대규모 공급·수주 계약",
@@ -126,6 +153,8 @@ NEGATIVE_KEYWORDS = {
     "분쟁",
 }
 
+_AMOUNT_PATTERN = r"([0-9]+(?:\.[0-9]+)?)\s*(조|억)"
+
 
 def _normalize_category_label(value: Optional[str]) -> str:
     if not value:
@@ -150,37 +179,99 @@ def _collect_summary_text(summary: Optional[Summary]) -> str:
     return " ".join(part.strip() for part in parts if isinstance(part, str) and part.strip())
 
 
-def _derive_sentiment(filing: Filing, summary: Optional[Summary]) -> Tuple[str, str]:
+def _derive_sentiment(filing: Filing, summary: Optional[Summary]) -> Tuple[str, str, float, str]:
     if filing.analysis_status.upper() != "ANALYZED":
-        return ("neutral", "분석이 아직 진행 중입니다.")
+        return ("neutral", "분석이 아직 진행 중입니다.", 0.0, "pending")
 
+    # 1) LLM summary sentiment 우선
     if summary and summary.sentiment_label:
         label = summary.sentiment_label.strip().lower()
         if label in SUMMARY_SENTIMENT_LABELS:
             reason = summary.sentiment_reason or "요약 모델이 공시 내용을 검토한 결과예요."
-            return (label, reason)
+            score = 1.0 if label == "positive" else (-1.0 if label == "negative" else 0.0)
+            return (label, reason, score, "summary")
 
+    # 2) 카테고리 기반
     category_label = _normalize_category_label(filing.category)
     if category_label in POSITIVE_CATEGORIES:
-        return ("positive", f"{category_label} 관련 공시로 분류되었습니다.")
+        return ("positive", f"{category_label} 관련 공시로 분류되었습니다.", 0.5, "category")
     if category_label in NEGATIVE_CATEGORIES:
-        return ("negative", f"{category_label} 관련 공시로 분류되었습니다. 주의가 필요합니다.")
+        return ("negative", f"{category_label} 관련 공시로 분류되었습니다. 주의가 필요합니다.", -0.5, "category")
 
+    # 3) 키워드 기반
     text = _collect_summary_text(summary)
     if text:
-        score = 0
+        score_val = 0
         matched_positive = [kw for kw in POSITIVE_KEYWORDS if kw in text]
         matched_negative = [kw for kw in NEGATIVE_KEYWORDS if kw in text]
-        score += len(matched_positive)
-        score -= len(matched_negative)
-        if score > 0:
+        score_val += len(matched_positive)
+        score_val -= len(matched_negative)
+        if score_val > 0:
             reason = ", ".join(matched_positive) if matched_positive else "긍정 키워드 발견"
-            return ("positive", f"요약 본문에서 긍정 키워드가 확인되었습니다 ({reason}).")
-        if score < 0:
+            return ("positive", f"요약 본문에서 긍정 키워드가 확인되었습니다 ({reason}).", 0.3, "keywords")
+        if score_val < 0:
             reason = ", ".join(matched_negative) if matched_negative else "부정 키워드 발견"
-            return ("negative", f"요약 본문에서 부정 키워드가 확인되었습니다 ({reason}).")
+            return ("negative", f"요약 본문에서 부정 키워드가 확인되었습니다 ({reason}).", -0.3, "keywords")
 
-    return ("neutral", "특별한 경고나 기회 요인이 감지되지 않았습니다.")
+    return ("neutral", "특별한 경고나 기회 요인이 감지되지 않았습니다.", 0.0, "neutral-default")
+
+
+def _highlight_reason(
+    category_label: Optional[str],
+    sentiment: str,
+    *,
+    weight: float,
+    recency_days: Optional[float] = None,
+    sentiment_reason: Optional[str] = None,
+    impact_score: Optional[float] = None,
+    novelty_score: Optional[float] = None,
+) -> str:
+    parts: list[str] = []
+    if category_label:
+        parts.append(category_label)
+    if sentiment and sentiment != "neutral":
+        parts.append("긍정" if sentiment == "positive" else "부정")
+    if recency_days is not None:
+        parts.append(f"{recency_days:.1f}일 이내")
+    parts.append(f"가중치 {weight:.2f}")
+    if impact_score and impact_score > 0:
+        parts.append(f"규모 가점 {impact_score:.2f}")
+    if novelty_score and novelty_score > 0:
+        parts.append(f"희소성 가점 {novelty_score:.2f}")
+    if sentiment_reason:
+        parts.append(sentiment_reason)
+    return " · ".join(parts)
+
+
+def _extract_amount_score(text: str) -> Tuple[float, Optional[float]]:
+    """Rudimentary impact score: find largest amount in summary text (조/억 단위)."""
+    if not text:
+        return 0.0, None
+    import re
+
+    matches = re.findall(_AMOUNT_PATTERN, text)
+    if not matches:
+        return 0.0, None
+    max_krw = 0.0
+    for value, unit in matches:
+        try:
+            num = float(value)
+        except ValueError:
+            continue
+        multiplier = 1_000_000_000_000 if unit == "조" else 100_000_000
+        max_krw = max(max_krw, num * multiplier)
+    if max_krw <= 0:
+        return 0.0, None
+    # Scale: <1e10 -> 0.1, 1e10~1e11 ->0.3, 1e11~1e12 ->0.6, >1e12 ->1.0
+    if max_krw >= 1e12:
+        score = 1.0
+    elif max_krw >= 1e11:
+        score = 0.6
+    elif max_krw >= 1e10:
+        score = 0.3
+    else:
+        score = 0.1
+    return score, max_krw
 
 
 def _normalize_xml_entries(filing: Filing) -> List[Dict[str, Any]]:
@@ -313,17 +404,169 @@ def list_filings(
     responses: list[FilingBriefResponse] = []
     for filing in filings:
         summary = summary_map.get(filing.id)
-        sentiment, reason = _derive_sentiment(filing, summary)
+        sentiment, reason, sentiment_score, sentiment_source = _derive_sentiment(filing, summary)
         base_model = FilingBriefResponse.model_validate(filing, from_attributes=True)
         responses.append(
             base_model.model_copy(
                 update={
                     "sentiment": sentiment,
                     "sentiment_reason": reason,
+                    "sentiment_score": sentiment_score,
+                    "sentiment_source": sentiment_source,
                 }
             )
         )
     return responses
+
+
+@router.get("/highlights", response_model=list[FilingBriefResponse])
+def list_highlight_filings(
+    days: int = Query(7, ge=1, le=30, description="Look-back window in days."),
+    limit: int = Query(30, ge=1, le=100, description="Maximum number of highlighted filings."),
+    ticker: str | None = Query(None, description="Filter by ticker."),
+    sentiment: Literal["positive", "negative", "neutral"] | None = Query(
+        None, description="Optional sentiment filter."
+    ),
+    start_date: date | None = Query(None, description="Explicit start date (YYYY-MM-DD)."),
+    end_date: date | None = Query(None, description="Explicit end date (YYYY-MM-DD)."),
+    db: Session = Depends(get_db),
+) -> list[FilingBriefResponse]:
+    """
+    Return a curated set of recent/high-impact filings.
+
+    This is a lightweight filter over the filings table focusing on important categories
+    and recent events, sorted by a simple category/sentiment weight then recency.
+    """
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date must be earlier than or equal to end_date.")
+
+    query = db.query(Filing)
+    if ticker:
+        query = query.filter(Filing.ticker == ticker)
+
+    window_end_date = end_date or datetime.utcnow().date()
+    window_start_date = start_date or (window_end_date - timedelta(days=days - 1))
+    window_start = datetime.combine(window_start_date, time.min)
+    window_end = datetime.combine(window_end_date, time.max)
+
+    query = query.filter(Filing.filed_at.isnot(None))
+    query = query.filter(Filing.filed_at >= window_start, Filing.filed_at <= window_end)
+
+    candidates: list[Filing] = (
+        query.order_by(Filing.filed_at.desc(), Filing.created_at.desc())
+        .limit(max(limit * 4, limit))
+        .all()
+    )
+
+    if not candidates:
+        return []
+
+    filing_ids = [filing.id for filing in candidates]
+    summaries = db.query(Summary).filter(Summary.filing_id.in_(filing_ids)).all()
+    summary_map = {item.filing_id: item for item in summaries}
+
+    # Novelty: count same ticker/category in last 90 days for quick rarity boost
+    novelty_window_start = datetime.combine(window_end_date - timedelta(days=89), time.min)
+    novelty_counts: Dict[Tuple[str, str], int] = {}
+    rows = (
+        db.query(Filing.ticker, Filing.category, func.count(Filing.id))
+        .filter(Filing.filed_at.isnot(None))
+        .filter(Filing.filed_at >= novelty_window_start, Filing.filed_at <= window_end)
+        .group_by(Filing.ticker, Filing.category)
+        .all()
+    )
+    for ticker_val, category_val, count_val in rows:
+        key = (ticker_val or "", _normalize_category_label(category_val))
+        novelty_counts[key] = int(count_val or 0)
+
+    ranked: list[tuple[float, FilingBriefResponse, datetime]] = []
+    seen_tickers: set[str] = set()
+
+    for filing in candidates:
+        category_label = _normalize_category_label(filing.category)
+        if category_label and category_label not in HIGHLIGHT_CATEGORY_SET:
+            continue
+
+        summary = summary_map.get(filing.id)
+        derived_sentiment, reason, sentiment_score, sentiment_source = _derive_sentiment(filing, summary)
+        if sentiment and derived_sentiment != sentiment:
+            continue
+
+        base_model = FilingBriefResponse.model_validate(filing, from_attributes=True)
+        payload = base_model.model_copy(
+            update={
+                "sentiment": derived_sentiment,
+                "sentiment_reason": reason,
+                "insight_score": None,
+                "highlight_reason": None,
+                "highlight_flags": None,
+                "sentiment_score": sentiment_score,
+                "sentiment_source": sentiment_source,
+            }
+        )
+
+        weight = CATEGORY_WEIGHTS.get(category_label or "", 0.2)
+        if derived_sentiment == "negative":
+            weight += 0.05
+        elif derived_sentiment == "positive":
+            weight += 0.02
+
+        # Impact score from summary text amount
+        summary_text = _collect_summary_text(summary)
+        impact_score, impact_amount = _extract_amount_score(summary_text)
+        weight += impact_score * 0.1
+
+        # Novelty score: rarer category/ticker in recent 90 days gets boost
+        novelty_key = (filing.ticker or "", category_label or "")
+        novelty_count = novelty_counts.get(novelty_key, 0)
+        novelty_score = 0.0
+        if novelty_count == 0:
+            novelty_score = 0.1
+        elif novelty_count <= 3:
+            novelty_score = 0.05
+        weight += novelty_score
+
+        filed_at = filing.filed_at or filing.created_at or datetime.min
+        days_delta: Optional[float] = None
+        if filed_at and filed_at != datetime.min:
+            days_delta = (datetime.utcnow() - filed_at).total_seconds() / 86400.0
+            # 최근일수록 약간 가중치
+            if days_delta <= 7:
+                weight += max(0.0, (7 - days_delta) / 7) * 0.08
+
+        ticker_key = filing.ticker or filing.corp_code or filing.company
+        if ticker_key and ticker_key in seen_tickers:
+            continue
+        if ticker_key:
+            seen_tickers.add(ticker_key)
+
+        payload.highlight_reason = _highlight_reason(
+            category_label,
+            derived_sentiment,
+            weight=weight,
+            recency_days=days_delta,
+            sentiment_reason=reason,
+            impact_score=impact_score,
+            novelty_score=novelty_score,
+        )
+        payload.insight_score = round(weight, 3)
+        payload.highlight_flags = {
+            "category": category_label,
+            "sentiment": derived_sentiment,
+            "sentiment_score": sentiment_score,
+            "sentiment_source": sentiment_source,
+            "weight": weight,
+            "recency_days": days_delta,
+            "impact_score": impact_score,
+            "impact_amount_krw": impact_amount,
+            "novelty_count_90d": novelty_count,
+            "novelty_score": novelty_score,
+        }
+
+        ranked.append((weight, payload, filed_at))
+
+    ranked.sort(key=lambda item: (item[0], item[2]), reverse=True)
+    return [entry[1] for entry in ranked[:limit]]
 
 
 @router.get("/{filing_id}", response_model=FilingDetailResponse)
@@ -346,7 +589,7 @@ def get_filing_details(filing_id: uuid.UUID, db: Session = Depends(get_db)):
         FactResponse.model_validate(fact, from_attributes=True) for fact in facts
     ]
 
-    sentiment, reason = _derive_sentiment(filing, summary)
+    sentiment, reason, sentiment_score, sentiment_source = _derive_sentiment(filing, summary)
 
     filing_payload = FilingDetailResponse.model_validate(filing, from_attributes=True)
     return filing_payload.model_copy(
@@ -355,6 +598,8 @@ def get_filing_details(filing_id: uuid.UUID, db: Session = Depends(get_db)):
             "facts": facts_payload,
             "sentiment": sentiment,
             "sentiment_reason": reason,
+            "sentiment_score": sentiment_score,
+            "sentiment_source": sentiment_source,
         }
     )
 

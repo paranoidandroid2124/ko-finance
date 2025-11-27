@@ -46,6 +46,15 @@ class FilingBriefResponse(BaseModel):
     category_confidence: Optional[float] = None
     sentiment: str = Field("neutral", description="Derived sentiment label based on classification/summary")
     sentiment_reason: Optional[str] = Field(None, description="Short explanation of the sentiment label")
+    sentiment_score: Optional[float] = Field(None, description="Normalized sentiment score (-1.0~1.0, LLM-derived when available).")
+    sentiment_source: Optional[str] = Field(None, description="Source of sentiment (summary, category, keywords).")
+    insight_score: Optional[float] = Field(
+        None, description="Highlight score used for ranking important filings (higher is better)."
+    )
+    highlight_reason: Optional[str] = Field(None, description="Human-readable reason why this filing is highlighted.")
+    highlight_flags: Optional[Dict[str, Any]] = Field(
+        None, description="Machine-friendly flags/metadata used for highlight decisions."
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
