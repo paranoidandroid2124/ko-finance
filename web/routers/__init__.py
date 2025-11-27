@@ -17,18 +17,14 @@ _ROUTER_MODULES = [
     "payments",
     "plan",
     "report",
-    "orgs",
     "rag",
     "tools",
     "tools_text",
     "recommendations",
     "feed",
     "profile",
-    "ops",
     "search",
-    "sectors",
     "user_settings",
-    "briefing",
 ]
 
 __all__ = list(_ROUTER_MODULES)

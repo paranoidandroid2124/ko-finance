@@ -21,7 +21,7 @@ export type BriefingPayload = {
 
 async function fetchBriefing(): Promise<BriefingPayload> {
   const baseUrl = resolveApiBase();
-  const response = await fetch(`${baseUrl}/api/v1/proactive-insights`, {
+  const response = await fetch(`${baseUrl}/api/v1/feed/proactive/briefings?limit=1`, {
     credentials: "include",
     headers: { Accept: "application/json" },
     cache: "no-store",
@@ -29,7 +29,20 @@ async function fetchBriefing(): Promise<BriefingPayload> {
   if (!response.ok) {
     throw new Error(`failed to load briefing (${response.status})`);
   }
-  return (await response.json()) as BriefingPayload;
+  const data = await response.json();
+  const first = Array.isArray(data?.items) && data.items.length > 0 ? data.items[0] : null;
+  if (!first) {
+    return { id: "", sourceType: "proactive", title: "", items: [] };
+  }
+  return {
+    id: first.id ?? "",
+    sourceType: "proactive",
+    generatedAt: first.createdAt ?? null,
+    title: first.title ?? "",
+    summary: first.summary ?? null,
+    items: Array.isArray(first.items) ? first.items : [],
+    meta: first.meta ?? undefined,
+  };
 }
 
 export function useBriefing() {
