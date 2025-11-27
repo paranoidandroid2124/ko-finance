@@ -2,8 +2,11 @@
 
 import classNames from "classnames";
 import { useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import ToolWidgetRenderer from "@/components/chat/ToolWidgetRenderer";
 import RagSourcesWidget from "@/components/chat/widgets/RagSourcesWidget";
+import { FilingSearchCard } from "@/components/filings/FilingSearchCard";
+import { Card } from "@/components/ui/Card";
 import type { ChatMessageMeta, ChatRole, CitationEntry, CitationMap, RagSourceReference } from "@/store/chatStore";
 import { useToastStore } from "@/store/toastStore";
 import { logEvent } from "@/lib/telemetry";
@@ -193,6 +196,7 @@ const normalizeCitations = (citations?: CitationMap): NormalizedCitation[] => {
 };
 
 export function ChatMessageBubble({ id, role, content, timestamp, meta, isGuardrail, onRetry }: ChatMessageProps) {
+  const router = useRouter();
   const isUser = role === "user";
   const isToolCall = role === "tool_call";
   const isToolOutput = role === "tool_output";
@@ -227,13 +231,45 @@ export function ChatMessageBubble({ id, role, content, timestamp, meta, isGuardr
     }
     return null;
   }, [content, isToolOutput]);
+
+  // Check if this is a filing.search tool output
+  const isFilingSearchTool = useMemo(() => {
+    if (!toolOutputPayload) return false;
+    return toolOutputPayload.tool_name === "filing.search";
+  }, [toolOutputPayload]);
+
+  const handleFilingSearchExecute = useCallback(() => {
+    if (!toolOutputPayload || !toolOutputPayload.parsed_params) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const params = toolOutputPayload.parsed_params as Record<string, any>;
+    const queryParams = new URLSearchParams();
+
+    if (params.companies && Array.isArray(params.companies) && params.companies.length > 0) {
+      queryParams.set("company", params.companies[0]);
+    }
+    if (params.start_date) {
+      queryParams.set("startDate", params.start_date);
+    }
+    if (params.end_date) {
+      queryParams.set("endDate", params.end_date);
+    }
+
+    router.push(`/insights?${queryParams.toString()}`);
+  }, [toolOutputPayload, router]);
+
+  const handleFilingSearchEdit = useCallback(() => {
+    // Navigate to insights without pre-filled params
+    router.push("/insights");
+  }, [router]);
+
   const memoryMeta = (meta?.memory ?? null) as
     | {
-        enabled?: boolean;
-        required?: boolean;
-        applied?: boolean;
-        reason?: string;
-      }
+      enabled?: boolean;
+      required?: boolean;
+      applied?: boolean;
+      reason?: string;
+    }
     | null;
 
   const memoryBadge = useMemo(() => {
@@ -317,142 +353,166 @@ export function ChatMessageBubble({ id, role, content, timestamp, meta, isGuardr
           {isToolCall ? "TC" : isToolOutput ? "TO" : "AI"}
         </div>
       )}
-      <div
-        className={classNames(
-          "max-w-[80%] rounded-3xl px-5 py-4 text-sm leading-relaxed shadow-[0_15px_45px_rgba(3,7,18,0.45)] transition-all motion-safe:hover:-translate-y-1 motion-safe:group-hover:-translate-y-1",
-          isUser
-            ? "bg-gradient-to-br from-blue-600 to-cyan-500 text-white shadow-blue-500/30"
-            : "border border-white/10 bg-[#0b1425]/85 text-slate-200 backdrop-blur-xl"
-        )}
-      >
-        {!isUser ? (
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-medium text-text-secondaryLight dark:text-text-secondaryDark">
-            {isToolCall ? (
-              <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
-                Tool Call
-              </span>
-            ) : null}
-            {isToolOutput ? (
-              <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
-                Tool Result
-              </span>
-            ) : null}
-            {memoryBadge ? (
-              <span
-                className={classNames(
-                  "rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide",
-                  memoryBadge.tone === "positive" && "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200",
-                  memoryBadge.tone === "warning" && "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200",
-                  memoryBadge.tone === "info" && "bg-primary/10 text-primary dark:bg-primary.dark/20 dark:text-primary.dark"
-                )}
-                title={memoryBadge.description}
-              >
-                {memoryBadge.label}
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="flex items-start gap-2">
-          <div className="flex-1 whitespace-pre-wrap leading-relaxed">
-            {isToolCall ? (
-              <div className="flex items-center gap-2 text-sm text-slate-300">
-                <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                <span>도구 실행 중입니다...</span>
-              </div>
-            ) : (
-              <>
-                {typeof content === "string" ? renderChatContent(content) : content}
-                {isGuardrail && (
-                  <span className="mt-2 block text-xs text-accent-warning">
-                    guardrail 경고가 감지되어 안전 메시지로 대체되었습니다.
-                  </span>
-                )}
-              </>
-            )}
-          </div>
-          {showStatusBadge && status && (
-            <span className="shrink-0 rounded-full bg-border-light px-2 py-0.5 text-[10px] font-semibold uppercase text-text-secondaryLight dark:bg-border-dark dark:text-text-secondaryDark">
-              {statusLabel[status] ?? status}
-            </span>
-          )}
-        </div>
-        {!isUser && ragSources.length ? (
-          <div className="mt-3">
-            <RagSourcesWidget sources={ragSources} />
-          </div>
-        ) : null}
-        {isToolOutput && toolOutputPayload ? (
-          <div className="mt-3">
-            <SnapshotPreviewCard payload={toolOutputPayload} />
-          </div>
-        ) : null}
-        {!isUser && normalizedCitations.length ? (
-          <div className="mt-3 rounded-lg border border-border-light/80 bg-white/70 p-3 text-xs text-text-secondaryLight dark:border-border-dark/70 dark:bg-background-cardDark/70 dark:text-text-secondaryDark">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-primary">출처</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {normalizedCitations.map((citation) => {
-                const bucketLabel = citation.bucket ? CITATION_BUCKET_LABELS[citation.bucket] ?? citation.bucket : null;
-                const descriptionParts = [
-                  bucketLabel,
-                  citation.pageNumber ? `${citation.pageNumber}쪽` : null,
-                  citation.excerpt
-                ].filter(Boolean);
-                const title = descriptionParts.join(" · ");
-                const clickable = Boolean(citation.deeplinkUrl || citation.fallbackUrl);
-                return (
-                  <button
-                    key={citation.id}
-                    type="button"
-                    disabled={!clickable}
-                    title={title || undefined}
-                    onClick={() => (clickable ? handleOpenCitation(citation) : undefined)}
-                    className={classNames(
-                      "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors motion-safe:active:translate-y-[1px]",
-                      clickable
-                        ? "border-primary/40 bg-primary/5 text-primary hover:border-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-                        : "cursor-not-allowed border-border-light bg-border-light/30 text-text-tertiaryLight dark:border-border-dark dark:bg-border-dark/30 dark:text-text-tertiaryDark"
-                    )}
-                  >
-                    {citation.label}
-                    {citation.deeplinkUrl ? (
-                      <span className="text-[10px] font-normal text-primary/70">열기</span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-        {isToolOutput && meta?.toolAttachments && meta.toolAttachments.length > 0 ? (
-          <div className="mt-3 space-y-3">
-            {meta.toolAttachments.map((attachment, index) => (
-              <ToolWidgetRenderer key={`${id}-attachment-${index}`} attachment={attachment} />
-            ))}
-          </div>
-        ) : null}
-        {!isUser && status && (status === "error" || status === "blocked") && (
-          <div className="mt-3 space-y-2 rounded-lg border border-accent-negative/40 bg-accent-negative/10 p-3 text-xs text-accent-negative">
-            <p>{errorMessage}</p>
-            {canRetry && (
-              <button
-                type="button"
-                onClick={onRetry}
-                className="rounded-md border border-accent-negative/60 px-3 py-1 text-[11px] font-semibold text-accent-negative transition-colors transition-motion-fast hover:border-accent-negative hover:bg-accent-negative/20 motion-safe:active:translate-y-[1px]"
-              >
-                다시 시도
-              </button>
-            )}
-          </div>
-        )}
-        <p
+      {isUser ? (
+        <div
           className={classNames(
-            "mt-3 text-[11px]",
-            isUser ? "text-white/70" : "text-text-secondaryLight dark:text-text-secondaryDark"
+            "max-w-[80%] rounded-3xl px-5 py-4 text-sm leading-relaxed shadow-[0_15px_45px_rgba(3,7,18,0.45)] transition-all motion-safe:hover:-translate-y-1 motion-safe:group-hover:-translate-y-1",
+            "bg-gradient-to-br from-blue-600 to-cyan-500 text-white shadow-blue-500/30"
           )}
         >
-          {timestamp}
-        </p>
-      </div>
+          {/* User Content */}
+          <div className="flex items-start gap-2">
+            <div className="flex-1 whitespace-pre-wrap leading-relaxed">
+              {typeof content === "string" ? renderChatContent(content) : content}
+            </div>
+            <p className="mt-3 text-[11px] text-white/70">{timestamp}</p>
+          </div>
+        </div>
+      ) : (
+        <Card
+          variant="glass"
+          padding="md"
+          className="max-w-[80%] rounded-3xl text-sm leading-relaxed text-slate-200 transition-all motion-safe:hover:-translate-y-1 motion-safe:group-hover:-translate-y-1"
+        >
+          {!isUser ? (
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-medium text-text-secondaryLight dark:text-text-secondaryDark">
+              {isToolCall ? (
+                <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
+                  Tool Call
+                </span>
+              ) : null}
+              {isToolOutput ? (
+                <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
+                  Tool Result
+                </span>
+              ) : null}
+              {memoryBadge ? (
+                <span
+                  className={classNames(
+                    "rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide",
+                    memoryBadge.tone === "positive" && "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200",
+                    memoryBadge.tone === "warning" && "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200",
+                    memoryBadge.tone === "info" && "bg-primary/10 text-primary dark:bg-primary.dark/20 dark:text-primary.dark"
+                  )}
+                  title={memoryBadge.description}
+                >
+                  {memoryBadge.label}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="flex items-start gap-2">
+            <div className="flex-1 whitespace-pre-wrap leading-relaxed">
+              {isToolCall ? (
+                <div className="flex items-center gap-2 text-sm text-slate-300">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  <span>도구 실행 중입니다...</span>
+                </div>
+              ) : (
+                <>
+                  {typeof content === "string" ? renderChatContent(content) : content}
+                  {isGuardrail && (
+                    <span className="mt-2 block text-xs text-accent-warning">
+                      guardrail 경고가 감지되어 안전 메시지로 대체되었습니다.
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+            {showStatusBadge && status && (
+              <span className="shrink-0 rounded-full bg-border-light px-2 py-0.5 text-[10px] font-semibold uppercase text-text-secondaryLight dark:bg-border-dark dark:text-text-secondaryDark">
+                {statusLabel[status] ?? status}
+              </span>
+            )}
+          </div>
+          {!isUser && ragSources.length ? (
+            <div className="mt-3">
+              <RagSourcesWidget sources={ragSources} />
+            </div>
+          ) : null}
+          {isToolOutput && toolOutputPayload ? (
+            <div className="mt-3">
+              {isFilingSearchTool ? (
+                <FilingSearchCard
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  parsed_params={toolOutputPayload.parsed_params as any}
+                  onExecute={handleFilingSearchExecute}
+                  onEdit={handleFilingSearchEdit}
+                />
+              ) : (
+                <SnapshotPreviewCard payload={toolOutputPayload} />
+              )}
+            </div>
+          ) : null}
+
+          {!isUser && normalizedCitations.length ? (
+            <div className="mt-3 rounded-lg border border-border-light/80 bg-white/70 p-3 text-xs text-text-secondaryLight dark:border-border-dark/70 dark:bg-background-cardDark/70 dark:text-text-secondaryDark">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-primary">출처</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {normalizedCitations.map((citation) => {
+                  const bucketLabel = citation.bucket ? CITATION_BUCKET_LABELS[citation.bucket] ?? citation.bucket : null;
+                  const descriptionParts = [
+                    bucketLabel,
+                    citation.pageNumber ? `${citation.pageNumber}쪽` : null,
+                    citation.excerpt
+                  ].filter(Boolean);
+                  const title = descriptionParts.join(" · ");
+                  const clickable = Boolean(citation.deeplinkUrl || citation.fallbackUrl);
+                  return (
+                    <button
+                      key={citation.id}
+                      type="button"
+                      disabled={!clickable}
+                      title={title || undefined}
+                      onClick={() => (clickable ? handleOpenCitation(citation) : undefined)}
+                      className={classNames(
+                        "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors motion-safe:active:translate-y-[1px]",
+                        clickable
+                          ? "border-accent-primary/40 bg-accent-primary/5 text-accent-primary hover:border-accent-primary hover:bg-accent-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
+                          : "cursor-not-allowed border-surface-tertiary bg-surface-tertiary/30 text-text-tertiary"
+                      )}
+                    >
+                      {citation.label}
+                      {citation.deeplinkUrl ? (
+                        <span className="text-[10px] font-normal text-primary/70">열기</span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+          {isToolOutput && meta?.toolAttachments && meta.toolAttachments.length > 0 ? (
+            <div className="mt-3 space-y-3">
+              {meta.toolAttachments.map((attachment, index) => (
+                <ToolWidgetRenderer key={`${id}-attachment-${index}`} attachment={attachment} />
+              ))}
+            </div>
+          ) : null}
+          {!isUser && status && (status === "error" || status === "blocked") && (
+            <div className="mt-3 space-y-2 rounded-lg border border-accent-negative/40 bg-accent-negative/10 p-3 text-xs text-accent-negative">
+              <p>{errorMessage}</p>
+              {canRetry && (
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  className="rounded-md border border-accent-negative/60 px-3 py-1 text-[11px] font-semibold text-accent-negative transition-colors transition-motion-fast hover:border-accent-negative hover:bg-accent-negative/20 motion-safe:active:translate-y-[1px]"
+                >
+                  다시 시도
+                </button>
+              )}
+            </div>
+          )}
+          <p
+            className={classNames(
+              "mt-3 text-[11px]",
+              isUser ? "text-white/70" : "text-text-secondaryLight dark:text-text-secondaryDark"
+            )}
+          >
+            {timestamp}
+          </p>
+        </Card>
+      )}
     </div>
   );
 }

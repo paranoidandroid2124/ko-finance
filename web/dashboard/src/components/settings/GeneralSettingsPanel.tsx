@@ -51,22 +51,22 @@ export function GeneralSettingsPanel({ onClose }: { onClose?: () => void }) {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-lg font-semibold text-white">일반</h3>
-          <p className="text-sm text-slate-400">테마와 언어를 설정합니다.</p>
+          <h3 className="text-lg font-semibold text-text-primary">일반</h3>
+          <p className="text-sm text-text-secondary">테마와 언어를 설정합니다.</p>
         </div>
         {onClose ? (
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300 transition hover:border-white/30 hover:text-white"
+            className="rounded-full border border-border-subtle px-3 py-1 text-xs text-text-secondary transition hover:border-text-secondary hover:text-text-primary"
           >
             닫기
           </button>
         ) : null}
       </div>
 
-      <div className="space-y-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4 shadow-lg">
-        <p className="text-sm font-semibold text-white">테마</p>
+      <div className="space-y-4 rounded-2xl border border-border-subtle bg-surface-2/50 p-4 shadow-lg">
+        <p className="text-sm font-semibold text-text-primary">테마</p>
         <div className="grid gap-2 md:grid-cols-3">
           {themeOptions.map((option) => {
             const active = themeValue === option.value;
@@ -75,22 +75,21 @@ export function GeneralSettingsPanel({ onClose }: { onClose?: () => void }) {
                 key={option.value}
                 type="button"
                 onClick={() => setTheme(option.value)}
-                className={`flex items-center justify-between rounded-xl border px-3 py-2 text-sm transition ${
-                  active
-                    ? "border-blue-400 bg-blue-500/15 text-white shadow-[0_10px_30px_rgba(88,166,255,0.25)]"
-                    : "border-white/10 text-slate-300 hover:border-white/30"
-                }`}
+                className={`flex items-center justify-between rounded-xl border px-3 py-2 text-sm transition ${active
+                    ? "border-primary bg-primary/10 text-primary shadow-sm"
+                    : "border-border-subtle text-text-secondary hover:border-text-muted"
+                  }`}
               >
                 <span>{option.label}</span>
-                {active ? <span className="text-[11px] text-blue-200">선택됨</span> : null}
+                {active ? <span className="text-[11px] text-primary font-medium">선택됨</span> : null}
               </button>
             );
           })}
         </div>
       </div>
 
-      <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4 shadow-lg">
-        <p className="text-sm font-semibold text-white">언어</p>
+      <div className="space-y-3 rounded-2xl border border-border-subtle bg-surface-2/50 p-4 shadow-lg">
+        <p className="text-sm font-semibold text-text-primary">언어</p>
         <div className="flex flex-wrap gap-2">
           {LANGUAGE_OPTIONS.map((opt) => {
             const active = language === opt.value;
@@ -99,16 +98,15 @@ export function GeneralSettingsPanel({ onClose }: { onClose?: () => void }) {
                 key={opt.value}
                 type="button"
                 onClick={() => applyLanguage(opt.value)}
-                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
-                  active ? "border-blue-400 bg-blue-500/20 text-white" : "border-white/10 text-slate-300 hover:border-white/30"
-                }`}
+                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${active ? "border-primary bg-primary/10 text-primary" : "border-border-subtle text-text-secondary hover:border-text-muted"
+                  }`}
               >
                 {opt.label}
               </button>
             );
           })}
         </div>
-        <p className="text-[11px] text-slate-500">UI 언어는 순차 적용 예정이며, 선택값은 저장됩니다.</p>
+        <p className="text-[11px] text-text-muted">UI 언어는 순차 적용 예정이며, 선택값은 저장됩니다.</p>
       </div>
     </div>
   );

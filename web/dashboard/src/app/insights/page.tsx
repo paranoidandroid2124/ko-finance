@@ -1,11 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo, useState, useEffect } from "react";
+import { Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Sparkles, ArrowRight, Activity, MessageCircle, Search, Plus } from "lucide-react";
+import Link from "next/link";
+import { Card } from "@/components/ui/Card";
+import { AppShell } from "@/components/layout/AppShell";
 
 import { ProactiveBriefingsWidget, type FeedItem } from "@/components/feed/ProactiveBriefingsWidget";
-import { useFilings } from "@/hooks/useFilings";
+import { useFilings, useFilingDetail } from "@/hooks/useFilings";
+import { FilingsTable } from "@/components/filings/FilingsTable";
+import { FilingDetailPanel } from "@/components/filings/FilingDetailPanel";
 import { formatDateTime } from "@/lib/date";
 import { useCompanySearch } from "@/hooks/useCompanySearch";
 import { resolveApiBase } from "@/lib/apiBase";
@@ -29,7 +35,7 @@ function sentimentTone(sentiment: FilingCardProps["sentiment"]) {
 function FilingCard({ filing, onChat }: { filing: FilingCardProps; onChat: () => void }) {
   const formattedDate = useMemo(() => formatDateTime(filing.filedAt, { fallback: "-" }), [filing.filedAt]);
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-lg transition hover:border-white/20 hover:-translate-y-0.5">
+    <Card variant="glass" padding="md" className="rounded-2xl transition hover:border-white/20 hover:-translate-y-0.5">
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
           <p className="text-sm font-semibold text-white">{filing.company}</p>
@@ -52,19 +58,43 @@ function FilingCard({ filing, onChat }: { filing: FilingCardProps; onChat: () =>
           이 내용으로 질문하기 <MessageCircle className="h-4 w-4" />
         </button>
       </div>
-    </div>
+    </Card>
   );
 }
 
-export default function InsightHubPage() {
+function InsightHubContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [query, setQuery] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [quickQuestion, setQuickQuestion] = useState("");
   const [miniMessages, setMiniMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [contextIds, setContextIds] = useState<Record<string, string>>({});
   const [miniLoading, setMiniLoading] = useState(false);
-  const { data, isLoading } = useFilings({ limit: 5, days: 3 });
+  const [selectedFilingId, setSelectedFilingId] = useState<string | undefined>(undefined);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [companyQuery, setCompanyQuery] = useState("");
+
+  // Auto-fill from URL params (from chat commands)
+  useEffect(() => {
+    const company = searchParams?.get('company');
+    const start = searchParams?.get('startDate');
+    const end = searchParams?.get('endDate');
+
+    if (company) setCompanyQuery(company);
+    if (start) setStartDate(start);
+    if (end) setEndDate(end);
+  }, [searchParams]);
+
+  const { data, isLoading } = useFilings({
+    limit: 50,
+    ticker: companyQuery || undefined,
+    startDate: startDate || undefined,
+    endDate: endDate || undefined,
+    days: (!startDate && !endDate) ? 3 : undefined
+  });
+  const { data: selectedFilingDetail } = useFilingDetail(selectedFilingId);
   const { data: searchResults } = useCompanySearch(query, 6);
 
   const filings = useMemo<FilingCardProps[]>(() => {
@@ -234,18 +264,19 @@ export default function InsightHubPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0b1221] text-white">
-      <div className="mx-auto flex max-w-6xl flex-col gap-10 px-6 py-12">
-        <header className="space-y-6 text-center">
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-blue-200">
-            <Sparkles className="h-4 w-4" /> Insight Hub
-          </div>
-          <div className="space-y-3">
-            <h1 className="text-3xl font-bold md:text-4xl">오늘 시장의 핵심 흐름을 한눈에</h1>
-            <p className="text-slate-300 text-sm md:text-base">
-              최신 공시, 이벤트, 맞춤 브리핑을 확인하고 바로 질문하세요.
-            </p>
-          </div>
+    <AppShell>
+      <div className="min-h-screen bg-canvas text-text-primary">
+        <div className="mx-auto flex max-w-6xl flex-col gap-10 px-6 py-12">
+          <header className="space-y-6 text-center">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-blue-200">
+              <Sparkles className="h-4 w-4" /> Insight Hub
+            </div>
+            <div className="space-y-3">
+              <h1 className="text-3xl font-bold md:text-4xl">오늘 시장의 핵심 흐름을 한눈에</h1>
+              <p className="text-slate-300 text-sm md:text-base">
+                최신 공시, 이벤트, 맞춤 브리핑을 확인하고 바로 질문하세요.
+              </p>
+            </div>
             <div className="relative mx-auto flex max-w-3xl flex-col gap-3">
               <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/5 p-3 text-left text-slate-200 shadow-lg md:flex-row md:items-center md:gap-3">
                 <input
@@ -265,14 +296,14 @@ export default function InsightHubPage() {
                 />
                 <button
                   type="button"
-                onClick={handleSearch}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-400"
+                  onClick={handleSearch}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-400"
                 >
                   질문 시작 <ArrowRight className="h-4 w-4" />
                 </button>
               </div>
               {showSuggestions && query.trim().length >= 1 ? (
-                <div className="absolute top-full z-20 mt-1 w-full overflow-hidden rounded-2xl border border-white/10 bg-[#0f1626] shadow-2xl">
+                <div className="absolute top-full z-20 mt-1 w-full overflow-hidden rounded-2xl border border-border-subtle bg-surface-1 shadow-2xl">
                   {searchResults?.length ? (
                     <ul className="divide-y divide-white/5">
                       {searchResults.map((item, idx) => (
@@ -333,11 +364,10 @@ export default function InsightHubPage() {
                   {miniMessages.map((msg, idx) => (
                     <div
                       key={`${msg.role}-${idx}`}
-                      className={`rounded-2xl border px-3 py-2 text-sm ${
-                        msg.role === "user"
-                          ? "border-blue-400/30 bg-blue-500/10 text-blue-50"
-                          : "border-white/10 bg-white/5 text-slate-200"
-                      }`}
+                      className={`rounded-2xl border px-3 py-2 text-sm ${msg.role === "user"
+                        ? "border-blue-400/30 bg-blue-500/10 text-blue-50"
+                        : "border-white/10 bg-white/5 text-slate-200"
+                        }`}
                     >
                       {msg.content}
                     </div>
@@ -345,68 +375,114 @@ export default function InsightHubPage() {
                 </div>
               </div>
             </div>
-        </header>
+          </header>
 
-        <div className="grid gap-8 lg:grid-cols-[1.6fr_1fr]">
-          <div className="space-y-6">
-            <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 shadow-xl">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-slate-400">오늘의 AI 브리핑</p>
-                  <h2 className="text-lg font-semibold text-white">맞춤 인사이트 2~5개</h2>
-                </div>
-              </div>
-              <div className="mt-4">
-                <ProactiveBriefingsWidget onSelectItem={handleSelectEvent} />
-              </div>
-            </div>
-            <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 shadow-xl">
-              <div className="flex items-center gap-2">
-                <Activity className="h-5 w-5 text-emerald-300" />
-                <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-slate-400">핵심 공시</p>
-                  <h2 className="text-lg font-semibold text-white">최근 주목할 만한 공시</h2>
-                </div>
-              </div>
-              <div className="mt-4 space-y-3">
-                {isLoading ? (
-                  <div className="space-y-3">
-                    {Array.from({ length: 3 }).map((_, idx) => (
-                      <div key={idx} className="h-24 rounded-2xl bg-white/5 animate-pulse" />
-                    ))}
+          <div className="grid gap-8 lg:grid-cols-[1.6fr_1fr]">
+            <div className="space-y-6">
+              <Card variant="glass" padding="md" className="rounded-3xl shadow-xl">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400">오늘의 AI 브리핑</p>
+                    <h2 className="text-lg font-semibold text-white">맞춤 인사이트</h2>
                   </div>
-                ) : filings.length ? (
-                  filings.map((filing) => (
-                    <FilingCard
-                      key={filing.id}
-                      filing={filing}
-                      onChat={() => handleSelectFiling(filing)}
-                    />
-                  ))
-                ) : (
-                  <p className="text-sm text-slate-300">표시할 공시가 없습니다.</p>
-                )}
-              </div>
-            </div>
-          </div>
-          <div className="space-y-6">
-            <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 shadow-xl">
-              <div className="space-y-2">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">추천 액션</p>
-                <h2 className="text-lg font-semibold text-white">지금 바로 질문해 보세요</h2>
-                <p className="text-sm text-slate-300">
-                  브리핑이나 공시를 선택해 채팅을 시작하면, 선택한 컨텍스트로 바로 이어집니다.
-                </p>
-                <div className="flex flex-wrap gap-2 text-xs text-slate-300">
-                  <span className="rounded-full bg-white/5 px-3 py-1">#오늘의이슈</span>
-                  <span className="rounded-full bg-white/5 px-3 py-1">#주목공시</span>
-                  <span className="rounded-full bg-white/5 px-3 py-1">#이벤트임팩트</span>
                 </div>
-              </div>
+                <div className="mt-4">
+                  <ProactiveBriefingsWidget onSelectItem={handleSelectEvent} />
+                </div>
+              </Card>
+              <Card variant="glass" padding="md" className="rounded-3xl shadow-xl">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Activity className="h-5 w-5 text-emerald-300" />
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.3em] text-slate-400">핵심 공시</p>
+                      <h2 className="text-lg font-semibold text-white">최근 주목할 만한 공시</h2>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={companyQuery}
+                      onChange={(e) => setCompanyQuery(e.target.value)}
+                      className="rounded-lg border border-white/10 bg-black/30 px-3 py-1 text-xs text-white outline-none focus:border-blue-400 w-32"
+                      placeholder="기업명/티커"
+                    />
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="rounded-lg border border-white/10 bg-black/30 px-2 py-1 text-xs text-white outline-none focus:border-blue-400"
+                      placeholder="시작일"
+                    />
+                    <span className="text-xs text-slate-400">~</span>
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="rounded-lg border border-white/10 bg-black/30 px-2 py-1 text-xs text-white outline-none focus:border-blue-400"
+                      placeholder="종료일"
+                    />
+                    {(startDate || endDate || companyQuery) && (
+                      <button
+                        onClick={() => { setStartDate(""); setEndDate(""); setCompanyQuery(""); }}
+                        className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-slate-300 hover:bg-white/10"
+                      >
+                        초기화
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-4">
+                  {isLoading ? (
+                    <div className="space-y-3">
+                      {Array.from({ length: 3 }).map((_, idx) => (
+                        <div key={idx} className="h-24 rounded-2xl bg-white/5 animate-pulse" />
+                      ))}
+                    </div>
+                  ) : data && data.length > 0 ? (
+                    <>
+                      <FilingsTable filings={data} selectedId={selectedFilingId} onSelect={setSelectedFilingId} />
+                      {selectedFilingId && selectedFilingDetail && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setSelectedFilingId(undefined)}>
+                          <div className="w-full max-w-2xl mx-4" onClick={(e) => e.stopPropagation()}>
+                            <FilingDetailPanel filing={selectedFilingDetail} />
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm text-slate-300">표시할 공시가 없습니다.</p>
+                  )}
+                </div>
+              </Card>
+            </div>
+            <div className="space-y-6">
+              <Card variant="glass" padding="md" className="rounded-3xl shadow-xl">
+                <div className="space-y-2">
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-400">추천 액션</p>
+                  <h2 className="text-lg font-semibold text-white">지금 바로 질문해 보세요</h2>
+                  <p className="text-sm text-slate-300">
+                    브리핑이나 공시를 선택해 채팅을 시작하면, 선택한 컨텍스트로 바로 이어집니다.
+                  </p>
+                  <div className="flex flex-wrap gap-2 text-xs text-slate-300">
+                    <span className="rounded-full bg-white/5 px-3 py-1">#오늘의이슈</span>
+                    <span className="rounded-full bg-white/5 px-3 py-1">#주목공시</span>
+                    <span className="rounded-full bg-white/5 px-3 py-1">#이벤트임팩트</span>
+                  </div>
+                </div>
+              </Card>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </AppShell>
+  );
+}
+
+export default function InsightHubPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-canvas" />}>
+      <InsightHubContent />
+    </Suspense>
   );
 }

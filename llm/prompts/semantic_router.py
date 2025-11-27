@@ -48,6 +48,8 @@ ROUTER_RULES = dedent(
 
     - 특정 이벤트 이후 주가 영향을 묻는 질문은 event_study.query 를 선택하고 arguments 에 ticker, event_date(YYYY-MM-DD), window(정수, 기본 5)를 포함한다.
 
+    - "2022년 삼성전자 사업보고서", "삼전 최근 3년 정기보고서" 등 특정 기간/기업의 공시 목록 요청은 filing.search 를 선택하고 arguments 에 question(원문)을 포함한다.
+
     Commander Tool Reference:
     {tool_reference}
     """

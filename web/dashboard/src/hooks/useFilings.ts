@@ -8,6 +8,7 @@ export type FilingSentimentFilter = "all" | "positive" | "negative";
 type FilingListParams = {
   days?: number;
   limit?: number;
+  company?: string;
   ticker?: string;
   corpCode?: string;
   startDate?: string;
@@ -31,6 +32,7 @@ export type FilingListItem = {
   filedAt: string;
   sentiment: FilingSentiment;
   sentimentReason?: string;
+  status: "PENDING" | "COMPLETED" | "FAILED" | "PARTIAL";
 };
 
 export type FilingDetail = FilingListItem & {
@@ -165,6 +167,8 @@ const toListItem = (item: ApiFilingBrief): FilingListItem => {
     filedAt: formatDateTime(item.filed_at, { fallback: "날짜 미상" }),
     sentiment: item.sentiment ?? deriveSentiment(item.analysis_status, item.category),
     sentimentReason: item.sentiment_reason ?? undefined,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    status: (item.status as any) || "COMPLETED",
   };
 };
 
@@ -221,11 +225,16 @@ const toDetail = (detail: ApiFilingDetail): FilingDetail => {
   };
 };
 
-const buildQueryString = (params: FilingListParams) => {
+const buildQueryString = (params: FilingListParams): string => {
   const search = new URLSearchParams();
-  search.set("limit", String(params.limit ?? 100));
   if (params.days !== undefined) {
-    search.set("days", String(params.days));
+    search.set("days", params.days.toString());
+  }
+  if (params.limit !== undefined) {
+    search.set("limit", params.limit.toString());
+  }
+  if (params.company) {
+    search.set("company", params.company);
   }
   if (params.ticker) {
     search.set("ticker", params.ticker);
@@ -266,6 +275,18 @@ const fetchFilingDetail = async (filingId: string): Promise<FilingDetail> => {
   return toDetail(payload);
 };
 
+const fetchFilingContent = async (filingId: string): Promise<FilingDetail> => {
+  const baseUrl = resolveApiBase();
+  const response = await fetch(`${baseUrl}/api/v1/filings/${filingId}/fetch`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error("공시 원문을 가져오지 못했습니다.");
+  }
+  const payload: ApiFilingDetail = await response.json();
+  return toDetail(payload);
+};
+
 export function useFilings(params: FilingListParams = {}) {
   return useQuery({
     queryKey: ["filings", params],
@@ -278,5 +299,19 @@ export function useFilingDetail(filingId?: string) {
     queryKey: ["filing-detail", filingId],
     queryFn: () => fetchFilingDetail(filingId as string),
     enabled: Boolean(filingId)
+  });
+}
+
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+
+export function useFetchFiling() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: fetchFilingContent,
+    onSuccess: (updatedFiling) => {
+      // Invalidate list and detail queries to reflect the new status
+      queryClient.invalidateQueries({ queryKey: ["filings"] });
+      queryClient.invalidateQueries({ queryKey: ["filing-detail", updatedFiling.id] });
+    },
   });
 }

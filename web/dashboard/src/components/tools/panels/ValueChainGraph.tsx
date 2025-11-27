@@ -126,7 +126,7 @@ export function ValueChainGraph({ data, onNodeSelect }: ValueChainGraphProps) {
 
   if (!data?.target) {
     return (
-      <div className="flex h-64 flex-col items-center justify-center rounded-3xl border border-white/10 bg-[#040b1e] text-sm text-slate-200">
+      <div className="flex h-64 flex-col items-center justify-center rounded-3xl border border-border-subtle bg-surface-1 text-sm text-text-secondary">
         <div className="mb-3 h-6 w-6 animate-spin rounded-full border-2 border-white/30 border-t-transparent" />
         <p className="text-sm text-slate-300">🤖 AI가 최신 뉴스로 밸류체인을 분석 중입니다...</p>
         <p className="mt-1 text-xs text-slate-500">잠시만 기다리시면 관계도가 생성됩니다.</p>
@@ -135,7 +135,7 @@ export function ValueChainGraph({ data, onNodeSelect }: ValueChainGraphProps) {
   }
 
   return (
-    <div className="h-[340px] w-full overflow-hidden rounded-3xl border border-white/10 bg-[#040b1e]">
+    <div className="h-[340px] w-full overflow-hidden rounded-3xl border border-border-subtle bg-surface-1">
       {typeof window === "undefined" ? null : (
         <ReactFlow
           nodes={nodes}

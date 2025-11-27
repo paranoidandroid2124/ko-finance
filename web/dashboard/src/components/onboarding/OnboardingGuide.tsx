@@ -103,10 +103,10 @@ export default function OnboardingGuide() {
 
   if (step === "welcome") {
     return (
-      <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur">
-        <div className="w-full max-w-lg rounded-3xl bg-white p-8 text-center shadow-2xl dark:bg-slate-900">
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Nuvien에 오신 것을 환영합니다! 🎉</h2>
-          <p className="mt-4 text-slate-600 dark:text-slate-300">
+      <div className="fixed inset-0 z-[70] flex items-center justify-center bg-canvas/60 backdrop-blur">
+        <div className="w-full max-w-lg rounded-3xl bg-surface-1 p-8 text-center shadow-2xl">
+          <h2 className="text-2xl font-bold text-text-primary">Nuvien에 오신 것을 환영합니다! 🎉</h2>
+          <p className="mt-4 text-text-secondary">
             AI와 함께하는 첫 번째 리포트를 만들어볼까요? 아래 예시를 눌러 바로 시작할 수 있습니다.
           </p>
           <div className="mt-6 flex flex-col gap-3">
@@ -115,10 +115,10 @@ export default function OnboardingGuide() {
                 key={preset.value}
                 type="button"
                 onClick={() => handlePrefill(preset.value)}
-                className="rounded-2xl bg-blue-50 px-4 py-3 text-left text-sm font-semibold text-blue-700 transition hover:bg-blue-100"
+                className="rounded-2xl bg-primary/10 px-4 py-3 text-left text-sm font-semibold text-primary transition hover:bg-primary/20"
               >
                 {preset.label}
-                <span className="mt-1 block text-xs font-normal text-blue-500">{preset.value}</span>
+                <span className="mt-1 block text-xs font-normal text-primary/80">{preset.value}</span>
               </button>
             ))}
           </div>
@@ -126,11 +126,11 @@ export default function OnboardingGuide() {
             <button
               type="button"
               onClick={() => setStep("input")}
-              className="rounded-full bg-blue-600 px-5 py-2 font-semibold text-white shadow-lg shadow-blue-600/40"
+              className="rounded-full bg-primary px-5 py-2 font-semibold text-white shadow-lg shadow-primary/40"
             >
               튜토리얼 시작하기
             </button>
-            <button type="button" onClick={handleClose} className="text-slate-400 hover:text-slate-600">
+            <button type="button" onClick={handleClose} className="text-text-muted hover:text-text-secondary">
               다음에 하기
             </button>
           </div>
@@ -145,7 +145,7 @@ export default function OnboardingGuide() {
       {targetRect && tooltipContent ? (
         <>
           <div
-            className="pointer-events-auto absolute rounded-2xl border-2 border-blue-400 bg-transparent shadow-[0_0_0_9999px_rgba(0,0,0,0.55)]"
+            className="pointer-events-auto absolute rounded-2xl border-2 border-primary bg-transparent shadow-[0_0_0_9999px_rgba(0,0,0,0.55)]"
             style={{
               top: targetRect.top - 8,
               left: targetRect.left - 8,
@@ -154,14 +154,14 @@ export default function OnboardingGuide() {
             }}
           />
           <div
-            className="pointer-events-auto absolute max-w-xs rounded-2xl bg-white p-4 text-slate-900 shadow-xl dark:bg-slate-800 dark:text-white"
+            className="pointer-events-auto absolute max-w-xs rounded-2xl bg-surface-1 p-4 text-text-primary shadow-xl"
             style={{
               top: targetRect.top + targetRect.height + 16,
               left: Math.min(targetRect.left, window.innerWidth - 320),
             }}
           >
             <h3 className="text-base font-semibold">{tooltipContent.title}</h3>
-            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{tooltipContent.body}</p>
+            <p className="mt-2 text-sm text-text-secondary">{tooltipContent.body}</p>
             <div className="mt-4 flex items-center justify-end gap-3 text-sm">
               {step !== "export" && (
                 <button
@@ -169,7 +169,7 @@ export default function OnboardingGuide() {
                   onClick={() =>
                     setStep(step === "input" ? "chart" : step === "chart" ? "export" : "export")
                   }
-                  className="text-slate-400 hover:text-slate-600"
+                  className="text-text-muted hover:text-text-secondary"
                 >
                   다음
                 </button>
@@ -177,7 +177,7 @@ export default function OnboardingGuide() {
               <button
                 type="button"
                 onClick={handleClose}
-                className="rounded-full bg-blue-600 px-4 py-1.5 text-white shadow-lg shadow-blue-600/40"
+                className="rounded-full bg-primary px-4 py-1.5 text-white shadow-lg shadow-primary/40"
               >
                 완료
               </button>
@@ -186,15 +186,15 @@ export default function OnboardingGuide() {
         </>
       ) : (
         <div className="pointer-events-auto absolute inset-0 flex items-center justify-center">
-          <div className="max-w-md rounded-2xl bg-white p-6 text-center text-slate-800 shadow-2xl dark:bg-slate-900 dark:text-white">
+          <div className="max-w-md rounded-2xl bg-surface-1 p-6 text-center text-text-primary shadow-2xl">
             <h3 className="text-lg font-semibold">먼저 리포트를 생성해 주세요</h3>
-            <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
+            <p className="mt-3 text-sm text-text-secondary">
               차트와 내보내기 버튼은 리포트가 생성된 후에 나타납니다. 프롬프트를 전송해보세요!
             </p>
             <button
               type="button"
               onClick={handleClose}
-              className="mt-5 rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow"
+              className="mt-5 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white shadow"
             >
               닫기
             </button>

@@ -57,35 +57,41 @@ export function ChatPageShell({ controller, reportAction, guestBadge }: ChatPage
           dimmed={focusMode}
         />
       ) : null}
-      <div className="flex flex-col gap-5 xl:flex-row">
-        <ChatHistoryList
-          sessions={history.sessions}
-          selectedId={history.selectedId ?? undefined}
-          onSelect={history.onSelect}
-          onNewSession={history.onCreate}
-          onDeleteSession={history.onDelete}
-          onClearAll={history.onClear}
-          persistenceError={history.persistenceError ?? undefined}
-          disabled={history.disabled}
-          dimmed={focusMode}
-          footer={guestBadge}
-        />
-        <ChatStreamPane
-          sessionTitle={stream.title}
-          contextSummary={stream.contextSummary ?? null}
-          hasContextBanner={stream.hasContextBanner}
-          isFilingContext={stream.isFilingContext}
-          filingReferenceId={stream.filingReferenceId ?? undefined}
-          onOpenFiling={stream.onOpenFiling}
-          disclaimer={stream.disclaimer}
-          messages={stream.messages}
-          showEmptyState={stream.showEmptyState}
-          onRetry={stream.onRetry}
-          onSend={stream.onSend}
-          inputDisabled={stream.inputDisabled}
-          reportAction={reportAction}
-          onFocusChange={setFocusMode}
-        />
+      <div className="mx-auto w-full max-w-6xl px-2 pb-6 sm:px-4 md:px-6">
+        <div className="grid gap-4 xl:grid-cols-12">
+          <div className="xl:col-span-4">
+            <ChatHistoryList
+              sessions={history.sessions}
+              selectedId={history.selectedId ?? undefined}
+              onSelect={history.onSelect}
+              onNewSession={history.onCreate}
+              onDeleteSession={history.onDelete}
+              onClearAll={history.onClear}
+              persistenceError={history.persistenceError ?? undefined}
+              disabled={history.disabled}
+              dimmed={focusMode}
+              footer={guestBadge}
+            />
+          </div>
+          <div className="xl:col-span-8">
+            <ChatStreamPane
+              sessionTitle={stream.title}
+              contextSummary={stream.contextSummary ?? null}
+              hasContextBanner={stream.hasContextBanner}
+              isFilingContext={stream.isFilingContext}
+              filingReferenceId={stream.filingReferenceId ?? undefined}
+              onOpenFiling={stream.onOpenFiling}
+              disclaimer={stream.disclaimer}
+              messages={stream.messages}
+              showEmptyState={stream.showEmptyState}
+              onRetry={stream.onRetry}
+              onSend={stream.onSend}
+              inputDisabled={stream.inputDisabled}
+              reportAction={reportAction}
+              onFocusChange={setFocusMode}
+            />
+          </div>
+        </div>
       </div>
     </AppShell>
   );

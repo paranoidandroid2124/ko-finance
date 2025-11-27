@@ -148,6 +148,16 @@ _TOOL_DEFINITIONS: Dict[str, ToolDefinition] = {
         paywall=PaywallTier.FREE,
         requires_context=(),
     ),
+    "filing_search": ToolDefinition(
+        tool_id="filing_search",
+        call_name="filing.search",
+        intent="filing_search",
+        title="공시 검색",
+        description="날짜, 기업명, 보고서 타입으로 공시 목록을 검색합니다.",
+        ui_container=UiContainer.INLINE_CARD,
+        paywall=PaywallTier.FREE,
+        requires_context=(),
+    ),
 }
 
 _CALL_NAME_INDEX = {tool.call_name: tool for tool in _TOOL_DEFINITIONS.values()}

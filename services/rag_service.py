@@ -2062,6 +2062,90 @@ def _maybe_run_event_study_tool(
     return [chunk]
 
 
+def _should_call_filing_search(route_decision: RouteDecision) -> bool:
+    """Check if filing.search tool should be called."""
+    intent = (route_decision.intent or "").strip().lower()
+    tool_name = (route_decision.tool_name or "").strip().lower()
+    return intent == "filing_search" or tool_name == "filing.search"
+
+
+def _maybe_run_filing_search_tool(
+    ctx: "RagSessionStage",
+    route_decision: RouteDecision,
+    db: Session,
+) -> Optional[Dict[str, Any]]:
+    """
+    Handle filing.search tool execution.
+    Returns tool_output payload or None.
+    """
+    if not _should_call_filing_search(route_decision):
+        return None
+    
+    from services.filing_search_tool import execute_filing_search
+    
+    args = route_decision.tool_call.arguments or {}
+    question = args.get("question", ctx.question)
+    tool_args = {"question": question}
+    
+    if ctx.session and ctx.turn_id:
+        try:
+            chat_service.create_tool_call_message(
+                db,
+                session_id=ctx.session.id,
+                turn_id=ctx.turn_id,
+                tool_name="filing.search",
+                arguments=tool_args,
+                idempotency_key=ctx.idempotency_key,
+            )
+            db.flush()
+        except Exception:
+            logger.debug("Failed to record filing.search tool_call", exc_info=True)
+    
+    try:
+        # Execute synchronously (filing_search_tool is sync)
+        result = execute_filing_search(question, db)
+    except Exception as exc:
+        logger.warning("Filing search tool failed: %s", exc, exc_info=True)
+        if ctx.session and ctx.turn_id:
+            try:
+                chat_service.create_tool_output_message(
+                    db,
+                    session_id=ctx.session.id,
+                    turn_id=ctx.turn_id,
+                    tool_name="filing.search",
+                    output={"error": "filing_search_failed", "message": str(exc)},
+                    status="error",
+                    idempotency_key=ctx.idempotency_key,
+                )
+                db.flush()
+            except Exception:
+                logger.debug("Failed to record filing.search tool_output error", exc_info=True)
+        return None
+    
+    if ctx.session and ctx.turn_id:
+        try:
+            chat_service.create_tool_output_message(
+                db,
+                session_id=ctx.session.id,
+                turn_id=ctx.turn_id,
+                tool_name="filing.search",
+                output={
+                    "tool_name": "filing.search",
+                    "parsed_params": result["parsed_params"],
+                    "query_params": result.get("query_params", {}),
+                    "status": result.get("status", "ready_for_confirmation"),
+                    "message": result.get("message", ""),
+                },
+                status="ok",
+                idempotency_key=ctx.idempotency_key,
+            )
+            db.flush()
+        except Exception:
+            logger.debug("Failed to record filing.search tool_output", exc_info=True)
+    
+    return result
+
+
 def _compose_lightmem_context(
     question: str,
     conversation_memory: Optional[Dict[str, Any]],
@@ -2483,6 +2567,42 @@ def query_rag(
         )
         if intent_gate.response:
             return intent_gate.response
+
+        # Check for filing.search tool - handle differently (no RAG needed)
+        filing_search_result = _maybe_run_filing_search_tool(ctx, route_decision, db)
+        if filing_search_result:
+            # Filing search returns confirmation UI, wrap in minimal response
+            response = RAGQueryResponse(
+                question=ctx.question,
+                filing_id=None,
+                session_id=ctx.session.id,
+                turn_id=ctx.turn_id,
+                user_message_id=ctx.user_message.id,
+                assistant_message_id=ctx.assistant_message.id,
+                answer="공시 검색 요청을 처리했습니다. 위의 확인 카드에서 검색을 실행해주세요.",
+                context=[],
+                citations={},
+                warnings=[],
+                highlights=[],
+                error=None,
+                model_used=None,
+                trace_id=ctx.trace_id,
+                judge_decision=None,
+                judge_reason=None,
+                meta={"tool": "filing.search", "status": "confirmation_pending"},
+                state="ready",
+                related_filings=[],
+                rag_mode="tool",
+            )
+            chat_service.update_message_state(
+                db,
+                message_id=ctx.assistant_message.id,
+                state="ready",
+                content=response.answer,
+                meta=response.meta,
+            )
+            db.commit()
+            return response
 
         retrieval_stage = _run_retrieval_stage(ctx, request, db)
         event_chunks = _maybe_run_event_study_tool(ctx, route_decision, db)

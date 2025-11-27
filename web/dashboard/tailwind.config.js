@@ -1,6 +1,11 @@
 const plugin = require("tailwindcss/plugin");
 const typography = require("@tailwindcss/typography");
 
+const withOpacityValue = (variable, fallbackOpacity = 1) => ({ opacityValue }) => {
+  const opacity = opacityValue ?? fallbackOpacity;
+  return `rgb(var(${variable}) / ${opacity})`;
+};
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   darkMode: ["class"],
@@ -23,59 +28,108 @@ module.exports = {
       },
       colors: {
         canvas: {
-          light: "#F6F6F9",
-          DEFAULT: "#05070F",
-          dark: "#04060C"
-        },
-        background: {
-          light: "#F6F6F9",
-          dark: "#05070F",
-          cardLight: "#FFFFFF",
-          cardDark: "#0E1422"
+          DEFAULT: withOpacityValue("--color-bg-canvas"),
+          alt: withOpacityValue("--color-bg-alt")
         },
         surface: {
-          DEFAULT: "#0E1422",
-          muted: "#141B2B",
-          elevated: "rgba(19, 26, 41, 0.75)"
-        },
-        border: {
-          subtle: "rgba(255, 255, 255, 0.06)",
-          DEFAULT: "rgba(255, 255, 255, 0.12)",
-          strong: "#273147",
-          light: "#E2E6F0",
-          dark: "rgba(255, 255, 255, 0.12)"
+          1: withOpacityValue("--color-surface-1"),
+          2: withOpacityValue("--color-surface-2"),
+          3: withOpacityValue("--color-surface-3"),
+          glass: withOpacityValue("--color-surface-glass", 0.9),
+          // Legacy aliases
+          primary: withOpacityValue("--color-surface-1"),
+          secondary: withOpacityValue("--color-surface-2"),
+          tertiary: withOpacityValue("--color-surface-3"),
+          highlight: withOpacityValue("--color-accent-glow", 0.12),
+          muted: withOpacityValue("--color-surface-2")
         },
         text: {
-          primaryLight: "#0B1220",
-          secondaryLight: "#5B6474",
-          primaryDark: "#F7F9FC",
-          secondaryDark: "#B1B8C7",
-          muted: "#7A849A"
+          primary: withOpacityValue("--color-text-primary"),
+          secondary: withOpacityValue("--color-text-secondary"),
+          tertiary: withOpacityValue("--color-text-tertiary"),
+          muted: withOpacityValue("--color-text-muted"),
+          primaryLight: withOpacityValue("--color-text-primary"),
+          secondaryLight: withOpacityValue("--color-text-secondary"),
+          tertiaryLight: withOpacityValue("--color-text-tertiary"),
+          primaryDark: withOpacityValue("--color-text-primary"),
+          secondaryDark: withOpacityValue("--color-text-secondary"),
+          tertiaryDark: withOpacityValue("--color-text-tertiary")
+        },
+        border: {
+          DEFAULT: withOpacityValue("--color-border-hair", 0.12),
+          hair: withOpacityValue("--color-border-hair", 0.12),
+          subtle: withOpacityValue("--color-border-hair", 0.08),
+          light: withOpacityValue("--color-border-hair", 0.12),
+          strong: withOpacityValue("--color-border-strong", 0.28),
+          dark: withOpacityValue("--color-border-strong", 0.32),
+          glow: withOpacityValue("--color-border-glow", 0.4)
         },
         primary: {
-          DEFAULT: "#3B82F6",
-          hover: "#2563EB",
-          muted: "rgba(59, 130, 246, 0.15)",
-          foreground: "#FFFFFF"
+          DEFAULT: withOpacityValue("--color-accent-brand"),
+          hover: withOpacityValue("--color-accent-brand-strong"),
+          glow: withOpacityValue("--color-accent-glow"),
+          dark: withOpacityValue("--color-accent-brand")
         },
         accent: {
-          info: "#60A5FA",
-          success: "#34D399",
-          danger: "#F87171",
-          warning: "#FBBF24"
+          primary: withOpacityValue("--color-accent-brand"),
+          brand: withOpacityValue("--color-accent-brand"),
+          glow: withOpacityValue("--color-accent-glow"),
+          emerald: withOpacityValue("--color-accent-emerald"),
+          amber: withOpacityValue("--color-accent-amber"),
+          rose: withOpacityValue("--color-accent-rose"),
+          positive: withOpacityValue("--color-status-success"),
+          warning: withOpacityValue("--color-status-warning"),
+          negative: withOpacityValue("--color-status-error")
         },
-        finance: {
-          up: "#16B27C",
-          down: "#F04461",
-          neutral: "#94A3B8"
+        status: {
+          success: withOpacityValue("--color-status-success"),
+          error: withOpacityValue("--color-status-error"),
+          warning: withOpacityValue("--color-status-warning"),
+          info: withOpacityValue("--color-status-info")
+        },
+        background: {
+          light: withOpacityValue("--color-bg-alt"),
+          dark: withOpacityValue("--color-bg-canvas"),
+          card: withOpacityValue("--color-surface-1"),
+          cardLight: withOpacityValue("--color-surface-1"),
+          cardDark: withOpacityValue("--color-surface-2")
         }
       },
+      borderRadius: {
+        xs: "var(--radius-xs)",
+        sm: "var(--radius-sm)",
+        md: "var(--radius-md)",
+        lg: "var(--radius-lg)",
+        xl: "var(--radius-xl)",
+        "2xl": "calc(var(--radius-xl) + 4px)",
+        "3xl": "calc(var(--radius-xl) + 8px)"
+      },
+      backgroundImage: {
+        "aurora-gradient":
+          "radial-gradient(circle at 50% 0%, rgba(59,130,246,0.15), transparent 50%), radial-gradient(circle at 100% 0%, rgba(139,92,246,0.1), transparent 50%)",
+        "noise-pattern": "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.4'/%3E%3C/svg%3E\")",
+      },
+      animation: {
+        "aurora-flow": "aurora-flow 20s linear infinite",
+      },
+      keyframes: {
+        "aurora-flow": {
+          "0%": { backgroundPosition: "50% 50%, 50% 50%" },
+          "100%": { backgroundPosition: "350% 50%, 350% 50%" },
+        },
+      },
       backdropBlur: {
-        glass: "18px"
+        soft: "var(--blur-soft)",
+        glass: "var(--blur-glass)",
+        heavy: "var(--blur-heavy)"
       },
       boxShadow: {
-        card: "0 20px 45px rgba(5, 7, 15, 0.45)",
-        subtle: "0 8px 24px rgba(3, 7, 18, 0.35)"
+        subtle: "var(--shadow-1)",
+        card: "var(--shadow-2)",
+        "elevation-1": "var(--shadow-1)",
+        "elevation-2": "var(--shadow-2)",
+        "elevation-3": "var(--shadow-3)",
+        "glow-brand": "var(--shadow-glow-brand)"
       },
       transitionTimingFunction: {
         "motion-fast": "var(--motion-fast-ease)",

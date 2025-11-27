@@ -172,7 +172,7 @@ export default function LandingPage() {
   }, [loading, router, user]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
+    <div className="min-h-screen text-white">
       <NuvienHero />
       <main className="mx-auto flex w-full max-w-6xl flex-col gap-16 px-6 py-16">
         <section className="rounded-[32px] border border-border-subtle bg-surface-muted/80 p-4 shadow-card">

@@ -22,7 +22,7 @@ from schemas.api.filing import (
     FilingXmlResponse,
     SummaryResponse,
 )
-from services import storage_service, filing_jobs
+from services import storage_service, filing_jobs, filing_fetch_service
 
 router = APIRouter(prefix="/filings", tags=["Filings"])
 logger = get_logger(__name__)
@@ -234,15 +234,33 @@ def upload_filing(file: UploadFile = File(...), db: Session = Depends(get_db)):
     return new_filing
 
 
+@router.post("/{filing_id}/fetch", response_model=FilingDetailResponse)
+def fetch_filing_content(filing_id: uuid.UUID, db: Session = Depends(get_db)):
+    """
+    Trigger on-demand fetch for a filing that has metadata but no content.
+    Useful for 'Smart Backfill' items.
+    """
+    try:
+        updated_filing = filing_fetch_service.fetch_filing_content(db, filing_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    
+    # Return detail response
+    return FilingDetailResponse.model_validate(updated_filing, from_attributes=True)
+
+
 @router.get("/", response_model=list[FilingBriefResponse])
 def list_filings(
     skip: int = 0,
     limit: int = Query(100, ge=1, le=500, description="Maximum number of filings to return."),
-    ticker: str | None = Query(None, description="Filter by ticker symbol"),
-    corp_code: str | None = Query(None, description="Filter by DART corporation code."),
-    days: int = Query(30, ge=1, le=365, description="Look-back window in days when start_date is not provided."),
-    start_date: date | None = Query(None, description="Start date (inclusive) in YYYY-MM-DD format."),
-    end_date: date | None = Query(None, description="End date (inclusive) in YYYY-MM-DD format."),
+    company: str | None = Query(None, description="Filter by company name (exact match)."),
+    ticker: str | None = Query(None, description="Filter by ticker symbol."),
+    corp_code: str | None = Query(None, description="Filter by OpenDART corp_code."),
+    days: int = Query(3, ge=1, le=365, description="Number of days to look back. Defaults to 3 days."),
+    start_date: date | None = Query(None, description="Explicit start date (YYYY-MM-DD)."),
+    end_date: date | None = Query(None, description="Explicit end date (YYYY-MM-DD)."),
     sentiment: Literal["positive", "negative"] | None = Query(
         None,
         description="Filter by summary sentiment label (positive or negative).",
@@ -254,6 +272,9 @@ def list_filings(
         raise HTTPException(status_code=400, detail="start_date must be earlier than or equal to end_date.")
 
     query = db.query(Filing)
+    
+    if company:
+        query = query.filter(Filing.company == company)
     if ticker:
         query = query.filter(Filing.ticker == ticker)
     if corp_code:

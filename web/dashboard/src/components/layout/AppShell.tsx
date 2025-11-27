@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Suspense, useCallback, useEffect, useState } from "react";
-import { CircleUserRound, LogOut, Settings } from "lucide-react";
+import { CircleUserRound, LogOut, Settings, Sparkles } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import type { Route } from "next";
 
@@ -53,9 +53,9 @@ export function AppShell({ children }: AppShellProps) {
     }
     const onboardingRequired =
       typeof user === "object" &&
-      user !== null &&
-      "onboardingRequired" in user &&
-      typeof (user as { onboardingRequired?: unknown }).onboardingRequired === "boolean"
+        user !== null &&
+        "onboardingRequired" in user &&
+        typeof (user as { onboardingRequired?: unknown }).onboardingRequired === "boolean"
         ? Boolean((user as { onboardingRequired?: boolean }).onboardingRequired)
         : false;
     setNeedsOnboarding(onboardingRequired);
@@ -71,18 +71,21 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <PlanProvider>
-      <div className="relative min-h-screen w-full overflow-hidden bg-[#0D1117] text-white font-['Geist','Inter',sans-serif]">
-        <div className="pointer-events-none absolute inset-0 opacity-80">
-          <div className="absolute -left-28 -top-48 h-[26rem] w-[26rem] rounded-full bg-[#58A6FF]/12 blur-[180px]" />
-          <div className="absolute -right-32 bottom-[-200px] h-[30rem] w-[30rem] rounded-full bg-[#58A6FF]/10 blur-[200px]" />
-        </div>
+      <div className="relative min-h-screen w-full overflow-hidden text-text-primary font-['Geist','Inter',sans-serif]">
         <div className="pointer-events-none absolute inset-0 z-30 flex items-end justify-start pb-6 pl-6">
-          <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-[#30363D] bg-[#0f1624]/90 px-3 py-2 text-xs font-semibold text-slate-200 shadow-[0_12px_40px_rgba(0,0,0,0.45)] backdrop-blur-xl">
-            <Link href="/dashboard" className="flex items-center gap-2 rounded-full px-2 py-1 hover:text-white transition">
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-[#30363D] bg-[#161B22] text-sm font-semibold text-white shadow-[0_8px_24px_rgba(0,0,0,0.35)]">
+          <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-border-hair/70 bg-surface-2/85 px-3 py-2 text-xs font-semibold text-text-secondary shadow-elevation-1 backdrop-blur-glass">
+            <Link href="/dashboard" className="flex items-center gap-2 rounded-full px-2 py-1 transition hover:text-text-primary">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-border-hair/70 bg-surface-1/90 text-sm font-semibold text-text-primary shadow-subtle">
                 N
               </div>
-              <span className="hidden text-[11px] uppercase tracking-[0.3em] text-slate-400 sm:inline">Dashboard</span>
+              <span className="hidden text-[11px] uppercase tracking-[0.3em] text-text-secondary sm:inline">Dashboard</span>
+            </Link>
+            <Link
+              href="/insights"
+              className="inline-flex items-center gap-1.5 rounded-full border border-border-hair/70 bg-surface-1/90 px-3 py-1 text-[12px] font-semibold text-text-secondary shadow-subtle transition hover:border-primary/60 hover:text-text-primary"
+            >
+              <Sparkles className="h-4 w-4 text-accent-emerald" />
+              Insights
             </Link>
             <Link
               href="#"
@@ -90,29 +93,29 @@ export function AppShell({ children }: AppShellProps) {
                 event.preventDefault();
                 openSettings();
               }}
-              className="inline-flex items-center gap-1.5 rounded-full border border-[#30363D] bg-[#161B22] px-3 py-1 text-[12px] font-semibold text-slate-200 shadow-[0_8px_24px_rgba(0,0,0,0.35)] transition hover:border-[#58A6FF]/70 hover:text-white"
+              className="inline-flex items-center gap-1.5 rounded-full border border-border-hair/70 bg-surface-1/90 px-3 py-1 text-[12px] font-semibold text-text-secondary shadow-subtle transition hover:border-primary/60 hover:text-text-primary"
             >
-              <Settings className="h-4 w-4 text-[#58A6FF]" />
+              <Settings className="h-4 w-4 text-primary" />
               설정
             </Link>
             <button
               type="button"
               onClick={handleLogout}
               disabled={loggingOut}
-              className="inline-flex items-center gap-1.5 rounded-full border border-[#30363D] bg-[#161B22] px-3 py-1 text-[12px] font-semibold text-slate-200 shadow-[0_8px_24px_rgba(0,0,0,0.35)] transition hover:border-rose-400/70 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 rounded-full border border-border-hair/70 bg-surface-1/90 px-3 py-1 text-[12px] font-semibold text-text-secondary shadow-subtle transition hover:border-accent-rose/70 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <LogOut className="h-4 w-4 text-rose-400" />
+              <LogOut className="h-4 w-4 text-accent-rose" />
               {loggingOut ? "로그아웃 중" : "로그아웃"}
             </button>
-            <div className="flex items-center gap-2 rounded-full border border-[#30363D] bg-[#161B22] px-2.5 py-1 text-[12px] font-semibold text-slate-200 shadow-[0_8px_24px_rgba(0,0,0,0.35)]">
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#58A6FF]/15 text-[#58A6FF]">
+            <div className="flex items-center gap-2 rounded-full border border-border-hair/70 bg-surface-1/90 px-2.5 py-1 text-[12px] font-semibold text-text-secondary shadow-subtle">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/15 text-primary">
                 <CircleUserRound className="h-4 w-4" aria-hidden />
               </span>
               <span className="max-w-[140px] truncate">{loading ? "불러오는 중..." : displayName}</span>
             </div>
           </div>
         </div>
-        <div className="relative z-10 flex min-h-screen flex-col px-5 pb-6 pt-2 md:px-8">
+        <div className="relative z-10 flex min-h-screen flex-col px-4 pb-6 pt-2 md:px-6 lg:px-8">
           <ToastContainer />
           <ToolOverlay />
           <Suspense fallback={null}>

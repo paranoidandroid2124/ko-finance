@@ -6,27 +6,29 @@ import clsx from "clsx";
 import { ChatInterface } from "@/components/chat/ChatInterface";
 import { DailyBriefingCard } from "@/components/briefing/DailyBriefingCard";
 import { ReportEditor } from "@/components/report/ReportEditor";
+import { Card } from "@/components/ui/Card";
 import { useReportStore } from "@/stores/useReportStore";
 
 export default function DashboardPage() {
   const { isOpen } = useReportStore((state) => ({ isOpen: state.isOpen }));
 
   return (
-    <div className="relative flex h-screen w-full overflow-hidden">
-      <div className="pointer-events-auto absolute left-4 top-4 z-30 max-w-xl">
-        <DailyBriefingCard />
+    <div className="min-h-screen w-full bg-canvas">
+      <div className="mx-auto grid max-w-6xl grid-cols-12 gap-4 px-4 py-4 lg:gap-6 lg:px-6 lg:py-6">
+        <div className="col-span-12 space-y-4 lg:col-span-4">
+          <DailyBriefingCard />
+        </div>
+        <div className={clsx("col-span-12 transition-motion-medium", isOpen ? "lg:col-span-8" : "lg:col-span-12")}>
+          <ChatInterface />
+        </div>
+        {isOpen ? (
+          <div className="col-span-12 lg:col-span-4">
+            <Card variant="raised" padding="lg" className="h-full">
+              <ReportEditor />
+            </Card>
+          </div>
+        ) : null}
       </div>
-      <main className={clsx("flex-1 transition-all duration-300", isOpen ? "mr-[420px]" : "")}>
-        <ChatInterface />
-      </main>
-      <aside
-        className={clsx(
-          "fixed right-4 top-4 z-40 h-[calc(100vh-2rem)] w-[360px] rounded-3xl border border-white/10 bg-[#050a1c]/70 p-4 shadow-[0_25px_120px_rgba(15,23,42,0.45)] backdrop-blur-2xl transition-transform duration-300",
-          isOpen ? "translate-x-0 opacity-100" : "translate-x-[420px] opacity-0"
-        )}
-      >
-        <ReportEditor />
-      </aside>
     </div>
   );
 }

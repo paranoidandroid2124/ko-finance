@@ -1,5 +1,6 @@
+import { Download, Loader2 } from "lucide-react";
 import classNames from "classnames";
-import type { FilingListItem } from "@/hooks/useFilings";
+import { type FilingListItem, useFetchFiling } from "@/hooks/useFilings";
 
 type Props = {
   filings: FilingListItem[];
@@ -14,6 +15,13 @@ const sentimentBadge: Record<FilingListItem["sentiment"], string> = {
 };
 
 export function FilingsTable({ filings, selectedId, onSelect }: Props) {
+  const fetchFiling = useFetchFiling();
+
+  const handleFetch = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    fetchFiling.mutate(id);
+  };
+
   return (
     <div className="rounded-xl border border-border-light bg-background-cardLight shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
       <header className="flex items-center justify-between border-b border-border-light px-4 py-3 text-sm font-semibold dark:border-border-dark">
@@ -44,7 +52,24 @@ export function FilingsTable({ filings, selectedId, onSelect }: Props) {
               >
                 <td className="px-4 py-3 font-medium">{filing.company}</td>
                 <td className="px-4 py-3">
-                  <p className="line-clamp-1">{filing.title}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="line-clamp-1">{filing.title}</p>
+                    {filing.status === "PENDING" && (
+                      <button
+                        onClick={(e) => handleFetch(e, filing.id)}
+                        disabled={fetchFiling.isPending}
+                        className="flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20 disabled:opacity-50 dark:bg-primary.dark/20 dark:text-primary.dark dark:hover:bg-primary.dark/30"
+                        title="원문 가져오기"
+                      >
+                        {fetchFiling.isPending && fetchFiling.variables === filing.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Download className="h-3 w-3" />
+                        )}
+                        <span>Get</span>
+                      </button>
+                    )}
+                  </div>
                   <span
                     className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${sentimentBadge[filing.sentiment]}`}
                     title={filing.sentimentReason}

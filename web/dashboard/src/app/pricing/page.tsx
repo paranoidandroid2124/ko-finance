@@ -85,19 +85,19 @@ const PLANS: Plan[] = [
 ];
 
 const ICONS: Record<PlanId, JSX.Element> = {
-  starter: <Sparkles className="h-5 w-5 text-blue-300" />,
-  pro: <ShieldCheck className="h-5 w-5 text-amber-300" />,
-  team: <Users className="h-5 w-5 text-emerald-300" />,
+  starter: <Sparkles className="h-5 w-5 text-primary" />,
+  pro: <ShieldCheck className="h-5 w-5 text-accent-amber" />,
+  team: <Users className="h-5 w-5 text-accent-emerald" />,
 };
 
 export default function PricingPage() {
   return (
-    <div className="min-h-screen bg-[#0b1221] text-white px-4 py-16">
+    <div className="min-h-screen bg-canvas text-text-primary px-4 py-16">
       <div className="mx-auto max-w-6xl space-y-8">
         <div className="text-center space-y-3">
-          <p className="text-sm font-semibold tracking-wide text-blue-300/80 uppercase">Pricing</p>
-          <h1 className="text-3xl md:text-4xl font-bold leading-tight">분석가와 팀을 위한 단순한 요금제</h1>
-          <p className="text-slate-300 text-sm md:text-base">
+          <p className="text-sm font-semibold tracking-wide text-primary uppercase">Pricing</p>
+          <h1 className="text-3xl md:text-4xl font-bold leading-tight text-text-primary">분석가와 팀을 위한 단순한 요금제</h1>
+          <p className="text-text-secondary text-sm md:text-base">
             필요할 때 바로 업그레이드하고, 언제든지 다운그레이드할 수 있습니다.
           </p>
         </div>
@@ -106,28 +106,28 @@ export default function PricingPage() {
           {PLANS.map((plan) => (
             <div
               key={plan.id}
-              className={`relative flex flex-col rounded-2xl border bg-white/5 p-6 shadow-xl backdrop-blur-sm transition hover:-translate-y-1 hover:shadow-2xl hover:border-white/20 ${
+              className={`relative flex flex-col rounded-2xl border p-6 shadow-card backdrop-blur-glass transition hover:-translate-y-1 hover:shadow-elevation-2 ${
                 plan.tone === "primary"
-                  ? "border-amber-300/50 bg-gradient-to-b from-amber-200/10 to-amber-200/5"
-                  : "border-white/10"
+                  ? "border-accent-amber/60 bg-gradient-to-b from-accent-amber/12 to-accent-amber/6"
+                  : "border-border-hair/70 bg-surface-1/85"
               }`}
             >
               {plan.badge ? (
-                <span className="absolute right-4 top-4 rounded-full bg-amber-400/20 px-3 py-1 text-xs font-semibold text-amber-200">
+                <span className="absolute right-4 top-4 rounded-full bg-accent-amber/20 px-3 py-1 text-xs font-semibold text-text-primary">
                   {plan.badge}
                 </span>
               ) : null}
               <div className="flex items-center gap-3">
-                <div className="rounded-xl border border-white/10 bg-white/5 p-2">{ICONS[plan.id]}</div>
+                <div className="rounded-xl border border-border-hair/60 bg-surface-2/70 p-2">{ICONS[plan.id]}</div>
                 <div>
                   <p className="text-lg font-semibold">{plan.name}</p>
-                  <p className="text-xs text-slate-300">{plan.subtitle}</p>
+                  <p className="text-xs text-text-secondary">{plan.subtitle}</p>
                 </div>
               </div>
 
               <div className="mt-6">
                 <p className="text-3xl font-bold">{plan.price}</p>
-                <p className="text-xs text-slate-400">월 구독 · 언제든 해지 가능</p>
+                <p className="text-xs text-text-muted">월 구독 · 언제든 해지 가능</p>
               </div>
 
               <div className="mt-5 space-y-2">
@@ -135,8 +135,8 @@ export default function PricingPage() {
                   href={plan.ctaHref}
                   className={`flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition ${
                     plan.tone === "primary"
-                      ? "bg-amber-300 text-slate-900 hover:bg-amber-200"
-                      : "bg-white/10 text-white hover:bg-white/20"
+                      ? "bg-accent-amber text-background-dark hover:bg-accent-amber/90"
+                      : "bg-surface-2/90 text-text-primary hover:bg-surface-2"
                   }`}
                 >
                   {plan.ctaLabel} <ArrowRight className="h-4 w-4" />
@@ -145,14 +145,14 @@ export default function PricingPage() {
                   plan.ctaSecondary.external ? (
                     <a
                       href={plan.ctaSecondary.href}
-                      className="flex items-center justify-center gap-2 rounded-xl border border-white/15 px-4 py-3 text-xs font-semibold text-slate-200 transition hover:border-white/40 hover:text-white"
+                      className="flex items-center justify-center gap-2 rounded-xl border border-border-hair/70 px-4 py-3 text-xs font-semibold text-text-secondary transition hover:border-primary/60 hover:text-text-primary"
                     >
                       {plan.ctaSecondary.label}
                     </a>
                   ) : (
                     <Link
                       href={plan.ctaSecondary.href as Route}
-                      className="flex items-center justify-center gap-2 rounded-xl border border-white/15 px-4 py-3 text-xs font-semibold text-slate-200 transition hover:border-white/40 hover:text-white"
+                      className="flex items-center justify-center gap-2 rounded-xl border border-border-hair/70 px-4 py-3 text-xs font-semibold text-text-secondary transition hover:border-primary/60 hover:text-text-primary"
                     >
                       {plan.ctaSecondary.label}
                     </Link>
@@ -160,12 +160,12 @@ export default function PricingPage() {
                 ) : null}
               </div>
 
-              <ul className="mt-6 space-y-3 text-sm text-slate-200">
+              <ul className="mt-6 space-y-3 text-sm text-text-secondary">
                 {plan.features.map((feature, idx) => (
                   <li key={idx} className="flex items-start gap-2">
-                    <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-300" />
+                    <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-accent-emerald" />
                     <span
-                      className={`${feature.highlight ? "font-semibold text-white" : ""}`}
+                      className={`${feature.highlight ? "font-semibold text-text-primary" : ""}`}
                       title={feature.tooltip}
                     >
                       {feature.label}
@@ -174,7 +174,7 @@ export default function PricingPage() {
                 ))}
               </ul>
 
-              <div className="mt-auto pt-6 text-[11px] text-slate-400">
+              <div className="mt-auto pt-6 text-[11px] text-text-muted">
                 {plan.id === "pro"
                   ? "14일 무료 체험 후 매월 자동 결제됩니다."
                   : plan.id === "team"

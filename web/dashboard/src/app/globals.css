@@ -2,23 +2,62 @@
 @tailwind components;
 @tailwind utilities;
 
+@import "../styles/tokens.css";
 @import "../styles/motion.css";
 
 :root {
   color-scheme: light;
-  background-color: #f6f6f9;
-  color: #0b1220;
+  background-color: rgb(var(--color-bg-canvas));
+  color: rgb(var(--color-text-primary));
 }
 
 .dark {
   color-scheme: dark;
-  background-color: #05070f;
-  color: #f7f9fc;
+  background-color: rgb(var(--color-bg-canvas));
+  color: rgb(var(--color-text-primary));
 }
 
 body {
-  @apply font-sans bg-canvas-light text-text-primaryLight antialiased transition-colors duration-300 dark:bg-canvas dark:text-text-primaryDark;
+  @apply font-sans bg-canvas text-text-primary antialiased transition-colors duration-300;
   letter-spacing: -0.01em;
+}
+
+/* Map legacy slate/white classes to semantic tokens for consistency */
+.text-slate-200 { color: rgb(var(--color-text-primary)) !important; }
+.text-slate-300 { color: rgb(var(--color-text-secondary)) !important; }
+.text-slate-400 { color: rgb(var(--color-text-secondary)) !important; }
+.text-slate-500 { color: rgb(var(--color-text-muted)) !important; }
+.text-white { color: rgb(var(--color-text-primary)) !important; }
+
+.bg-slate-950 { background-color: rgb(var(--color-bg-canvas)) !important; }
+.bg-slate-900 { background-color: rgb(var(--color-surface-1)) !important; }
+.bg-slate-900\/60 { background-color: rgba(var(--color-surface-1), 0.6) !important; }
+
+.bg-white\/5 { background-color: rgba(var(--color-surface-1), 0.8) !important; }
+.bg-white\/10 { background-color: rgba(var(--color-surface-1), 0.9) !important; }
+.bg-white\/20 { background-color: rgba(var(--color-surface-1), 0.92) !important; }
+.bg-white\/30 { background-color: rgba(var(--color-surface-1), 0.94) !important; }
+.bg-white\/40 { background-color: rgba(var(--color-surface-1), 0.96) !important; }
+
+.border-white\/5 { border-color: rgba(var(--color-border-hair), 0.2) !important; }
+.border-white\/10 { border-color: rgba(var(--color-border-hair), 0.3) !important; }
+.border-white\/15 { border-color: rgba(var(--color-border-hair), 0.4) !important; }
+.border-white\/20 { border-color: rgba(var(--color-border-hair), 0.5) !important; }
+.border-white\/30 { border-color: rgba(var(--color-border-hair), 0.6) !important; }
+.border-white\/40 { border-color: rgba(var(--color-border-hair), 0.7) !important; }
+
+.border-slate-800 { border-color: rgba(var(--color-border-strong), 0.7) !important; }
+.border-slate-700 { border-color: rgba(var(--color-border-strong), 0.6) !important; }
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 a {
@@ -31,7 +70,14 @@ a {
 }
 
 .glass-panel {
-  @apply border border-border-subtle bg-surface-elevated/90 backdrop-blur-glass;
+  @apply border border-border-subtle bg-surface-primary/80 backdrop-blur-glass;
+}
+
+.surface-glass {
+  @apply border border-border bg-surface-primary/60 backdrop-blur-md shadow-lg;
+  box-shadow:
+    0 4px 24px -1px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
 }
 
 .bento-grid {
@@ -41,7 +87,7 @@ a {
 }
 
 .bento-card {
-  @apply rounded-3xl border border-border-subtle bg-surface-muted/90 p-6 shadow-subtle;
+  @apply rounded-3xl border border-border-subtle bg-surface-secondary/90 p-6 shadow-subtle;
 }
 
 .page-shell {
@@ -49,7 +95,7 @@ a {
 }
 
 .section-heading {
-  @apply text-xs font-semibold uppercase tracking-[0.35em] text-text-secondaryDark;
+  @apply text-xs font-semibold uppercase tracking-[0.35em] text-text-secondary;
 }
 
 .focused-mode {
@@ -59,6 +105,7 @@ a {
 }
 
 @media print {
+
   aside,
   header,
   button,

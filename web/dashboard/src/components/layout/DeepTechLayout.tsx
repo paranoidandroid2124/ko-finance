@@ -11,7 +11,7 @@ type DeepTechLayoutProps = PropsWithChildren<{
  */
 export default function DeepTechLayout({ children, className }: DeepTechLayoutProps) {
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#030718] text-slate-100">
+    <div className="relative min-h-screen overflow-hidden bg-canvas text-text-primary">
       <div className="pointer-events-none fixed inset-0 z-0">
         <div
           className={clsx(

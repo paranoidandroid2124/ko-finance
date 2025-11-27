@@ -65,7 +65,7 @@ export function ChatHistoryList({
   const showLoadingState = Boolean(disabled && isEmpty);
 
   const asideClasses =
-    "hidden w-[320px] max-h-[calc(100vh-160px)] flex-shrink-0 flex-col gap-4 overflow-hidden rounded-3xl border border-[#30363D] bg-[#0f1624]/90 p-4 text-sm text-slate-300 shadow-[0_20px_80px_rgba(0,0,0,0.55)] backdrop-blur-xl transition duration-300 xl:flex" +
+    "hidden w-[320px] max-h-[calc(100vh-160px)] flex-shrink-0 flex-col gap-4 overflow-hidden rounded-3xl border border-border-subtle bg-surface-1/90 p-4 text-sm text-text-secondary shadow-[0_20px_80px_rgba(0,0,0,0.55)] backdrop-blur-xl transition duration-300 xl:flex" +
     (dimmed ? " focused-mode" : "");
 
   return (
@@ -73,14 +73,14 @@ export function ChatHistoryList({
       <div className="flex items-center justify-between">
         <div>
           <p className="text-[10px] uppercase tracking-[0.4em] text-slate-500">History</p>
-          <p className="text-lg font-semibold text-white">대화 히스토리</p>
+          <p className="text-lg font-semibold text-text-primary">대화 히스토리</p>
         </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={onNewSession}
             disabled={disabled}
-            className="rounded-2xl border border-white/10 bg-white/5 p-2 text-slate-300 transition hover:border-white/30 hover:text-white disabled:opacity-50"
+            className="rounded-2xl border border-border-subtle bg-surface-2/60 p-2 text-text-secondary transition hover:border-border-strong hover:text-text-primary disabled:opacity-50"
             aria-label="새 세션"
           >
             <Plus className="h-4 w-4" />
@@ -89,7 +89,7 @@ export function ChatHistoryList({
             type="button"
             onClick={openClearAll}
             disabled={disabled || isEmpty}
-            className="rounded-2xl border border-white/5 bg-white/0 p-2 text-slate-500 transition hover:border-rose-400/60 hover:text-rose-300 disabled:opacity-40"
+            className="rounded-2xl border border-border-subtle bg-surface-2/30 p-2 text-text-muted transition hover:border-rose-400/60 hover:text-rose-300 disabled:opacity-40"
             aria-label="전체 삭제"
           >
             <Trash2 className="h-4 w-4" />
@@ -101,11 +101,11 @@ export function ChatHistoryList({
       ) : null}
       <div className="flex-1 min-h-0 space-y-2 overflow-y-auto pr-1">
         {showLoadingState ? (
-          <p className="rounded-2xl border border-[#30363D] bg-[#0D1117]/60 px-4 py-6 text-center text-xs text-slate-400">
+          <p className="rounded-2xl border border-border-subtle bg-surface-2/80 px-4 py-6 text-center text-xs text-text-secondary">
             대화 기록을 불러오고 있습니다...
           </p>
         ) : isEmpty ? (
-          <p className="rounded-2xl border border-[#30363D] bg-[#0D1117]/60 px-4 py-6 text-center text-xs text-slate-500">
+          <p className="rounded-2xl border border-border-subtle bg-surface-2/80 px-4 py-6 text-center text-xs text-text-muted">
             아직 생성된 대화가 없습니다.
           </p>
         ) : (
@@ -114,8 +114,8 @@ export function ChatHistoryList({
             const baseClasses =
               "w-full rounded-2xl border px-4 py-3 text-left transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50";
             const palette = isActive
-              ? "border-blue-500/40 bg-blue-500/10 text-white shadow-lg shadow-blue-500/30"
-              : "border-white/5 text-slate-300 hover:border-white/20 hover:bg-white/5";
+              ? "border-primary/40 bg-primary/10 text-text-primary shadow-lg shadow-primary/30"
+              : "border-border-subtle text-text-secondary hover:border-border-strong hover:bg-surface-2/60";
             return (
               <div key={session.id} className="group relative flex items-center gap-2">
                 <button
@@ -125,7 +125,7 @@ export function ChatHistoryList({
                   disabled={disabled}
                 >
                   <p className="font-semibold">{session.title}</p>
-                  <p className="text-[11px] text-slate-400">{renderUpdatedAt(session.updatedAt)}</p>
+                  <p className="text-[11px] text-text-muted">{renderUpdatedAt(session.updatedAt)}</p>
                 </button>
                 <button
                   type="button"
@@ -135,7 +135,7 @@ export function ChatHistoryList({
                   }}
                   disabled={disabled}
                   aria-label="세션 삭제"
-                  className="rounded-2xl border border-white/5 bg-white/0 p-2 text-slate-500 opacity-0 transition hover:border-rose-400/60 hover:text-rose-300 group-hover:opacity-100 disabled:opacity-20"
+                  className="rounded-2xl border border-border-subtle bg-surface-2/30 p-2 text-text-muted opacity-0 transition hover:border-rose-400/60 hover:text-rose-300 group-hover:opacity-100 disabled:opacity-20"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -147,10 +147,10 @@ export function ChatHistoryList({
       {footer ? <div className="pt-3">{footer}</div> : null}
       {confirm && (
         <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/60 px-4">
-          <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-[#050a1c]/95 p-6 text-sm text-slate-200 shadow-[0_40px_120px_rgba(4,7,15,0.85)] backdrop-blur-2xl">
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-500">{confirm.type === "clear" ? "Clear All" : "Delete Session"}</p>
-            <h4 className="mt-2 text-xl font-semibold text-white">{confirm.type === "clear" ? "모든 세션 삭제" : "세션 삭제"}</h4>
-            <p className="mt-3 text-sm text-slate-400">
+          <div className="w-full max-w-sm rounded-3xl border border-border-subtle bg-surface-1/95 p-6 text-sm text-text-secondary shadow-[0_40px_120px_rgba(4,7,15,0.85)] backdrop-blur-2xl">
+            <p className="text-xs uppercase tracking-[0.3em] text-text-muted">{confirm.type === "clear" ? "Clear All" : "Delete Session"}</p>
+            <h4 className="mt-2 text-xl font-semibold text-text-primary">{confirm.type === "clear" ? "모든 세션 삭제" : "세션 삭제"}</h4>
+            <p className="mt-3 text-sm text-text-secondary">
               {confirm.type === "clear"
                 ? "저장된 모든 대화를 삭제할까요? 이 작업은 되돌릴 수 없습니다."
                 : `"${confirm.title}" 세션을 삭제할까요?`}
@@ -159,7 +159,7 @@ export function ChatHistoryList({
               <button
                 type="button"
                 onClick={handleCancel}
-                className="rounded-full border border-white/10 px-4 py-2 text-slate-400 transition hover:border-white/40 hover:text-white"
+                className="rounded-full border border-border-subtle px-4 py-2 text-text-secondary transition hover:border-border-strong hover:text-text-primary"
               >
                 취소
               </button>

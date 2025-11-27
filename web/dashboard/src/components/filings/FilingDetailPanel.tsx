@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback } from "react";
-import type { FilingDetail } from "@/hooks/useFilings";
+import { Loader2, Download } from "lucide-react";
+import { type FilingDetail, useFetchFiling } from "@/hooks/useFilings";
 import { useChatStore } from "@/store/chatStore";
 import { FilingPdfDownloadNotice, FilingKoglBadge } from "@/components/legal";
 
@@ -16,8 +17,13 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
   const sentiment = sentimentText[filing.sentiment];
   const router = useRouter();
   const startFilingConversation = useChatStore((state) => state.startFilingConversation);
+  const fetchFiling = useFetchFiling();
 
   const handleAskClick = useCallback(async () => {
+    if (filing.status === "PENDING") {
+      window.alert("먼저 원문을 가져와야 질문할 수 있습니다.");
+      return;
+    }
     if (!filing.summary?.trim()) {
       window.alert("요약 정보가 없어 질문을 시작할 수 없습니다.");
       return;
@@ -39,6 +45,7 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
       window.alert(message);
     }
   }, [filing, router, startFilingConversation]);
+
   const handleOpenPdf = useCallback(() => {
     if (!filing.pdfViewerUrl && !filing.pdfDownloadUrl) {
       window.alert("열 수 있는 PDF가 없습니다.");
@@ -49,6 +56,10 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
       window.open(targetUrl, "_blank", "noopener,noreferrer");
     }
   }, [filing.pdfViewerUrl, filing.pdfDownloadUrl]);
+
+  const handleFetch = useCallback(() => {
+    fetchFiling.mutate(filing.id);
+  }, [fetchFiling, filing.id]);
 
   return (
     <aside className="flex h-full max-h-[calc(100vh-160px)] flex-col overflow-hidden rounded-xl border border-border-light bg-background-cardLight p-5 shadow-card transition-colors dark:border-border-dark dark:bg-background-cardDark">
@@ -73,7 +84,9 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
           <div>
             <h3 className="text-sm font-semibold">요약</h3>
             <p className="mt-2 text-text-secondaryLight dark:text-text-secondaryDark">
-              {filing.summary || "요약이 제공되지 않았습니다."}
+              {filing.status === "PENDING"
+                ? "원문이 아직 다운로드되지 않았습니다. 아래 버튼을 눌러 가져오세요."
+                : (filing.summary || "요약이 제공되지 않았습니다.")}
             </p>
           </div>
 
@@ -103,13 +116,28 @@ export function FilingDetailPanel({ filing }: { filing: FilingDetail }) {
           <FilingPdfDownloadNotice />
         </div>
         <div className="mt-3 flex gap-2">
-          <button
-            onClick={handleOpenPdf}
-            disabled={!filing.pdfViewerUrl && !filing.pdfDownloadUrl}
-            className="flex-1 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white shadow transition-opacity hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            PDF 열기
-          </button>
+          {filing.status === "PENDING" ? (
+            <button
+              onClick={handleFetch}
+              disabled={fetchFiling.isPending}
+              className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white shadow transition-opacity hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {fetchFiling.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              <span>원문 가져오기</span>
+            </button>
+          ) : (
+            <button
+              onClick={handleOpenPdf}
+              disabled={!filing.pdfViewerUrl && !filing.pdfDownloadUrl}
+              className="flex-1 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white shadow transition-opacity hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              PDF 열기
+            </button>
+          )}
           <button
             onClick={handleAskClick}
             className="flex-1 rounded-lg border border-border-light px-3 py-2 text-sm font-semibold text-text-secondaryLight transition-colors hover:border-primary hover:text-primary dark:border-border-dark dark:text-text-secondaryDark dark:hover-border-primary.dark dark:hover:text-primary.dark"

@@ -44,7 +44,7 @@ export function SettingsModal() {
           exit={{ opacity: 0 }}
         >
           <motion.div
-            className="relative flex h-[80vh] w-[960px] max-w-[95vw] overflow-hidden rounded-3xl border border-white/10 bg-[#0c111d]/90 shadow-[0_24px_120px_rgba(0,0,0,0.45)]"
+            className="relative flex h-[80vh] w-[960px] max-w-[95vw] overflow-hidden rounded-3xl border border-border-subtle bg-surface-1/90 shadow-[0_24px_120px_rgba(0,0,0,0.45)]"
             initial={{ scale: 0.96, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.96, opacity: 0 }}
@@ -67,11 +67,10 @@ export function SettingsModal() {
                       key={section.id}
                       type="button"
                       onClick={() => setActiveSection(section.id)}
-                      className={`w-full rounded-xl px-3 py-3 text-left transition ${
-                        active
+                      className={`w-full rounded-xl px-3 py-3 text-left transition ${active
                           ? "bg-white/10 text-white shadow-[0_12px_36px_rgba(88,166,255,0.25)]"
                           : "text-slate-300 hover:bg-white/5"
-                      }`}
+                        }`}
                     >
                       <p className="text-sm font-semibold">{section.label}</p>
                       <p className="text-[11px] text-slate-400">{section.description}</p>

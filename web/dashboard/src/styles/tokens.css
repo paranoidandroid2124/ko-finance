@@ -1,0 +1,86 @@
+:root {
+  /* Background & Surfaces */
+  --color-bg-canvas: 3 7 18; /* #030712 */
+  --color-bg-alt: 6 10 22; /* #060A16 */
+
+  --color-surface-1: 10 16 28; /* #0A101C */
+  --color-surface-2: 16 22 36; /* #101624 */
+  --color-surface-3: 24 30 46; /* #181E2E */
+  --color-surface-glass: 14 20 32; /* #0E1420 */
+
+  /* Borders */
+  --color-border-hair: 255 255 255; /* base channel, opacity controlled per token */
+  --color-border-strong: 88 104 144; /* #586890 */
+  --color-border-glow: 88 225 255; /* brand outline */
+
+  /* Text */
+  --color-text-primary: 247 249 252; /* #F7F9FC */
+  --color-text-secondary: 186 197 213; /* #BAC5D5 */
+  --color-text-tertiary: 144 155 175; /* #909BAF */
+  --color-text-muted: 116 128 148; /* #748094 */
+
+  /* Accents & Brand */
+  --color-accent-brand: 88 225 255; /* Electric Cyan */
+  --color-accent-brand-strong: 72 196 224; /* CTA hover */
+  --color-accent-glow: 189 123 255; /* Orchid glow */
+  --color-accent-emerald: 52 211 153;
+  --color-accent-amber: 252 211 77;
+  --color-accent-rose: 244 114 182;
+
+  /* Status */
+  --color-status-success: 52 211 153;
+  --color-status-warning: 250 204 21;
+  --color-status-error: 239 68 68;
+  --color-status-info: 96 165 250;
+
+  /* Radius */
+  --radius-xs: 8px;
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --radius-xl: 24px;
+
+  /* Shadows / Glow */
+  --shadow-1: 0 10px 30px -12px rgba(0, 0, 0, 0.45);
+  --shadow-2: 0 18px 60px -18px rgba(0, 0, 0, 0.55);
+  --shadow-3: 0 28px 90px -24px rgba(0, 0, 0, 0.65);
+  --shadow-glow-brand: 0 0 0 1px rgba(88, 225, 255, 0.18), 0 20px 60px rgba(88, 225, 255, 0.25);
+
+  /* Blur */
+  --blur-soft: 8px;
+  --blur-glass: 16px;
+  --blur-heavy: 24px;
+
+  /* Spacing (px) */
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+}
+
+.theme-light,
+:root.light {
+  --color-bg-canvas: 245 247 252;
+  --color-bg-alt: 231 236 245;
+
+  --color-surface-1: 255 255 255;
+  --color-surface-2: 245 248 255;
+  --color-surface-3: 232 238 250;
+  --color-surface-glass: 255 255 255;
+
+  --color-text-primary: 12 18 32;
+  --color-text-secondary: 72 84 104;
+  --color-text-tertiary: 108 119 136;
+  --color-text-muted: 134 144 162;
+
+  --color-border-hair: 12 18 32;
+  --color-border-strong: 44 60 92;
+
+  /* Light Theme Accents (High Contrast) */
+  --color-accent-brand: 0 100 210; /* Royal Blue */
+  --color-accent-brand-strong: 0 80 180; /* Deep Blue */
+  --color-accent-glow: 140 80 220; /* Deep Purple */
+}

@@ -52,6 +52,11 @@ def main() -> None:
         help="Number of days to fetch per seeding chunk (default: 3).",
     )
     parser.add_argument("--corp-code", type=str, default=None, help="Restrict backfill to a specific corp_code.")
+    parser.add_argument(
+        "--metadata-only",
+        action="store_true",
+        help="Fetch only filing metadata without downloading content (saves API quota).",
+    )
     parser.add_argument("--log-level", default="INFO", help="Logging level (default: INFO).")
     args = parser.parse_args()
 
@@ -69,16 +74,18 @@ def main() -> None:
     try:
         for chunk_start, chunk_end in _chunk_range(start_date, end_date, max(1, args.chunk_days)):
             logger.info(
-                "Backfilling filings %s -> %s (corp_code=%s)",
+                "Backfilling filings %s -> %s (corp_code=%s, metadata_only=%s)",
                 chunk_start,
                 chunk_end,
                 args.corp_code or "ALL",
+                args.metadata_only,
             )
             created = seed_recent_filings(
                 db=db,
                 start_date=chunk_start,
                 end_date=chunk_end,
                 corp_code=args.corp_code,
+                metadata_only=args.metadata_only,
             )
             total_inserted += created
     finally:

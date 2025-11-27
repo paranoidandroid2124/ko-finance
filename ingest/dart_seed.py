@@ -84,6 +84,7 @@ def seed_recent_filings(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     corp_code: Optional[str] = None,
+    metadata_only: bool = False,
 ) -> int:
     own_session = False
     if db is None:
@@ -125,62 +126,67 @@ def seed_recent_filings(
             package_data = None
             package_result: Optional[str] = None
 
-            try:
-                zip_bytes = client.download_document_zip(receipt_no)
-            except Exception as exc:  # pragma: no cover - defensive network guard
-                logger.warning("Direct ZIP download failed for %s: %s", receipt_no, exc)
-                record_error(PACKAGE_STAGE, "zip_download", exc)
-                zip_bytes = None
+            if not metadata_only:
+                try:
+                    zip_bytes = client.download_document_zip(receipt_no)
+                except Exception as exc:  # pragma: no cover - defensive network guard
+                    logger.warning("Direct ZIP download failed for %s: %s", receipt_no, exc)
+                    record_error(PACKAGE_STAGE, "zip_download", exc)
+                    zip_bytes = None
 
-            if zip_bytes:
-                package_data = parse_filing_bundle(
-                    receipt_no=receipt_no,
-                    data=zip_bytes,
-                    save_dir=UPLOAD_DIR,
-                    download_url=client.make_document_url(receipt_no),
-                )
-                if package_data:
-                    package_result = "success"
-                else:
-                    record_error(PACKAGE_STAGE, "zip_payload", "EmptyPackage")
-
-            if not package_data:
-                corp_code = meta.get("corp_code")
-                fallback_outcome = attempt_viewer_fallback(
-                    receipt_no=receipt_no,
-                    viewer_url=viewer_url,
-                    save_dir=UPLOAD_DIR,
-                    corp_code=corp_code,
-                    corp_name=meta.get("corp_name"),
-                    db=db,
-                )
-                package_data = fallback_outcome.package
-                package_result = fallback_outcome.status
-
-                if fallback_outcome.status == "fallback_blocked":
-                    logger.warning(
-                        "Viewer fallback blocked for receipt %s (corp_code=%s).",
-                        receipt_no,
-                        corp_code,
+                if zip_bytes:
+                    package_data = parse_filing_bundle(
+                        receipt_no=receipt_no,
+                        data=zip_bytes,
+                        save_dir=UPLOAD_DIR,
+                        download_url=client.make_document_url(receipt_no),
                     )
-                elif fallback_outcome.status == "fallback_disabled":
-                    logger.warning("Viewer fallback globally disabled for %s.", receipt_no)
-                elif fallback_outcome.status == "fallback_failure":
-                    logger.error("Failed to obtain filing package for %s via viewer.", receipt_no)
-                elif fallback_outcome.status == "fallback_success":
-                    logger.info("Recovered filing package for %s via viewer fallback.", receipt_no)
+                    if package_data:
+                        package_result = "success"
+                    else:
+                        record_error(PACKAGE_STAGE, "zip_payload", "EmptyPackage")
 
                 if not package_data:
-                    if fallback_outcome.status == "fallback_failure":
-                        record_error(PACKAGE_STAGE, "viewer_fallback", "NoPackage")
-                    fetch_duration = time.perf_counter() - fetch_started
-                    observe_latency(PACKAGE_STAGE, fetch_duration)
-                    record_result(PACKAGE_STAGE, package_result)
-                    continue
+                    corp_code = meta.get("corp_code")
+                    fallback_outcome = attempt_viewer_fallback(
+                        receipt_no=receipt_no,
+                        viewer_url=viewer_url,
+                        save_dir=UPLOAD_DIR,
+                        corp_code=corp_code,
+                        corp_name=meta.get("corp_name"),
+                        db=db,
+                    )
+                    package_data = fallback_outcome.package
+                    package_result = fallback_outcome.status
 
-            fetch_duration = time.perf_counter() - fetch_started
-            observe_latency(PACKAGE_STAGE, fetch_duration)
-            record_result(PACKAGE_STAGE, package_result or "success")
+                    if fallback_outcome.status == "fallback_blocked":
+                        logger.warning(
+                            "Viewer fallback blocked for receipt %s (corp_code=%s).",
+                            receipt_no,
+                            corp_code,
+                        )
+                    elif fallback_outcome.status == "fallback_disabled":
+                        logger.warning("Viewer fallback globally disabled for %s.", receipt_no)
+                    elif fallback_outcome.status == "fallback_failure":
+                        logger.error("Failed to obtain filing package for %s via viewer.", receipt_no)
+                    elif fallback_outcome.status == "fallback_success":
+                        logger.info("Recovered filing package for %s via viewer fallback.", receipt_no)
+
+                    if not package_data:
+                        if fallback_outcome.status == "fallback_failure":
+                            record_error(PACKAGE_STAGE, "viewer_fallback", "NoPackage")
+                        fetch_duration = time.perf_counter() - fetch_started
+                        observe_latency(PACKAGE_STAGE, fetch_duration)
+                        record_result(PACKAGE_STAGE, package_result)
+                        continue
+
+                fetch_duration = time.perf_counter() - fetch_started
+                observe_latency(PACKAGE_STAGE, fetch_duration)
+                record_result(PACKAGE_STAGE, package_result or "success")
+            else:
+                # Metadata-only mode: skip download
+                package_data = {}
+                package_result = "metadata_only"
 
             pdf_path = package_data.get("pdf")
             xml_entries = []

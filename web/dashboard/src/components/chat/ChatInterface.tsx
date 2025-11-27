@@ -16,6 +16,7 @@ import { useReportStore } from "@/stores/useReportStore";
 import { useAuth } from "@/lib/authContext";
 import { useChatStore, type ChatMessage, type ChatRole } from "@/store/chatStore";
 import { createMessage } from "@/lib/chatApi";
+import { Card } from "@/components/ui/Card";
 
 export function ChatInterface() {
   return (
@@ -205,6 +206,7 @@ function ChatInterfaceContent() {
               context_ids: contextIds,
             });
             savedId = saved.id ?? savedId;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             savedTimestamp = (saved as any)?.created_at ?? savedTimestamp;
           } catch (error) {
             console.warn("Mini chat import save failed (using local only):", error);
@@ -266,57 +268,60 @@ function ChatInterfaceContent() {
           ) : null
         }
       />
+      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
       <OnboardingGuide />
       <GuestUpsellModal open={guestModalOpen && guestPass.isGuest} onClose={() => setGuestModalOpen(false)} />
 
       {dialogOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4">
           <form
-            className="w-full max-w-md rounded-3xl border border-border-dark bg-surface p-6 text-slate-100 shadow-2xl"
+            className="w-full max-w-md"
             onSubmit={handleSubmit}
           >
-            <div className="flex items-center gap-3 text-sm font-semibold uppercase tracking-[0.2em] text-slate-400">
-              <FileText className="h-4 w-4 text-primary" />
-              New Report
-            </div>
-            <h2 className="mt-3 text-2xl font-semibold text-white">Which ticker do you want to analyze?</h2>
-            <p className="mt-2 text-sm text-slate-400">
-              Examples: <span className="font-semibold text-slate-200">AAPL</span>,{" "}
-              <span className="font-semibold text-slate-200">005930</span>,{" "}
-              <span className="font-semibold text-slate-200">TSLA</span>
-            </p>
-            <div className="mt-6 space-y-2">
-              <label htmlFor="report-ticker" className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Ticker
-              </label>
-              <input
-                id="report-ticker"
-                name="ticker"
-                autoFocus
-                value={tickerInput}
-                onChange={(event) => setTickerInput(event.target.value)}
-                className="w-full rounded-2xl border border-border-dark bg-background-dark px-4 py-3 text-base font-semibold uppercase tracking-wide text-white placeholder:text-slate-500 focus:border-primary focus:outline-none"
-                placeholder="e.g. AAPL"
-              />
-              {inputError && <p className="text-xs text-rose-400">{inputError}</p>}
-            </div>
-            <div className="mt-6 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                className="rounded-full px-4 py-2 text-sm font-semibold text-slate-400 hover:text-slate-200"
-                onClick={handleDialogClose}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-primary/40 disabled:cursor-not-allowed disabled:bg-primary/40"
-                disabled={generateReport.isPending}
-              >
-                {generateReport.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                Create report
-              </button>
-            </div>
+            <Card variant="glass" padding="lg" className="shadow-2xl">
+              <div className="flex items-center gap-3 text-sm font-semibold uppercase tracking-[0.2em] text-slate-400">
+                <FileText className="h-4 w-4 text-primary" />
+                New Report
+              </div>
+              <h2 className="mt-3 text-2xl font-semibold text-white">Which ticker do you want to analyze?</h2>
+              <p className="mt-2 text-sm text-slate-400">
+                Examples: <span className="font-semibold text-slate-200">AAPL</span>,{" "}
+                <span className="font-semibold text-slate-200">005930</span>,{" "}
+                <span className="font-semibold text-slate-200">TSLA</span>
+              </p>
+              <div className="mt-6 space-y-2">
+                <label htmlFor="report-ticker" className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Ticker
+                </label>
+                <input
+                  id="report-ticker"
+                  name="ticker"
+                  autoFocus
+                  value={tickerInput}
+                  onChange={(event) => setTickerInput(event.target.value)}
+                  className="w-full rounded-2xl border border-border-dark bg-background-dark px-4 py-3 text-base font-semibold uppercase tracking-wide text-white placeholder:text-slate-500 focus:border-primary focus:outline-none"
+                  placeholder="e.g. AAPL"
+                />
+                {inputError && <p className="text-xs text-rose-400">{inputError}</p>}
+              </div>
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  className="rounded-full px-4 py-2 text-sm font-semibold text-slate-400 hover:text-slate-200"
+                  onClick={handleDialogClose}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-primary/40 disabled:cursor-not-allowed disabled:bg-primary/40"
+                  disabled={generateReport.isPending}
+                >
+                  {generateReport.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Create report
+                </button>
+              </div>
+            </Card>
           </form>
         </div>
       )}
