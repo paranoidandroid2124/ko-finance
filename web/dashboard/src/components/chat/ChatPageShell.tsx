@@ -86,6 +86,7 @@ export function ChatPageShell({ controller, reportAction, guestBadge }: ChatPage
               inputDisabled={stream.inputDisabled}
               reportAction={reportAction}
               onFocusChange={setFocusMode}
+              sessionId={history.selectedId ?? undefined}
             />
           </div>
         </div>

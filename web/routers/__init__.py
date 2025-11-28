@@ -23,6 +23,7 @@ _ROUTER_MODULES = [
     "recommendations",
     "profile",
     "user_settings",
+    "share",
 ]
 
 __all__ = list(_ROUTER_MODULES)

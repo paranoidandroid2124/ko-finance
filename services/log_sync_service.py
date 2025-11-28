@@ -146,9 +146,7 @@ def _reindex_bigquery_schema() -> List["bigquery.SchemaField"]:  # type: ignore[
         bigquery.SchemaField("queue_wait_ms", "INT64"),
         bigquery.SchemaField("duration_ms", "INT64"),
         bigquery.SchemaField("total_elapsed_ms", "INT64"),
-        bigquery.SchemaField("langfuse_trace_url", "STRING"),
-        bigquery.SchemaField("langfuse_trace_id", "STRING"),
-        bigquery.SchemaField("langfuse_span_id", "STRING"),
+
         bigquery.SchemaField("ingested_at", "TIMESTAMP"),
     ]
 
@@ -196,9 +194,7 @@ def _prepare_reindex_rows(records: List[Dict[str, object]]) -> List[Dict[str, ob
                 "queue_wait_ms": record.get("queueWaitMs"),
                 "duration_ms": record.get("durationMs"),
                 "total_elapsed_ms": record.get("totalElapsedMs"),
-                "langfuse_trace_url": record.get("langfuseTraceUrl"),
-                "langfuse_trace_id": record.get("langfuseTraceId"),
-                "langfuse_span_id": record.get("langfuseSpanId"),
+
                 "ingested_at": ingested_at,
             }
         )

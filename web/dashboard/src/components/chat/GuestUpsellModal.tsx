@@ -31,13 +31,13 @@ export function GuestUpsellModal({ open, onClose }: GuestUpsellModalProps) {
           </button>
         </div>
         <p className="mt-3 text-sm leading-relaxed text-slate-200">
-          방금 본 분석은 저장되지 않고, 한 번의 질문 기회만 제공돼요. 두 번째 질문부터는 가입 후 이용할 수 있어요.
+          방금 본 분석은 저장되지 않고, 세 번의 질문 기회만 제공돼요. 네 번째 질문부터는 가입 후 이용할 수 있어요.
           Google 계정으로 10초면 끝납니다.
         </p>
         <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-200">
           <p className="font-semibold text-white">여기서 동작:</p>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-slate-300">
-            <li>비로그인 사용자는 질문 1회만 즉시 체험 가능</li>
+            <li>비로그인 사용자는 질문 3회만 즉시 체험 가능</li>
             <li>리포트 저장·리스크 하이라이트는 가입 후 이어서 제공</li>
             <li>Google 계정으로 10초 만에 가입하고 바로 이어서 질문</li>
           </ul>

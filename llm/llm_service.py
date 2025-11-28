@@ -11,7 +11,106 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 import litellm
-from langfuse import Langfuse
+
+
+from core.env import env_bool
+from core.logging import get_logger
+from llm import guardrails
+from llm.prompts import (
+    analyze_news,
+    chat_summary,
+    classify_filing,
+    extract_info,
+    judge_guard,
+    semantic_router,
+    rag_qa,
+    self_check,
+    summarize_report,
+    table_aware_rag,
+    value_chain_extract,
+    query_classifier,
+)
+from services import deeplink_service
+
+logger = get_logger(__name__)
+
+DEFAULT_LITELLM_CONFIG = Path(__file__).resolve().parent.parent / "litellm_config.yaml"
+
+if not os.getenv("LITELLM_CONFIG_PATH") and DEFAULT_LITELLM_CONFIG.exists():
+    os.environ["LITELLM_CONFIG_PATH"] = str(DEFAULT_LITELLM_CONFIG)
+
+
+def _apply_litellm_aliases() -> None:
+    config_path = os.getenv("LITELLM_CONFIG_PATH")
+    if not config_path:
+        return
+    path = Path(config_path)
+    if not path.is_file():
+        return
+    try:
+        import yaml
+    except ImportError:
+        logger.debug("PyYAML not available; skipping LiteLLM alias load.")
+        return
+    try:
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Failed to parse LiteLLM config for aliases: %s", exc)
+        return
+    model_list = config.get("model_list") if isinstance(config, dict) else None
+    if not isinstance(model_list, list):
+        return
+    alias_map: Dict[str, str] = {}
+    for entry in model_list:
+        if not isinstance(entry, dict):
+            continue
+        alias = entry.get("model_name")
+        params = entry.get("litellm_params")
+        if not alias or not isinstance(params, dict):
+            continue
+        target = params.get("model")
+        if isinstance(target, str) and target:
+            alias_map.setdefault(alias, target)
+    if alias_map:
+        litellm.model_alias_map.update(alias_map)
+
+
+_apply_litellm_aliases()
+
+
+def _extract_usage_payload(response: Any) -> Optional[Dict[str, int]]:
+    """Normalize token usage info from various response shapes."""
+
+    def _normalize(raw: Any) -> Optional[Dict[str, int]]:
+        if raw is None:
+            return None
+        if isinstance(raw, dict):
+            data = raw
+        else:
+            data = {key: getattr(raw, key, None) for key in ("prompt_tokens", "completion_tokens", "total_tokens")}
+        cleaned = {key: int(value) for key, value in data.items() if isinstance(value, (int, float))}
+        return cleaned or None
+
+    usage = getattr(response, "usage", None)
+    payload = _normalize(usage)
+    if payload:
+        return payload
+    if hasattr(response, "model_dump"):  # pydantic-style objects
+        dumped = response.model_dump()
+"""LLM interaction helpers for filings, news analysis, and RAG answers."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, cast
+
+import litellm
+
 
 from core.env import env_bool
 from core.logging import get_logger
@@ -103,18 +202,6 @@ def _extract_usage_payload(response: Any) -> Optional[Dict[str, int]]:
         return _normalize(response.get("usage"))
     return None
 
-LANGFUSE_CLIENT: Optional[Any] = None
-if os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"):
-    try:
-        LANGFUSE_CLIENT = Langfuse(
-            public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-            secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-            host=os.getenv("LANGFUSE_HOST"),
-        )
-        logger.info("Langfuse client initialised.")
-    except Exception as exc:
-        logger.error("Failed to initialise Langfuse client: %s", exc, exc_info=True)
-        LANGFUSE_CLIENT = None
 
 CLASSIFICATION_MODEL = os.getenv("LLM_CLASSIFICATION_MODEL", "baseline")
 SUMMARY_MODEL = os.getenv("LLM_SUMMARY_MODEL", "baseline")
@@ -128,52 +215,6 @@ ROUTER_MODEL = os.getenv("LLM_ROUTER_MODEL", QUALITY_FALLBACK_MODEL)
 QUERY_CLASSIFIER_MODEL = os.getenv("LLM_QUERY_CLASSIFIER_MODEL", JUDGE_MODEL)
 # Dedicated model for investment memo/report generation; falls back to QUALITY_FALLBACK_MODEL if unset.
 REPORT_MODEL = os.getenv("LLM_REPORT_MODEL", QUALITY_FALLBACK_MODEL)
-
-RAG_REQUIRE_SNIPPET = env_bool("RAG_REQUIRE_SNIPPET", False)
-RAG_LINK_DEEPLINK = env_bool("RAG_LINK_DEEPLINK", False)
-MAX_CITATIONS_PER_BUCKET = 5
-
-JUDGE_BLOCK_MESSAGE = guardrails.SAFE_MESSAGE
-
-
-def set_guardrail_copy(message: Optional[str]) -> None:
-    """Update the guardrail fallback copy used by streaming responses."""
-    guardrails.update_safe_message(message)
-    global JUDGE_BLOCK_MESSAGE
-    JUDGE_BLOCK_MESSAGE = guardrails.SAFE_MESSAGE
-
-def _record_langfuse_event(
-    model: str,
-    messages: List[Dict[str, Any]],
-    *,
-    response_content: Optional[str] = None,
-    error: Optional[str] = None,
-) -> None:
-    if not LANGFUSE_CLIENT:
-        return
-    try:
-        user_input = ""
-        if messages:
-            last_message = messages[-1].get("content")
-            user_input = last_message if isinstance(last_message, str) else json.dumps(last_message, ensure_ascii=False)
-        trace = LANGFUSE_CLIENT.trace(name="llm_call", metadata={"model": model})
-        trace.generation(
-            name="completion",
-            model=model,
-            input=user_input[:2000],
-            output=(response_content or "")[:2000],
-            metadata={"error": error} if error else None,
-        )
-        if error:
-            trace.update(status="error")
-        LANGFUSE_CLIENT.flush()
-    except Exception as exc:
-        logger.debug("Langfuse logging skipped: %s", exc, exc_info=True)
-
-
-def _choice_content(response: Any) -> str:
-    """Best-effort extraction of the first choice's message content from litellm responses."""
-    try:
         response_any = cast(Any, response)
         choices = getattr(response_any, "choices", None)
         if isinstance(choices, list) and choices:
@@ -204,11 +245,11 @@ def _safe_completion(
     try:
         response = litellm.completion(model=model, messages=messages, response_format=response_format)
         response_content = _choice_content(response)
-        _record_langfuse_event(model, messages, response_content=response_content)
+
         return response, model
     except Exception as primary_err:
         logger.warning("LLM call failed for %s: %s", model, primary_err, exc_info=True)
-        _record_langfuse_event(model, messages, error=str(primary_err))
+
 
         if fallback_model and fallback_model != model:
             try:
@@ -219,14 +260,14 @@ def _safe_completion(
                 )
                 logger.info("Fallback model %s succeeded after %s failure.", fallback_model, model)
                 response_content = _choice_content(response)
-                _record_langfuse_event(fallback_model, messages, response_content=response_content)
+
                 return response, fallback_model
             except Exception as fallback_err:
                 error_message = (
                     f"Primary model {model} error: {primary_err}; fallback {fallback_model} error: {fallback_err}"
                 )
                 logger.error(error_message, exc_info=True)
-                _record_langfuse_event(fallback_model, messages, error=str(fallback_err))
+
                 return None, error_message
 
         error_message = f"LLM call failed for model {model}: {primary_err}"

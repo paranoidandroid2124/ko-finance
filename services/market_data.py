@@ -487,7 +487,19 @@ def build_peer_comparison(
 
     raw_value_chain = VALUE_CHAIN_CACHE.get(base_symbol)
     if raw_value_chain is None:
+        # 1. Try loading from DB
+        try:
+            persisted = value_chain_repository.load_relations(db, base_symbol)
+            if any(persisted.values()):
+                raw_value_chain = persisted
+                VALUE_CHAIN_CACHE[base_symbol] = persisted
+        except Exception as exc:
+            logger.warning("Failed to load value chain from DB for %s: %s", base_symbol, exc)
+
+    if raw_value_chain is None:
+        # 2. Fallback to JIT generation
         raw_value_chain = _jit_generate_value_chain(db, base_symbol)
+    
     value_chain, value_chain_summary = _format_value_chain_payload(
         raw_value_chain,
         base_symbol=base_symbol,

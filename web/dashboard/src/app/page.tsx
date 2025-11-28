@@ -7,7 +7,7 @@ import { BarChart2, Brain, Zap, FileSpreadsheet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { HeroDemo } from "@/components/landing/HeroDemo";
+import { InteractiveHero } from "@/components/landing/InteractiveHero";
 import { TermDefinition } from "@/components/ui/TermDefinition";
 import { useAuth } from "@/lib/authContext";
 
@@ -51,7 +51,7 @@ const steps = [
   { title: "3. 리포트 생성", detail: "본문·표·출처 링크가 포함된 리포트를 편집하거나 바로 내보냅니다." },
 ];
 
-const logos = ["openai", "python", "nasdaq", "krx"];
+const logos = [];
 
 function FeatureCard({ icon: Icon, title, description, preview }: FeatureItem) {
   const [hovered, setHovered] = useState(false);
@@ -173,8 +173,21 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen text-white">
       <main className="mx-auto flex w-full max-w-6xl flex-col gap-16 px-6 py-16">
-        <section className="rounded-[32px] border border-border-subtle bg-surface-muted/80 p-4 shadow-card">
-          <HeroDemo />
+        <section className="relative z-10 w-full px-4">
+          <div className="mx-auto max-w-4xl text-center mb-12">
+            <h1 className="text-4xl font-bold tracking-tight text-white md:text-6xl lg:text-7xl">
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
+                AI Financial Analyst
+              </span>
+              <br />
+              for Everyone
+            </h1>
+            <p className="mt-6 text-lg text-slate-400 md:text-xl">
+              공시, 뉴스, 주가 데이터를 실시간으로 분석하여<br className="hidden md:block" />
+              전문가 수준의 투자 리포트를 즉시 제공합니다.
+            </p>
+          </div>
+          <InteractiveHero />
         </section>
 
         <section className="space-y-6">

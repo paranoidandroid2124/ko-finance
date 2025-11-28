@@ -76,4 +76,43 @@ def upsert_relations(
                 )
 
 
-__all__ = ["upsert_relations"]
+def load_relations(db: Session, center_ticker: str) -> Dict[str, list[Dict[str, str]]]:
+    """Load persisted relations for a ticker from the database."""
+    if not center_ticker:
+        return {}
+
+    center = center_ticker.strip().upper()
+    rows = (
+        db.query(ValueChainEdge)
+        .filter(ValueChainEdge.center_ticker == center)
+        .all()
+    )
+
+    result: Dict[str, list[Dict[str, str]]] = {
+        "suppliers": [],
+        "customers": [],
+        "competitors": [],
+    }
+
+    for row in rows:
+        key = f"{row.relation_type}s"  # supplier -> suppliers
+        if key not in result:
+            # Fallback for unknown types or if 'peers' stored as 'competitor'
+            if row.relation_type == "peer":
+                key = "competitors"
+            else:
+                continue
+        
+        entry = {
+            "label": row.related_label,
+            "ticker": row.related_ticker,
+            "evidence": row.evidence,
+        }
+        # Filter out None values
+        cleaned = {k: v for k, v in entry.items() if v is not None}
+        result[key].append(cleaned)
+
+    return result
+
+
+__all__ = ["upsert_relations", "load_relations"]

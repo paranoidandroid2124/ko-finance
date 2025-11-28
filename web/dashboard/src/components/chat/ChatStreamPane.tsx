@@ -8,6 +8,7 @@ import { ChatMessageBubble } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { Button } from "@/components/ui/Button";
 import { Toolbar } from "@/components/ui/Toolbar";
+import { ShareButton } from "@/components/share/ShareButton";
 import type { ChatMessage } from "@/store/chatStore";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
 
@@ -30,6 +31,7 @@ type ChatStreamPaneProps = {
     loading?: boolean;
   };
   onFocusChange?: (focused: boolean) => void;
+  sessionId?: string;
 };
 
 export function ChatStreamPane({
@@ -47,6 +49,7 @@ export function ChatStreamPane({
   inputDisabled,
   reportAction,
   onFocusChange,
+  sessionId,
 }: ChatStreamPaneProps) {
   const fallbackPrompts = useMemo(
     () => [
@@ -126,6 +129,13 @@ export function ChatStreamPane({
           <p className="truncate text-lg font-semibold text-text-primary">{sessionTitle}</p>
         </div>
         <div className="flex items-center gap-3">
+          {sessionId && !showEmptyState && messages.length > 0 && (
+            <ShareButton
+              resourceType="chat_session"
+              resourceId={sessionId}
+              title={sessionTitle}
+            />
+          )}
           {reportAction ? (
             <Button
               variant="solid"

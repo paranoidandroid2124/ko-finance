@@ -1,7 +1,7 @@
 "use client";
 
 import classNames from "classnames";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import ToolWidgetRenderer from "@/components/chat/ToolWidgetRenderer";
 import RagSourcesWidget from "@/components/chat/widgets/RagSourcesWidget";
@@ -11,7 +11,8 @@ import type { ChatMessageMeta, ChatRole, CitationEntry, CitationMap, RagSourceRe
 import { useToastStore } from "@/store/toastStore";
 import { logEvent } from "@/lib/telemetry";
 import { renderChatContent } from "@/lib/renderChatContent";
-import { Loader2 } from "lucide-react";
+import { Loader2, ThumbsUp, ThumbsDown } from "lucide-react";
+import fetchWithAuth from "@/lib/fetchWithAuth";
 
 export type ChatMessageProps = {
   id: string;
@@ -244,18 +245,18 @@ export function ChatMessageBubble({ id, role, content, timestamp, meta, isGuardr
     const params = toolOutputPayload.parsed_params as Record<string, any>;
     const companies = Array.isArray(params.companies)
       ? (params.companies as unknown[])
-          .map((item) => coerceString(item))
-          .filter((value): value is string => typeof value === "string" && value.length > 0)
+        .map((item) => coerceString(item))
+        .filter((value): value is string => typeof value === "string" && value.length > 0)
       : [];
     const reportTypes = Array.isArray(params.report_types)
       ? (params.report_types as unknown[])
-          .map((item) => coerceString(item))
-          .filter((value): value is string => typeof value === "string" && value.length > 0)
+        .map((item) => coerceString(item))
+        .filter((value): value is string => typeof value === "string" && value.length > 0)
       : [];
     const years = Array.isArray(params.years)
       ? (params.years as unknown[])
-          .map((item) => coerceNumber(item))
-          .filter((item): item is number => typeof item === "number")
+        .map((item) => coerceNumber(item))
+        .filter((item): item is number => typeof item === "number")
       : [];
     return {
       companies,
@@ -445,6 +446,63 @@ export function ChatMessageBubble({ id, role, content, timestamp, meta, isGuardr
     [showToast]
   );
 
+  const [feedback, setFeedback] = useState<"like" | "dislike" | null>(null);
+  const [showComment, setShowComment] = useState(false);
+  const [comment, setComment] = useState("");
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+
+  const handleFeedback = async (score: 1 | -1) => {
+    if (feedback !== null) return; // Prevent multiple submissions
+    setIsSubmittingFeedback(true);
+    try {
+      // Optimistic update
+      setFeedback(score === 1 ? "like" : "dislike");
+      if (score === -1) {
+        setShowComment(true);
+      }
+
+      await fetchWithAuth("/api/v1/rag/feedback", {
+        method: "POST",
+        body: JSON.stringify({
+          message_id: id,
+          score,
+        }),
+      });
+    } catch (error) {
+      console.error("Feedback failed", error);
+      setFeedback(null); // Revert on error
+      showToast({
+        intent: "error",
+        title: "피드백 전송 실패",
+        message: "잠시 후 다시 시도해 주세요.",
+      });
+    } finally {
+      setIsSubmittingFeedback(false);
+    }
+  };
+
+  const handleSubmitComment = async () => {
+    if (!comment.trim()) return;
+    try {
+      await fetchWithAuth("/api/v1/rag/feedback", {
+        method: "POST",
+        body: JSON.stringify({
+          message_id: id,
+          score: -1,
+          comment,
+        }),
+      });
+      setShowComment(false);
+      showToast({
+        intent: "success",
+        title: "소중한 의견 감사합니다",
+        message: "더 나은 답변을 위해 노력하겠습니다.",
+      });
+    } catch (error) {
+      console.error("Comment failed", error);
+    }
+  };
+
   return (
     <div className={classNames("group flex w-full gap-3", isUser ? "justify-end" : "justify-start")}>
       {!isUser && (
@@ -612,14 +670,75 @@ export function ChatMessageBubble({ id, role, content, timestamp, meta, isGuardr
               )}
             </div>
           )}
-          <p
-            className={classNames(
-              "mt-3 text-[11px]",
-              isUser ? "text-white/70" : "text-text-secondaryLight dark:text-text-secondaryDark"
+
+          {/* Footer: Timestamp & Feedback */}
+          <div className="mt-3 flex items-center justify-between gap-4">
+            <p
+              className={classNames(
+                "text-[11px]",
+                isUser ? "text-white/70" : "text-text-secondaryLight dark:text-text-secondaryDark"
+              )}
+            >
+              {timestamp}
+            </p>
+            {!isUser && !isToolCall && !isToolOutput && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => handleFeedback(1)}
+                  disabled={feedback !== null}
+                  className={classNames(
+                    "rounded p-1 transition-colors hover:bg-white/10",
+                    feedback === "like" ? "text-emerald-400" : "text-slate-400 hover:text-emerald-400"
+                  )}
+                  title="좋아요"
+                >
+                  <ThumbsUp className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleFeedback(-1)}
+                  disabled={feedback !== null}
+                  className={classNames(
+                    "rounded p-1 transition-colors hover:bg-white/10",
+                    feedback === "dislike" ? "text-rose-400" : "text-slate-400 hover:text-rose-400"
+                  )}
+                  title="싫어요"
+                >
+                  <ThumbsDown className="h-3.5 w-3.5" />
+                </button>
+              </div>
             )}
-          >
-            {timestamp}
-          </p>
+          </div>
+
+          {/* Dislike Comment Input */}
+          {showComment && (
+            <div className="mt-3 animate-in fade-in slide-in-from-top-1">
+              <textarea
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                placeholder="아쉬운 점을 남겨주시면 개선하겠습니다..."
+                className="w-full rounded-lg border border-white/10 bg-black/20 p-2 text-xs text-slate-200 placeholder:text-slate-500 focus:border-primary/50 focus:outline-none"
+                rows={2}
+              />
+              <div className="mt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowComment(false)}
+                  className="rounded px-2 py-1 text-xs text-slate-400 hover:text-white"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSubmitComment}
+                  className="rounded bg-primary/20 px-3 py-1 text-xs font-medium text-primary hover:bg-primary/30"
+                >
+                  보내기
+                </button>
+              </div>
+            </div>
+          )}
         </Card>
       )}
     </div>

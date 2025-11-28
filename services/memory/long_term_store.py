@@ -16,7 +16,7 @@ from services.embedding_utils import embed_text, EMBEDDING_MODEL
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-LIGHTMEM_COLLECTION = os.getenv("LIGHTMEM_QDRANT_COLLECTION", "k-finance-memory-store")
+LIGHTMEM_COLLECTION = os.getenv("LIGHTMEM_QDRANT_COLLECTION", "nuvien-memory-store")
 LIGHTMEM_VECTOR_DIM = int(os.getenv("LIGHTMEM_VECTOR_DIM", "384"))
 LIGHTMEM_DISTANCE = models.Distance.COSINE
 

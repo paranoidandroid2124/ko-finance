@@ -17,7 +17,7 @@ from typing import Any, Dict, Tuple, cast
 
 from qdrant_client import QdrantClient, models
 
-DEFAULT_COLLECTION = "k-finance-rag-collection"
+DEFAULT_COLLECTION = "nuvien-rag-collection"
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 COLLECTION_NAME = os.getenv("QDRANT_COLLECTION_NAME", DEFAULT_COLLECTION)

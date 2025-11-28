@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
@@ -66,6 +68,7 @@ def record_rag_telemetry(
 
 @router.post("/query", response_model=RAGQueryResponse)
 def query_rag(
+    fastapi_request: Request,
     request: RAGQueryRequest,
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
@@ -73,7 +76,24 @@ def query_rag(
     plan: PlanContext = Depends(require_plan_feature("rag.core")),
     db: Session = Depends(get_db),
 ) -> RAGQueryResponse:
+    # Apply guest rate limiting if user is not authenticated
+    if not x_user_id:
+        from services.guest_rate_limiter import check_guest_rate_limit
+        check_guest_rate_limit(fastapi_request)
+    
     _enforce_rag_chat_quota(plan, x_user_id, x_org_id)
+    question_text = getattr(request, "question", None)
+    if question_text is None:
+        question_text = getattr(request, "query", "")
+    return rag_service.query_rag(
+        request,
+        x_user_id,
+        x_org_id,
+        idempotency_key_header,
+        plan,
+        db,
+        route_decision=None,
+    )
     question_text = getattr(request, "question", None)
     if question_text is None:
         question_text = getattr(request, "query", "")
@@ -90,12 +110,18 @@ def query_rag(
 
 @router.post("/query/stream")
 def query_rag_stream(
+    fastapi_request: Request,
     request: RAGQueryRequest,
     x_user_id: Optional[str] = Header(default=None),
     x_org_id: Optional[str] = Header(default=None),
     idempotency_key_header: Optional[str] = Header(default=None, convert_underscores=False, alias="Idempotency-Key"),
     plan: PlanContext = Depends(require_plan_feature("rag.core")),
 ) -> StreamingResponse:
+    # Apply guest rate limiting if user is not authenticated
+    if not x_user_id:
+        from services.guest_rate_limiter import check_guest_rate_limit
+        check_guest_rate_limit(fastapi_request)
+    
     _enforce_rag_chat_quota(plan, x_user_id, x_org_id)
     session = SessionLocal()
     try:
@@ -150,6 +176,42 @@ def query_rag_v2(
         db,
         route_decision=None,
     )
+
+
+class ChatFeedbackRequest(BaseModel):
+    message_id: UUID
+    score: int = Field(..., description="1 for like, -1 for dislike")
+    comment: Optional[str] = None
+
+
+@router.post("/feedback", status_code=status.HTTP_201_CREATED)
+def submit_rag_feedback(
+    payload: ChatFeedbackRequest,
+    x_user_id: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+    plan: PlanContext = Depends(require_plan_feature("rag.core")),
+):
+    """Submit feedback (like/dislike) for a chat message."""
+    from models.chat import ChatFeedback, ChatMessage
+    from services.web_utils import parse_uuid
+    
+    # Verify message exists
+    message = db.query(ChatMessage).filter(ChatMessage.id == payload.message_id).first()
+    if not message:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    user_uuid = parse_uuid(x_user_id)
+
+    feedback = ChatFeedback(
+        message_id=payload.message_id,
+        user_id=user_uuid,
+        score=payload.score,
+        comment=payload.comment,
+    )
+    db.add(feedback)
+    db.commit()
+    return {"status": "ok"}
 
 
 __all__ = [

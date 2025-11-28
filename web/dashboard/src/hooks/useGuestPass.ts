@@ -71,10 +71,10 @@ export function useGuestPass(isAuthenticated: boolean): GuestPassState {
       existing && existing.token
         ? existing
         : {
-            token: `guest_${nanoid(12)}`,
-            remaining: 1,
-            lastUsedAt: null,
-          };
+          token: `guest_${nanoid(12)}`,
+          remaining: 3,
+          lastUsedAt: null,
+        };
 
     setGuestState(nextState);
     setGuestTokenForRequests(nextState.token);

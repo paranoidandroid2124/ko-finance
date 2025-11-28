@@ -7,11 +7,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Database URL (Supabase 또는 기타 PostgreSQL)
+DATABASE_URL: Optional[str] = os.getenv("DATABASE_URL")
 TEST_DATABASE_URL: Optional[str] = os.getenv("TEST_DATABASE_URL")
-DATABASE_URL: Optional[str] = os.getenv("DATABASE_URL") or TEST_DATABASE_URL
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL 또는 TEST_DATABASE_URL 환경 변수가 설정되어 있어야 합니다.")
 
+# 테스트 환경에서는 TEST_DATABASE_URL 우선 사용
+if TEST_DATABASE_URL:
+    DATABASE_URL = TEST_DATABASE_URL
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL 환경 변수가 설정되어 있어야 합니다.")
+
+# PostgreSQL 확인 (Supabase는 PostgreSQL 기반)
 ALLOW_NON_POSTGRES = os.getenv("DATABASE_ALLOW_NON_POSTGRES", "0") == "1"
 IS_POSTGRES = DATABASE_URL.lower().startswith("postgresql")
 if not IS_POSTGRES and not ALLOW_NON_POSTGRES:

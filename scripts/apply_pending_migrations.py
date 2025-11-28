@@ -25,24 +25,17 @@ def discover_migrations() -> list[Path]:
 
 
 def connect() -> PGConnection:
+    """Connect to database using DATABASE_URL.
+    
+    DATABASE_URL 환경 변수를 사용합니다 (Supabase 권장).
+    """
     database_url = os.environ.get("DATABASE_URL")
-    if database_url:
-        return psycopg2.connect(database_url)
-
-    user = os.environ.get("POSTGRES_USER")
-    password = os.environ.get("POSTGRES_PASSWORD")
-    host = os.environ.get("POSTGRES_HOST", "localhost")
-    port = os.environ.get("POSTGRES_PORT", "5432")
-    db = os.environ.get("POSTGRES_DB")
-    if not all((user, password, db)):
-        raise SystemExit("Set DATABASE_URL or POSTGRES_* environment variables.")
-    return psycopg2.connect(
-        dbname=db,
-        user=user,
-        password=password,
-        host=host,
-        port=port,
-    )
+    if not database_url:
+        raise SystemExit(
+            "DATABASE_URL 환경 변수가 설정되어 있어야 합니다.\n"
+            "형식: postgresql://user:password@host:port/database"
+        )
+    return psycopg2.connect(database_url)
 
 
 def ensure_tracking_table(cur) -> None:

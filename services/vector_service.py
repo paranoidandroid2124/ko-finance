@@ -31,7 +31,7 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 EMBEDDING_BATCH_SIZE = max(1, int(os.getenv("EMBEDDING_BATCH_SIZE", "32")))
 EMBEDDING_MAX_CONTENT_CHARS = max(1024, int(os.getenv("EMBEDDING_MAX_CONTENT_CHARS", "12000")))
 VECTOR_DIMENSION = 1536
-COLLECTION_NAME = "k-finance-rag-collection"
+COLLECTION_NAME = "nuvien-rag-collection"
 MULTI_FILING_SCORE_RATIO = float(os.getenv("RAG_MULTI_FILING_SCORE_RATIO", "0.9"))
 
 _qdrant_client: Optional[QdrantClient] = None

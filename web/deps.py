@@ -41,11 +41,4 @@ def get_current_user(request: Request) -> AuthenticatedUser:
     return user
 
 
-def require_admin_user(request: Request) -> AuthenticatedUser:
-    user = get_current_user(request)
-    if user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "auth.admin_required", "message": "관리자 권한이 필요합니다."},
-        )
-    return user
+

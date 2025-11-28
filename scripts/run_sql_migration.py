@@ -24,15 +24,17 @@ MIGRATION_TABLE = "schema_migrations"
 
 
 def _resolve_database_url() -> str:
+    """Resolve DATABASE_URL from environment.
+    
+    DATABASE_URL 환경 변수를 사용합니다 (Supabase 권장).
+    """
     url = os.getenv("DATABASE_URL")
-    if url:
-        return url
-    user = os.getenv("POSTGRES_USER", "kfinance")
-    password = os.getenv("POSTGRES_PASSWORD", "your_strong_password")
-    host = os.getenv("POSTGRES_SERVER", "postgres")
-    port = os.getenv("POSTGRES_PORT", "5432")
-    db = os.getenv("POSTGRES_DB", "kfinance_db")
-    return f"postgresql://{user}:{password}@{host}:{port}/{db}"
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL 환경 변수가 설정되어 있어야 합니다.\n"
+            "형식: postgresql://user:password@host:port/database"
+        )
+    return url
 
 
 def _connect() -> PGConnection:

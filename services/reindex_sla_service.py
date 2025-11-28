@@ -67,9 +67,7 @@ SELECT
   queue_id,
   queue_wait_ms,
   total_elapsed_ms,
-  langfuse_trace_url,
-  langfuse_trace_id,
-  langfuse_span_id
+
 FROM {_REINDEX_TABLE_FQN}
 WHERE timestamp BETWEEN @start_time AND @end_time
   AND total_elapsed_ms > @sla_ms
@@ -226,9 +224,7 @@ def fetch_reindex_sla_summary(
                 "queueId": converted.get("queue_id"),
                 "queueWaitMs": converted.get("queue_wait_ms"),
                 "totalElapsedMs": converted.get("total_elapsed_ms"),
-                "langfuseTraceUrl": converted.get("langfuse_trace_url"),
-                "langfuseTraceId": converted.get("langfuse_trace_id"),
-                "langfuseSpanId": converted.get("langfuse_span_id"),
+
             }
         )
 
