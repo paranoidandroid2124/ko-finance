@@ -113,7 +113,6 @@ Ensure Redis/Postgres/Qdrant services are reachable via `.env`.
    ```
 
 #### 4.4 Ingest reliability quick actions
-- **Viewer fallback + DLQ runbook:** `docs/ops/ingest_reliability.md` covers issuer-level fallback flags, robots/ToS logging fields, Celery retry knobs, DLQ triage, and the Grafana import file (`configs/grafana/ingest_reliability_dashboard.json`).
 - **Backfill CLI:** run `python scripts/ingest_backfill.py --start-date 2024-10-01 --end-date 2024-10-07 --chunk-days 2` to reseed filings idempotently (add `--corp-code 00123456` to scope to one issuer). Each run updates the `ingest_backfill_duration_seconds` Prometheus metric for alerting.
 
 ### 5. Common Commands
@@ -143,7 +142,6 @@ Ensure Redis/Postgres/Qdrant services are reachable via `.env`.
 - Ensure Celery worker/beat are running so `m3.run_rag_self_check` can log Langfuse telemetry.
 - Tests: `pytest tests/test_rag_api.py tests/test_rag_self_check.py tests/test_llm_service.py`.
 - QA: `python scripts/qa/sample_documents.py --total 60 --min-chunks 10 --min-ocr 15` → `python scripts/qa/verify_sentence_offsets.py --manifest scripts/qa/samples/manifest_<ts>.json --fail-on-issues`.
-- Docs/Runbook: `docs/ops/rag_deeplink_runbook.md`, `docs/ops/rag_deeplink_rollout.md`.
 - QA: `python scripts/qa/sample_documents.py --total 60 --min-chunks 10 --min-ocr 15`로 매니페스트를 뽑은 뒤, `python scripts/qa/verify_sentence_offsets.py --manifest scripts/qa/samples/manifest_<ts>.json --fail-on-issues`로 hash/offset 검사 리포트를 생성할 수 있습니다. CI에서는 `pytest tests/qa/test_sentence_offsets.py`로 리포트 생성 로직을 sanity-check합니다.
 - Vector store prerequisites: Qdrant reachable, embeddings configured via `.env` (`EMBEDDING_MODEL`, `QDRANT_*`).
 - Guardrail violations return the `SAFE_MESSAGE`; see `original_answer` for the redacted text.

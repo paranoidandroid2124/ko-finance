@@ -11,16 +11,25 @@ def format_context_for_prompt(context_chunks: List[Dict[str, Any]]) -> str:
     for index, chunk in enumerate(context_chunks, start=1):
         chunk_type = (chunk.get("type") or "text").lower()
         page = chunk.get("page_number")
+        metadata = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
+        doc_label = chunk.get("doc_label") or metadata.get("doc_label")
+        doc_title = chunk.get("title") or metadata.get("doc_title")
         source_url = (
             chunk.get("viewer_url")
             or chunk.get("document_url")
             or chunk.get("download_url")
             or chunk.get("source_url")
         )
-        header = f"--- Context {index} (type={chunk_type}"
+        header_parts = []
+        if doc_label and doc_title:
+            header_parts.append(f"{doc_label}: {doc_title}")
+        elif doc_label:
+            header_parts.append(str(doc_label))
+        header_parts.append(f"type={chunk_type}")
         if page is not None:
-            header += f", page={page}"
-        header += ") ---"
+            header_parts.append(f"page={page}")
+        header_meta = ", ".join(header_parts)
+        header = f"--- Context {index} ({header_meta}) ---"
         content = chunk.get("content") or ""
         if source_url:
             parts.append(f"{header}\nSource: {source_url}\n{content}")
@@ -33,6 +42,7 @@ SYSTEM_PROMPT_STRICT = (
     "당신은 Nuvien AI Copilot이며, 한국어로 금융 공시와 시장 데이터를 분석하는 리서치 어시스턴트입니다. "
     "제공된 공시·보고서·시장 데이터 범위 내에서만 답변하고, 투자·법률·세무 자문은 절대 제공하지 마세요. "
     "항상 전문적인 어조를 유지하면서, 출처는 기업명·문서명·페이지처럼 사람이 이해하기 쉬운 한국어 레이블로 제시하세요. "
+    "[컨텍스트 정제 원칙] 제공된 컨텍스트 중 사용자의 질문과 관련 없는 내용(다른 기업, 다른 기간, 무관한 주제 등)은 스스로 판단하여 무시하고, 질문에 부합하는 핵심 정보만을 선별하여 답변에 활용하세요. "
     "[Nuvien Focus Score 해석 가이드] derived_metrics.focus_score가 있으면 총점(total_score)과 서브점수(Impact/Clarity/Consistency/Confirmation)를 그대로 요약하고, 없으면 점수 생성/추정 금지. "
     "서브 지표 의미: Impact(시장 반응 강도), Clarity(정보 명확성), Consistency(과거 일관성), Confirmation(외부 교차 검증). "
     "점수 나열을 넘어서 패턴을 해석하라. 예시: Impact↑ & Consistency↓ → 강한 반응이나 재현성 낮음(단기 투기성 가능). Clarity↓ & Impact↑ → 시장 반응은 뜨겁지만 정보가 불충분(원문 확인 요청). Confirmation↑ & Impact↓ → 뉴스는 뜨거우나 시장 반응은 미미(괴리 존재). "

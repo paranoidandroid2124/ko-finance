@@ -34,7 +34,7 @@ Help Center 정보 구조는 다음 5개 허브 아래 개별 문서로 분기�
 | Labs (Digest/Event Study/Evidence) | 실험 기능 설명, 데이터 샘플, 플랜 잠금 | Overview + Warnings | `web/dashboard/src/app/labs/*`, `web/routers/event_study.py` | 없음 |
 | 플랜 & 결제 | PlanSummaryCard, Trial 시작, Toss 결제 흐름, 실패 시 조치 | How-to | `web/dashboard/src/components/plan/*.tsx`, `web/routers/plan.py`, `web/routers/payments.py`, `services/plan_catalog_service.py` | README 일부 + ops 문서 파편 |
 | 퍼블릭 미리보기 & 게스트 | `/public` 페이지 활용법, Rate Limit, 질문 실패 대응 | FAQ | `web/dashboard/src/app/public/page.tsx`, `web/routers/public.py` | 없음 |
-| 운영/지원 채널 | Slack/Email 지원 경로, 장애시 제공해야 할 로그 | Runbook | `scripts/sync_audit_traces.py`, `docs/ops/*` | ops 문서에 산재, 사용자용 안내 부재 |
+| 운영/지원 채널 | Slack/Email 지원 경로, 장애시 제공해야 할 로그 | Runbook | `scripts/sync_audit_traces.py` | 전용 사용자용 안내 필요 |
 
 ## 섹션별 상세 요구사항
 
@@ -187,11 +187,11 @@ Help Center 정보 구조는 다음 5개 허브 아래 개별 문서로 분기�
 - **내용**
   - 장애 시 수집해야 할 항목 (요청 ID, 사용자, timestamp)
   - Slack/Email/전화 등 escalation 경로
-  - 감사 로그 (`scripts/sync_audit_traces.py`), `docs/ops/*` 링크
+  - 감사 로그 (`scripts/sync_audit_traces.py`) 링크
 - **콘텐츠 제안**
   - `docs/help/support-runbook.md`
 - **출처**
-  - Ops 문서: `docs/ops/*`, `docs/policies/*`
+  - Ops 문서: `docs/policies/*`
   - 스크립트: `scripts/sync_audit_traces.py`
 
 ## 작성 우선순위 & 마일스톤

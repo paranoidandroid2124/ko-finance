@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple, Any
 
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
-from models.company import FilingEvent
 from models.event_study import EventRecord, EventStudyResult, EventSummary
 from models.filing import Filing
 from models.news import NewsSignal
@@ -87,7 +86,7 @@ def _news_articles(db: Session, ticker: Optional[str], event_date: Optional[date
     ]
 
 
-def compute_focus_score_for_event(db: Session, event: FilingEvent) -> Optional[Dict]:
+def compute_focus_score_for_event(db: Session, event: EventRecord) -> Optional[Dict[str, Any]]:
     if not event:
         return None
 
@@ -97,33 +96,34 @@ def compute_focus_score_for_event(db: Session, event: FilingEvent) -> Optional[D
 
     caar = (
         db.query(EventStudyResult.car)
-        .filter(EventStudyResult.rcept_no == event.receipt_no, EventStudyResult.t == preset.end)
+        .filter(EventStudyResult.rcept_no == event.rcept_no, EventStudyResult.t == preset.end)
         .scalar()
     )
 
-    record = db.get(EventRecord, event.receipt_no)
-    cap_bucket = (record.cap_bucket if record else None) or "ALL"
+    cap_bucket = (event.cap_bucket if event else None) or "ALL"
     summary = summary_map.get((event.event_type, cap_bucket)) or summary_map.get((event.event_type, "ALL"))
     p_value = float(summary.p_value) if summary and summary.p_value is not None else None
 
-    metadata = None
-    if event.ticker:
-        metadata = db.get(SecurityMetadata, event.ticker.upper())
-
     now = datetime.now(timezone.utc)
     restatement_count = _restatement_count(db, event.corp_code, now) if event.corp_code else 0
-    articles = _news_articles(
-        db,
-        event.ticker,
-        datetime.combine(event.event_date, datetime.min.time()).replace(tzinfo=timezone.utc)
-        if event.event_date
-        else None,
-    )
+    
+    event_dt = None
+    if event.event_date:
+        event_dt = datetime.combine(event.event_date, datetime.min.time()).replace(tzinfo=timezone.utc)
 
-    # Clarity 필드: derived_metrics 존재하는 키들 사용
-    present_fields = set((event.derived_metrics or {}).keys())
+    articles = _news_articles(db, event.ticker, event_dt)
+
+    # Clarity fields: check metadata or derived fields
+    # EventRecord has 'metadata' which is a dict.
+    event_meta = event.metadata or {}
+    present_fields = set(event_meta.keys())
     required_fields = {"issue_price", "new_shares"} if (event.event_type or "").upper() in {"SEO", "CONVERTIBLE"} else set()
 
+    # Heuristic for summary length from corp_name + event_type since we don't have full text here easily
+    # Ideally we'd fetch the Filing to get report_name, but EventRecord has corp_name/event_type.
+    summary_chars = len((event.corp_name or "") + (event.event_type or "")) 
+    # If we want better accuracy, we could join Filing, but let's keep it simple for now or fetch Filing if needed.
+    
     ctx = FocusScoreContext(
         caar_distribution=[],  # optional: inject from cache if available
         stddev_distribution=[],
@@ -131,8 +131,8 @@ def compute_focus_score_for_event(db: Session, event: FilingEvent) -> Optional[D
         required_fields=required_fields,
         present_fields=present_fields,
         is_delayed=False,
-        summary_chars=len((event.report_name or "") + (event.event_name or "")),
-        min_summary_chars=200,
+        summary_chars=summary_chars,
+        min_summary_chars=20, # Lowered threshold as we don't have full text
         articles=articles,
     )
 
@@ -147,15 +147,25 @@ def compute_focus_score_for_event(db: Session, event: FilingEvent) -> Optional[D
     return calculate_focus_score(fs_input, ctx)
 
 
-def persist_focus_score(db: Session, event: FilingEvent, focus_score: Dict) -> None:
-    derived = dict(event.derived_metrics or {})
-    derived["focus_score"] = focus_score
-    event.derived_metrics = derived
+def persist_focus_score(db: Session, event: EventRecord, focus_score: Dict[str, Any]) -> None:
+    # Update metadata
+    meta = dict(event.metadata or {})
+    meta["focus_score"] = focus_score
+    event.metadata = meta # type: ignore[assignment]
+    
+    # Also update the top-level score column with the total score (normalized to 0-1 if needed, or just keep as is?)
+    # EventRecord.score is currently 0.0-1.0 heuristic. Focus Score is 0-100.
+    # Let's normalize it to 0.0-1.0 for consistency with existing score field usage, 
+    # OR we can decide that EventRecord.score IS the Focus Score now.
+    # Given the heuristic was 0-1, let's normalize.
+    total = focus_score.get("total_score", 0)
+    event.score = total / 100.0
+    
     db.add(event)
 
 
-def compute_and_persist_focus_score(db: Session, receipt_no: str) -> Optional[Dict]:
-    event = db.query(FilingEvent).filter(FilingEvent.receipt_no == receipt_no).first()
+def compute_and_persist_focus_score(db: Session, receipt_no: str) -> Optional[Dict[str, Any]]:
+    event = db.query(EventRecord).filter(EventRecord.rcept_no == receipt_no).first()
     if not event:
         return None
     score = compute_focus_score_for_event(db, event)
@@ -167,7 +177,7 @@ def compute_and_persist_focus_score(db: Session, receipt_no: str) -> Optional[Di
 
 
 def compute_focus_score_for_all(db: Session) -> int:
-    events = db.query(FilingEvent).all()
+    events = db.query(EventRecord).all()
     updated = 0
     for event in events:
         score = compute_focus_score_for_event(db, event)

@@ -126,6 +126,8 @@ QUALITY_FALLBACK_MODEL = os.getenv("LLM_QUALITY_FALLBACK_MODEL", "fallback_model
 JUDGE_MODEL = os.getenv("LLM_GUARD_JUDGE_MODEL", "judge_model")
 ROUTER_MODEL = os.getenv("LLM_ROUTER_MODEL", QUALITY_FALLBACK_MODEL)
 QUERY_CLASSIFIER_MODEL = os.getenv("LLM_QUERY_CLASSIFIER_MODEL", JUDGE_MODEL)
+# Dedicated model for investment memo/report generation; falls back to QUALITY_FALLBACK_MODEL if unset.
+REPORT_MODEL = os.getenv("LLM_REPORT_MODEL", QUALITY_FALLBACK_MODEL)
 
 RAG_REQUIRE_SNIPPET = env_bool("RAG_REQUIRE_SNIPPET", False)
 RAG_LINK_DEEPLINK = env_bool("RAG_LINK_DEEPLINK", False)
@@ -1154,7 +1156,7 @@ async def write_investment_memo(ticker: str, context: str) -> str:
 
     def _invoke() -> str:
         response, model_used = _safe_completion(
-            QUALITY_FALLBACK_MODEL,
+            REPORT_MODEL,
             messages,
             fallback_model=QUALITY_FALLBACK_MODEL,
         )

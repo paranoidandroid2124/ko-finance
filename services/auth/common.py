@@ -43,12 +43,6 @@ from services.auth_tokens import (
     decode_token,
     issue_magic_token,
 )
-from services.email_service import (
-    send_account_locked_email,
-    send_account_unlock_email,
-    send_password_reset_email,
-    send_verification_email,
-)
 
 from services.audit_log import audit_rbac_event
 from services.entitlement_service import entitlement_service
@@ -69,6 +63,16 @@ except Exception:  # pragma: no cover - fallback when redis is unavailable
         return RateLimitResult()
 
 logger = logging.getLogger(__name__)
+
+
+def _noop_send_email(*args, **kwargs) -> None:
+    logger.debug("Email delivery disabled; skipping send.")
+
+
+send_verification_email = _noop_send_email
+send_password_reset_email = _noop_send_email
+send_account_unlock_email = _noop_send_email
+send_account_locked_email = _noop_send_email
 
 _ARGON_TIME_COST = env_int("AUTH_ARGON2_TIME_COST", 4, minimum=1)
 _ARGON_MEMORY_COST = env_int("AUTH_ARGON2_MEMORY_COST", 131072, minimum=8192)

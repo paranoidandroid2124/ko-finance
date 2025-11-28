@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { ArrowLeft, Calendar, Filter, RefreshCcw, Search } from "lucide-react";
 
 import { AppShell } from "@/components/layout/AppShell";
@@ -40,6 +41,7 @@ export default function FilingsArchivePage() {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(50);
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
+  const searchParams = useSearchParams();
 
   const params = useMemo(
     () => buildParams(ticker, startDate, endDate, sentiment, page, limit),
@@ -54,6 +56,13 @@ export default function FilingsArchivePage() {
   useEffect(() => {
     setPage(1);
   }, [ticker, startDate, endDate, sentiment, limit]);
+
+  useEffect(() => {
+    const selectedParam = searchParams?.get("selected") || searchParams?.get("filingId");
+    if (selectedParam) {
+      setSelectedId(selectedParam);
+    }
+  }, [searchParams]);
 
   const hasFilters = Boolean(ticker || startDate || endDate || sentiment !== "all");
 

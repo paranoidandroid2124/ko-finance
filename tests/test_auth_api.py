@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from core.auth.constants import DEFAULT_SIGNUP_CHANNEL
 from database import get_db
-from services import auth_service, auth_tokens, email_service
+from services import auth_service, auth_tokens
 from services.auth import common as auth_common
 from services.auth_service import RateLimitResult
 from web.routers import auth
@@ -27,11 +27,7 @@ pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture(autouse=True)
-def _stub_email_senders(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(email_service, "send_verification_email", lambda **_: None)
-    monkeypatch.setattr(email_service, "send_password_reset_email", lambda **_: None)
-    monkeypatch.setattr(email_service, "send_account_locked_email", lambda **_: None)
-    monkeypatch.setattr(email_service, "send_account_unlock_email", lambda **_: None)
+def _stub_auth_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         auth_common,
         "_check_limit",

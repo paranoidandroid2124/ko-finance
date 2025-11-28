@@ -5,7 +5,7 @@ import { useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import ToolWidgetRenderer from "@/components/chat/ToolWidgetRenderer";
 import RagSourcesWidget from "@/components/chat/widgets/RagSourcesWidget";
-import { FilingSearchCard } from "@/components/filings/FilingSearchCard";
+import { FilingSearchCard, type FilingSearchResult, type FilingSearchParams } from "@/components/filings/FilingSearchCard";
 import { Card } from "@/components/ui/Card";
 import type { ChatMessageMeta, ChatRole, CitationEntry, CitationMap, RagSourceReference } from "@/store/chatStore";
 import { useToastStore } from "@/store/toastStore";
@@ -238,30 +238,129 @@ export function ChatMessageBubble({ id, role, content, timestamp, meta, isGuardr
     return toolOutputPayload.tool_name === "filing.search";
   }, [toolOutputPayload]);
 
-  const handleFilingSearchExecute = useCallback(() => {
-    if (!toolOutputPayload || !toolOutputPayload.parsed_params) return;
-
+  const filingSearchParams: FilingSearchParams | null = useMemo(() => {
+    if (!toolOutputPayload || !toolOutputPayload.parsed_params) return null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const params = toolOutputPayload.parsed_params as Record<string, any>;
+    const companies = Array.isArray(params.companies)
+      ? (params.companies as unknown[])
+          .map((item) => coerceString(item))
+          .filter((value): value is string => typeof value === "string" && value.length > 0)
+      : [];
+    const reportTypes = Array.isArray(params.report_types)
+      ? (params.report_types as unknown[])
+          .map((item) => coerceString(item))
+          .filter((value): value is string => typeof value === "string" && value.length > 0)
+      : [];
+    const years = Array.isArray(params.years)
+      ? (params.years as unknown[])
+          .map((item) => coerceNumber(item))
+          .filter((item): item is number => typeof item === "number")
+      : [];
+    return {
+      companies,
+      years,
+      start_date: coerceString(params.start_date),
+      end_date: coerceString(params.end_date),
+      report_types: reportTypes,
+    };
+  }, [toolOutputPayload]);
+
+  const filingSearchUrl = useMemo(() => {
+    if (!isFilingSearchTool || !toolOutputPayload) return undefined;
+    const direct = coerceString((toolOutputPayload as Record<string, unknown>).archive_url ?? (toolOutputPayload as Record<string, unknown>).search_url);
+    if (direct) {
+      return direct;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const qp = (toolOutputPayload as any).query_params;
+    if (qp && typeof qp === "object") {
+      const params = new URLSearchParams();
+      const company = coerceString(qp.company ?? qp.ticker);
+      const startDate = coerceString(qp.start_date);
+      const endDate = coerceString(qp.end_date);
+      if (company) params.set("ticker", company);
+      if (startDate) params.set("startDate", startDate);
+      if (endDate) params.set("endDate", endDate);
+      if ([...params.keys()].length > 0) {
+        return `/insights/filings?${params.toString()}`;
+      }
+    }
+    return undefined;
+  }, [isFilingSearchTool, toolOutputPayload]);
+
+  const filingSearchResults = useMemo((): FilingSearchResult[] => {
+    if (!isFilingSearchTool || !toolOutputPayload) return [];
+    const rawResults = (toolOutputPayload as Record<string, unknown>).results;
+    if (!Array.isArray(rawResults)) {
+      return [];
+    }
+    return rawResults
+      .map((item) => {
+        if (!item || typeof item !== "object") return null;
+        const id = coerceString((item as any).id);
+        if (!id) return null;
+        return {
+          id,
+          title: coerceString((item as any).title) ?? undefined,
+          company: coerceString((item as any).company) ?? undefined,
+          ticker: coerceString((item as any).ticker) ?? undefined,
+          corp_code: coerceString((item as any).corp_code) ?? undefined,
+          filed_at: coerceString((item as any).filed_at) ?? undefined,
+          category: coerceString((item as any).category) ?? undefined,
+          sentiment: coerceString((item as any).sentiment) ?? undefined,
+          viewer_url: coerceString((item as any).viewer_url ?? (item as any).viewerUrl) ?? undefined,
+          download_url: coerceString((item as any).download_url ?? (item as any).downloadUrl) ?? undefined,
+        } as FilingSearchResult;
+      })
+      .filter((item): item is FilingSearchResult => Boolean(item));
+  }, [isFilingSearchTool, toolOutputPayload]);
+
+  const handleFilingSearchExecute = useCallback(() => {
+    if (filingSearchUrl) {
+      router.push(filingSearchUrl);
+      return;
+    }
+    if (!filingSearchParams) return;
     const queryParams = new URLSearchParams();
-
-    if (params.companies && Array.isArray(params.companies) && params.companies.length > 0) {
-      queryParams.set("company", params.companies[0]);
+    if (filingSearchParams.companies?.length) {
+      queryParams.set("ticker", filingSearchParams.companies[0]);
     }
-    if (params.start_date) {
-      queryParams.set("startDate", params.start_date);
+    if (filingSearchParams.start_date) {
+      queryParams.set("startDate", filingSearchParams.start_date);
     }
-    if (params.end_date) {
-      queryParams.set("endDate", params.end_date);
+    if (filingSearchParams.end_date) {
+      queryParams.set("endDate", filingSearchParams.end_date);
     }
-
-    router.push(`/insights?${queryParams.toString()}`);
-  }, [toolOutputPayload, router]);
+    const target = queryParams.toString();
+    router.push(target ? `/insights/filings?${target}` : "/insights/filings");
+  }, [filingSearchParams, filingSearchUrl, router]);
 
   const handleFilingSearchEdit = useCallback(() => {
-    // Navigate to insights without pre-filled params
-    router.push("/insights");
+    router.push("/insights/filings");
   }, [router]);
+
+  const handleFilingSearchOpenResult = useCallback(
+    (result: FilingSearchResult) => {
+      const targetUrl =
+        coerceString(result.viewer_url) ?? coerceString((result as Record<string, unknown>).viewerUrl) ?? coerceString(result.download_url);
+      if (targetUrl) {
+        window.open(targetUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
+      const targetId = coerceString(result.id);
+      if (targetId) {
+        router.push(`/insights/filings?selected=${targetId}`);
+        return;
+      }
+      showToast({
+        intent: "warning",
+        title: "열 수 없습니다",
+        message: "연결된 공시 뷰어 링크가 없습니다.",
+      });
+    },
+    [router, showToast],
+  );
 
   const memoryMeta = (meta?.memory ?? null) as
     | {
@@ -434,10 +533,20 @@ export function ChatMessageBubble({ id, role, content, timestamp, meta, isGuardr
             <div className="mt-3">
               {isFilingSearchTool ? (
                 <FilingSearchCard
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  parsed_params={toolOutputPayload.parsed_params as any}
+                  parsed_params={
+                    filingSearchParams ?? {
+                      companies: [],
+                      years: [],
+                      start_date: undefined,
+                      end_date: undefined,
+                      report_types: [],
+                    }
+                  }
+                  results={filingSearchResults}
+                  searchUrl={filingSearchUrl}
                   onExecute={handleFilingSearchExecute}
                   onEdit={handleFilingSearchEdit}
+                  onOpenResult={handleFilingSearchOpenResult}
                 />
               ) : (
                 <SnapshotPreviewCard payload={toolOutputPayload} />

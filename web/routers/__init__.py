@@ -9,16 +9,20 @@ from typing import Dict, Optional
 _ROUTER_MODULES = [
     "auth",
     "account",
+    "chat",
     "company",
+    "disclosure_viewer",
+    "feed",
     "health",
     "payments",
     "plan",
     "rag",
     "report",
+    "tools",
     "tools_text",
     "recommendations",
-    "feed",
     "profile",
+    "user_settings",
 ]
 
 __all__ = list(_ROUTER_MODULES)

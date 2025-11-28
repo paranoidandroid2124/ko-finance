@@ -98,6 +98,7 @@ class EventStudyEventItem(BaseModel):
     subtype: Optional[str] = None
     confidence: Optional[float] = None
     evidence_count: Optional[int] = Field(default=None, serialization_alias="evidenceCount")
+    focus_score: Optional[dict] = Field(default=None, serialization_alias="focusScore")
 
 
 class EventStudyEventsResponse(BaseModel):

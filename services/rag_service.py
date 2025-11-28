@@ -10,7 +10,7 @@ import os
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Mapping
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import or_
@@ -1100,6 +1100,7 @@ def _vector_search(
     max_filings: int,
     filters: Dict[str, Any],
     db: Optional[Session] = None,
+    multi_mode: bool = False,
 ) -> vector_service.VectorSearchResult:
     try:
         if db is not None and hybrid_search.is_hybrid_enabled():
@@ -1110,6 +1111,7 @@ def _vector_search(
                 top_k=top_k,
                 max_filings=max_filings,
                 filters=filters,
+                multi_mode=multi_mode,
             )
         return vector_service.query_vector_store(
             query_text=question,
@@ -1117,6 +1119,7 @@ def _vector_search(
             top_k=top_k,
             max_filings=max_filings,
             filters=filters,
+            multi_mode=multi_mode,
         )
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.error("Vector search failed (filing=%s): %s", filing_id or "<auto>", exc, exc_info=True)
@@ -1705,6 +1708,8 @@ class RagRetrievalStage(BaseModel):
     selected_filing_id: Optional[str]
     retrieval: Optional[vector_service.VectorSearchResult]
     should_retrieve: bool
+    multi_retrieval: bool = False
+    filing_blocks: List[Dict[str, Any]] = Field(default_factory=list)
 
     class Config:
         arbitrary_types_allowed = True
@@ -2133,6 +2138,8 @@ def _maybe_run_filing_search_tool(
                     "tool_name": "filing.search",
                     "parsed_params": result["parsed_params"],
                     "query_params": result.get("query_params", {}),
+                    "archive_url": result.get("archive_url"),
+                    "results": result.get("results", []),
                     "status": result.get("status", "ready_for_confirmation"),
                     "message": result.get("message", ""),
                 },
@@ -2212,10 +2219,75 @@ def _filter_chunks_by_relevance(chunks: List[Dict[str, Any]], *, threshold: floa
     return filtered
 
 
+def _is_comparison_query(
+    question: str,
+    route_decision: Optional[RouteDecision],
+    max_filings: Optional[int],
+) -> bool:
+    if not max_filings or max_filings <= 1:
+        return False
+    intent = (route_decision.intent or "").lower() if route_decision else ""
+    tool_name = (route_decision.tool_name or "").lower() if route_decision else ""
+    reason = (route_decision.reason or "").lower() if route_decision else ""
+    metadata = route_decision.metadata if route_decision else {}
+    if any(token in intent for token in ("compare", "peer")) or "compare" in tool_name or "compare" in reason:
+        return True
+    if isinstance(metadata, dict) and metadata.get("comparison"):
+        return True
+    normalized_question = (question or "").lower()
+    keyword_matches = ("비교", "대비", "차이", "vs ", " vs", "vs.")
+    return any(token in normalized_question for token in keyword_matches)
+
+
+def _context_from_retrieval(
+    retrieval: Optional[vector_service.VectorSearchResult],
+    *,
+    threshold: float,
+    per_doc_limit: int,
+) -> Tuple[List[Dict[str, Any]], bool, List[Dict[str, Any]]]:
+    if retrieval and retrieval.filings:
+        labeled_chunks: List[Dict[str, Any]] = []
+        blocks_with_chunks: List[Dict[str, Any]] = []
+        for idx, block in enumerate(retrieval.filings, start=1):
+            doc_label = f"문서{idx}"
+            title = block.get("title")
+            published_at = block.get("published_at")
+            block_score = safe_float(block.get("score"))
+            raw_chunks = block.get("chunks") or []
+            filtered_chunks = _filter_chunks_by_relevance(list(raw_chunks), threshold=threshold)[:per_doc_limit]
+            if not filtered_chunks:
+                continue
+            blocks_with_chunks.append(block)
+            for chunk in filtered_chunks:
+                payload = dict(chunk)
+                metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+                merged_metadata = dict(metadata)
+                merged_metadata.setdefault("doc_label", doc_label)
+                if title:
+                    merged_metadata.setdefault("doc_title", title)
+                if published_at:
+                    merged_metadata.setdefault("doc_published_at", published_at)
+                if block_score is not None:
+                    merged_metadata.setdefault("doc_score", block_score)
+                payload["metadata"] = merged_metadata
+                payload["doc_label"] = doc_label
+                if title and not payload.get("title"):
+                    payload["title"] = title
+                if block.get("filing_id") and not payload.get("filing_id"):
+                    payload["filing_id"] = block.get("filing_id")
+                labeled_chunks.append(payload)
+        if labeled_chunks:
+            return labeled_chunks, True, blocks_with_chunks
+    base_chunks = _filter_chunks_by_relevance(retrieval.chunks if retrieval else [], threshold=threshold)
+    return base_chunks, False, []
+
+
 def _run_retrieval_stage(
     ctx: RagSessionStage,
     request: RAGQueryRequest,
     db: Session,
+    *,
+    multi_mode: bool = False,
 ) -> RagRetrievalStage:
     judge_result = llm_service.assess_query_risk(ctx.question)
     rag_mode = (judge_result.get("rag_mode") or "vector") if judge_result else "vector"
@@ -2226,6 +2298,8 @@ def _run_retrieval_stage(
     related_filings: List[RelatedFiling] = []
     selected_filing_id = ctx.filing_id
     retrieval: Optional[vector_service.VectorSearchResult] = None
+    filing_blocks: List[Dict[str, Any]] = []
+    multi_retrieval = False
 
     if should_retrieve:
         retrieval = _vector_search(
@@ -2235,8 +2309,13 @@ def _run_retrieval_stage(
             max_filings=ctx.max_filings,
             filters=ctx.filter_payload,
             db=db,
+            multi_mode=multi_mode,
         )
-        context_chunks = _filter_chunks_by_relevance(retrieval.chunks, threshold=RAG_MIN_RELEVANCE)
+        context_chunks, multi_retrieval, filing_blocks = _context_from_retrieval(
+            retrieval,
+            threshold=RAG_MIN_RELEVANCE,
+            per_doc_limit=request.top_k,
+        )
         related_filings = _build_related_filings(retrieval.related_filings)
         selected_filing_id = _resolve_selected_filing_id(retrieval, ctx.filing_id, related_filings)
 
@@ -2248,6 +2327,8 @@ def _run_retrieval_stage(
         selected_filing_id=selected_filing_id,
         retrieval=retrieval,
         should_retrieve=should_retrieve,
+        multi_retrieval=multi_retrieval,
+        filing_blocks=filing_blocks,
     )
 
 
@@ -2316,6 +2397,25 @@ def _render_rag_response(
         conversation_summary = ctx.conversation_memory.get("summary")
         recent_turn_count = len(ctx.conversation_memory.get("recent_turns") or [])
 
+    multi_filing_ids: List[str] = []
+    for block in retrieval.filing_blocks:
+        filing_key = block.get("filing_id")
+        if isinstance(filing_key, str) and filing_key.strip():
+            multi_filing_ids.append(filing_key.strip())
+    if not multi_filing_ids:
+        multi_filing_ids = [entry.filing_id for entry in retrieval.related_filings if entry.filing_id]
+
+    retrieval_meta = {
+        "doc_ids": llm_stage.retrieval_ids,
+        "hit_at_k": len(llm_stage.context_chunks),
+        "filing_id": llm_stage.selected_filing_id,
+        "filters": llm_stage.context_filters,
+        "rag_mode": llm_stage.rag_mode,
+        "multi": retrieval.multi_retrieval,
+    }
+    if multi_filing_ids:
+        retrieval_meta["filing_ids"] = multi_filing_ids
+
     meta_payload = {
         "model": llm_stage.model_used,
         "prompt_version": ctx.user_meta.get("prompt_version"),
@@ -2323,13 +2423,7 @@ def _render_rag_response(
         "input_tokens": ctx.user_meta.get("input_tokens"),
         "output_tokens": ctx.user_meta.get("output_tokens"),
         "cost": ctx.user_meta.get("cost"),
-        "retrieval": {
-            "doc_ids": llm_stage.retrieval_ids,
-            "hit_at_k": len(llm_stage.context_chunks),
-            "filing_id": llm_stage.selected_filing_id,
-            "filters": llm_stage.context_filters,
-            "rag_mode": llm_stage.rag_mode,
-        },
+        "retrieval": retrieval_meta,
         "guardrail": {
             "decision": llm_stage.judge_decision,
             "reason": llm_stage.judge_reason,
@@ -2604,7 +2698,9 @@ def query_rag(
             db.commit()
             return response
 
-        retrieval_stage = _run_retrieval_stage(ctx, request, db)
+        comparison_mode = _is_comparison_query(question, route_decision, max_filings)
+        ctx.user_meta["multi_retrieval_mode"] = comparison_mode
+        retrieval_stage = _run_retrieval_stage(ctx, request, db, multi_mode=comparison_mode)
         event_chunks = _maybe_run_event_study_tool(ctx, route_decision, db)
         if event_chunks:
             retrieval_stage.context_chunks = event_chunks + retrieval_stage.context_chunks
@@ -2921,6 +3017,61 @@ def query_rag_stream(
 
         judge_result = llm_service.assess_query_risk(question)
         rag_mode = (judge_result.get("rag_mode") or "vector") if judge_result else "vector"
+
+        filing_search_result = _maybe_run_filing_search_tool(ctx, route_decision, db)
+        if filing_search_result:
+            response = RAGQueryResponse(
+                question=ctx.question,
+                filing_id=None,
+                session_id=ctx.session.id,
+                turn_id=ctx.turn_id,
+                user_message_id=ctx.user_message.id,
+                assistant_message_id=ctx.assistant_message.id,
+                answer="공시 검색 요청을 처리했습니다. 카드에서 확인 후 실행하세요.",
+                context=[],
+                citations={},
+                warnings=[],
+                highlights=[],
+                error=None,
+                model_used=None,
+                trace_id=ctx.trace_id,
+                judge_decision=None,
+                judge_reason=None,
+                meta={"tool": "filing.search", "status": filing_search_result.get("status", "ok")},
+                state="ready",
+                related_filings=[],
+                rag_mode="tool",
+            )
+            chat_service.update_message_state(
+                db,
+                message_id=ctx.assistant_message.id,
+                state="ready",
+                content=response.answer,
+                meta=response.meta,
+            )
+            db.commit()
+
+            payload_json = response.model_dump(mode="json")
+
+            def filing_search_stream():
+                yield json.dumps(
+                    {
+                        "event": "route",
+                        "id": str(ctx.assistant_message.id),
+                        "turn_id": str(ctx.turn_id) if ctx.turn_id else None,
+                        "decision": route_payload,
+                    }
+                ) + "\n"
+                yield json.dumps(
+                    {
+                        "event": "done",
+                        "id": str(ctx.assistant_message.id),
+                        "turn_id": str(ctx.turn_id) if ctx.turn_id else None,
+                        "payload": payload_json,
+                    }
+                ) + "\n"
+
+            return StreamingResponse(filing_search_stream(), media_type="text/event-stream")
 
         filters_v2 = RagQueryFiltersSchema(
             dateGte=request.filters.min_published_at,
@@ -3601,8 +3752,3 @@ __all__ = [
     "read_rag_grid_job",
     "search_news_summaries",
 ]
-
-
-
-
-

@@ -10,16 +10,24 @@ def format_context_for_prompt(context_chunks: List[Dict[str, Any]]) -> str:
     for index, chunk in enumerate(context_chunks, start=1):
         chunk_type = (chunk.get("type") or "text").lower()
         page = chunk.get("page_number")
+        metadata = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
+        doc_label = chunk.get("doc_label") or metadata.get("doc_label")
+        doc_title = chunk.get("title") or metadata.get("doc_title")
         meta = []
         if page is not None:
             meta.append(f"page={page}")
         section = chunk.get("section")
         if section:
             meta.append(f"section={section}")
-        header = f"--- Context {index} (type={chunk_type}"
+        header_bits = []
+        if doc_label and doc_title:
+            header_bits.append(f"{doc_label}: {doc_title}")
+        elif doc_label:
+            header_bits.append(str(doc_label))
+        header_bits.append(f"type={chunk_type}")
         if meta:
-            header += ", " + ", ".join(meta)
-        header += ") ---"
+            header_bits.extend(meta)
+        header = f"--- Context {index} ({', '.join(header_bits)}) ---"
         content = chunk.get("content") or ""
         parts.append(f"{header}\n{content}")
     return "\n\n".join(parts)

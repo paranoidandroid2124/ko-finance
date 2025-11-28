@@ -27,6 +27,7 @@ from models.event_study import (
 from models.evidence import EvidenceSnapshot
 from models.filing import Filing
 from models.security_metadata import SecurityMetadata
+
 from schemas.api.event_study import (
     EventStudyBoardFilters,
     EventStudyBoardResponse,
@@ -52,6 +53,7 @@ from services.event_study_windows import (
     get_event_window_span,
     list_event_window_presets,
 )
+from services import focus_score_service
 
 logger = logging.getLogger(__name__)
 
@@ -172,87 +174,6 @@ def ingest_events_from_filings(
             )
             db.add(event)
             created += 1
-
-        db.commit()
-        _update_ingest_job(
-            job.id,
-            status="completed",
-            events_created=created,
-            events_skipped=skipped,
-        )
-    except Exception as exc:  # pragma: no cover - ingestion guard
-        logger.exception("Event ingestion failed: %s", exc)
-        db.rollback()
-        _update_ingest_job(
-            job.id,
-            status="failed",
-            events_created=created,
-            events_skipped=skipped,
-            errors={"message": str(exc)},
-        )
-        raise
-
-    return created
-
-
-def update_event_study_series(
-    db: Session,
-    *,
-    benchmark_symbol: str = DEFAULT_BENCHMARK_SYMBOL,
-    estimation_window: Tuple[int, int] = (-120, -10),
-    event_window: Optional[Tuple[int, int]] = None,
-) -> int:
-    """Compute AR/CAR for events that lack time-series entries."""
-
-    results_created = 0
-    window = event_window or get_event_window_span(db)
-    events = db.query(EventRecord).all()
-    for event in events:
-        if not event.ticker or not event.event_date:
-            continue
-
-        existing = (
-            db.query(EventStudyResult)
-            .filter(
-                EventStudyResult.rcept_no == event.rcept_no,
-                EventStudyResult.t >= window[0],
-                EventStudyResult.t <= window[1],
-            )
-            .count()
-        )
-        if existing >= (window[1] - window[0] + 1):
-            continue
-
-        try:
-            series = _compute_event_returns(
-                db,
-                event=event,
-                benchmark_symbol=benchmark_symbol,
-                estimation_window=estimation_window,
-                event_window=window,
-            )
-        except ValueError as exc:
-            logger.debug("Skipping %s: %s", event.rcept_no, exc)
-            continue
-
-        for t_index, (ar_value, car_value) in series.items():
-            record = EventStudyResult(
-                rcept_no=event.rcept_no,
-                t=t_index,
-                ar=ar_value,
-                car=car_value,
-            )
-            db.merge(record)
-            results_created += 1
-
-    if results_created:
-        db.commit()
-    return results_created
-
-
-def aggregate_event_summaries(
-    db: Session,
-    *,
     as_of: date,
     window_keys: Optional[Sequence[str]] = None,
     scope: str = "market",
@@ -550,6 +471,7 @@ def fetch_event_rows(
                 subtype=record.subtype,
                 confidence=to_float(record.confidence),
                 evidence_count=evidence_counts.get(record.rcept_no) or None,
+                focus_score=(record.metadata or {}).get("focus_score"),
             )
         )
 

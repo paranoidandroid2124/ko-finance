@@ -32,6 +32,7 @@ EMBEDDING_BATCH_SIZE = max(1, int(os.getenv("EMBEDDING_BATCH_SIZE", "32")))
 EMBEDDING_MAX_CONTENT_CHARS = max(1024, int(os.getenv("EMBEDDING_MAX_CONTENT_CHARS", "12000")))
 VECTOR_DIMENSION = 1536
 COLLECTION_NAME = "k-finance-rag-collection"
+MULTI_FILING_SCORE_RATIO = float(os.getenv("RAG_MULTI_FILING_SCORE_RATIO", "0.9"))
 
 _qdrant_client: Optional[QdrantClient] = None
 
@@ -41,6 +42,7 @@ class VectorSearchResult:
     filing_id: Optional[str]
     chunks: List[Dict[str, Any]] = field(default_factory=list)
     related_filings: List[Dict[str, Any]] = field(default_factory=list)
+    filings: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def _normalize_chunk_payload(raw_payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -288,6 +290,7 @@ def query_vector_store(
     top_k: int = 5,
     max_filings: int = 1,
     filters: Optional[Dict[str, Any]] = None,
+    multi_mode: bool = False,
 ) -> VectorSearchResult:
     normalized_query = query_text.strip() if isinstance(query_text, str) else str(query_text or "").strip()
     if not normalized_query:
@@ -408,10 +411,24 @@ def query_vector_store(
         )
 
     ranked.sort(key=lambda entry: entry.get("score", 0.0), reverse=True)
-    selected_filing = filing_id or (ranked[0]["filing_id"] if ranked else None)
+    enable_multi = multi_mode and max_filings > 1
+    shortlisted = ranked[:max_filings]
+    if enable_multi and ranked:
+        best_score = float(ranked[0].get("score") or 0.0)
+        cutoff = best_score * MULTI_FILING_SCORE_RATIO if best_score else 0.0
+        shortlisted = [entry for entry in ranked if float(entry.get("score") or 0.0) >= cutoff][:max_filings]
+    selected_filing = filing_id or (shortlisted[0]["filing_id"] if shortlisted else None)
     selected_chunks: List[Dict[str, Any]] = []
     if selected_filing:
         selected_chunks = grouped.get(selected_filing, [])[:top_k]
+
+    filing_blocks: List[Dict[str, Any]] = []
+    if enable_multi and shortlisted:
+        for entry in shortlisted:
+            doc_id = entry.get("filing_id")
+            if not doc_id:
+                continue
+            filing_blocks.append({**entry, "chunks": grouped.get(doc_id, [])[:top_k]})
 
     logger.info(
         "Retrieved %d chunks across %d filings (selected=%s).",
@@ -422,7 +439,8 @@ def query_vector_store(
     return VectorSearchResult(
         filing_id=selected_filing,
         chunks=selected_chunks,
-        related_filings=ranked[:max_filings],
+        related_filings=shortlisted,
+        filings=filing_blocks,
     )
 
 

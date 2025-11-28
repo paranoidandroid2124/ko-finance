@@ -230,6 +230,7 @@ def query_hybrid(
     max_filings: int,
     filters: Dict[str, Any],
     use_reranker: Optional[bool] = None,
+    multi_mode: bool = False,
 ) -> vector_service.VectorSearchResult:
     """Execute BM25 + dense retrieval with optional reranking."""
 
@@ -240,6 +241,7 @@ def query_hybrid(
         top_k=top_k,
         max_filings=dense_cap,
         filters=filters,
+        multi_mode=multi_mode,
     )
     dense_candidates = _extract_dense_candidates(base_result.related_filings)
     bm25_candidates = _fetch_bm25_candidates(db, question, filters, limit=BM25_TOPN)
@@ -283,6 +285,7 @@ def query_hybrid(
             top_k=top_k,
             max_filings=max_filings,
             filters=filters,
+            multi_mode=multi_mode,
         )
 
     final_result.related_filings = [entry.to_related_dict() for entry in final_candidates]
